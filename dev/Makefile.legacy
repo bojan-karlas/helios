@@ -1,0 +1,60 @@
+# Makefile the mgh-melanoma project.
+
+MAKEFLAGS += --no-print-directory
+
+# Summary and context path of this makefile.
+SUMMARY := This the main Makefile of the project intended to aid in all basic development tasks.
+PYTHON := $(shell which python)
+IPYTHON := $(shell which ipython)
+
+# Paths to the parent directory of this makefile and the repo root directory.
+MY_DIR_PATH := $(dir $(realpath $(firstword $(MAKEFILE_LIST))))
+ROOT_DIR_PATH := $(realpath $(MY_DIR_PATH))
+VENV_DIR := .venv
+
+NOTEBOOK_PATHS := $(shell find notebooks/figures/ -type f -name 'figure-generation.ipynb')
+SCRIPT_PATHS := $(patsubst notebooks/figures/%/figure-generation.ipynb,var/scripts/%/figure-generation.py,$(NOTEBOOK_PATHS))
+SCRIPT_DIRS := $(dir $(SCRIPT_PATHS))
+
+# Include common make functions.
+include $(ROOT_DIR_PATH)/dev/makefiles/show-help.mk
+
+$(VENV_DIR)/touchfile:
+	test -d $(VENV_DIR) || python -m venv $(VENV_DIR) --prompt "melanoma-recurrence"
+	touch $(VENV_DIR)/touchfile
+
+.PHONY: shell
+## Load an instance of the shell with the appropriate virtual environment.
+shell: $(VENV_DIR)/touchfile
+#exec "bash -i <<< 'source $(VENV_DIR)/bin/activate; exec </dev/tty'"
+# echo $(SHELL)
+# exec "bash --init-file $(VENV_DIR)/bin/activate"
+	. $(VENV_DIR)/bin/activate && exec bash
+
+.PHONY: setup
+## Install the dependencies from the requirements.txt file to the current environment.
+setup: requirements.txt
+	pip install -r requirements.txt
+
+.PHONY: build-notebooks
+## Convert all data integration notebooks to scripts and save them in the var/scripts directory.
+build-notebooks: $(SCRIPT_PATHS)
+	@for notebook_path in $(NOTEBOOK_PATHS); do \
+		echo "Processing $$notebook_path"; \
+		output_script_path="var/scripts/$${notebook_path#notebooks/figures/}"; \
+		output_script_path="$${output_script_path%/figure-generation.ipynb}"; \
+		jupyter nbconvert --to python "$$notebook_path" --RegexRemovePreprocessor.patterns="^%" --output-dir="$$output_script_path"; \
+	done
+
+.PHONY: build-outputs
+## Run all data integration scripts to generate the output datasets.
+build-outputs: build-notebooks
+	@for script_path in $(SCRIPT_PATHS); do \
+		echo "Running $$script_path"; \
+		$(IPYTHON) "$$script_path"; \
+	done
+
+.PHONY: build
+## Build all outputs including scripts and datasets.
+build: build-notebooks build-outputs
+	echo "Build complete."

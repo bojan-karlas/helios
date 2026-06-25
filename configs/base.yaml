@@ -1,0 +1,32 @@
+# HELIOS shipped default run configuration.
+#
+# This file carries SAFE defaults only — NO real dataset paths, cohort names, or
+# secrets. Point `paths.base` at your data via a user config, env, or CLI
+# override. Roles/schema resolve from configs/ unless overridden.
+
+version: v000
+
+paths:
+  base: ./data        # override per environment; never commit real paths
+  # Optional role-split roots (default to base when unset):
+  # source: ./data/source   # read-only: wsi/, metadata/
+  # work:   ./data/work     # tiles/, preprocessing/, thumbnails/
+  # features: ./data/features
+  # output: ./data/output   # results/, reports/, status.json, events.jsonl
+  # models: ./models
+
+cv:
+  n_folds: 1            # 1 => fold-free (no cross-validation)
+  val_fraction: 0.0     # >0 => random train/val split when no val split provided
+  group_by: patient_id  # patient-level grouping to avoid leakage
+  seed: 0
+
+# Default fan-out dimensions for components that declare these partitions.
+partitions:
+  size_mm: [0.250]
+  model: [virchow2]
+  target: [MGB+MRV]
+
+roles: null             # null => configs/roles/default.yaml
+
+stages: {}              # per-stage dataset/param overrides (see configs/train/*)

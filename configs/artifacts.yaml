@@ -1,0 +1,292 @@
+# GENERATED from dev/notes/agent/pipeline-spec.yaml — do not hand-edit.
+# Regenerate via scripts/gen_registries.py (or the dev spec workflow).
+artifacts:
+  wsi:
+    title: Whole Slide Image
+    key:
+    - image_id
+    format: svs/tiff/ndpi
+    path: wsi/{image_id}.svs
+  image_metadata:
+    title: Image Metadata Table
+    key:
+    - image_id
+    format: csv
+    path: metadata/image_metadata.csv
+  cv_splits:
+    title: Cross-Validation Splits
+    key:
+    - image_id
+    - fold
+    format: csv
+    path: metadata/cv_splits.csv
+  background_mask:
+    title: Background Mask (Debug)
+    key:
+    - image_id
+    format: png
+    path: debug/background_mask/{image_id}.png
+  tile_metadata:
+    title: Tile Metadata
+    key:
+    - size_mm
+    - image_id
+    - tile_id
+    format: parquet
+    path: metadata/tile_metadata/size_mm={size_mm}/{image_id}.parquet
+  tiles:
+    title: Tile Images
+    key:
+    - size_mm
+    - image_id
+    - tile_id
+    format: hdf5
+    path: tiles/size_mm={size_mm}/{image_id}/{image_id}.hdf5
+  tile_background:
+    title: Tile Background Flags
+    key:
+    - size_mm
+    - image_id
+    - tile_id
+    format: parquet
+    path: preprocessing/tile_background/size_mm={size_mm}/{image_id}.parquet
+  tile_features:
+    title: Tile (Patch) Embeddings
+    key:
+    - size_mm
+    - model
+    - image_id
+    - tile_id
+    format: hdf5
+    path: preprocessing/tile_features/size_mm={size_mm}/{model}/{image_id}/{image_id}.hdf5
+  tile_normalization:
+    title: Stain-Normalized Tiles
+    key:
+    - target
+    - size_mm
+    - image_id
+    - tile_id
+    format: hdf5
+    path: preprocessing/tile_normalization/target={target}/size_mm={size_mm}/{image_id}/{image_id}.hdf5
+  tile_normalization_features:
+    title: Stain-Normalized Tile Embeddings
+    key:
+    - target
+    - size_mm
+    - model
+    - image_id
+    - tile_id
+    format: hdf5
+    path: preprocessing/tile_normalization_features/target={target}/size_mm={size_mm}/{model}/{image_id}/{image_id}.hdf5
+  thumbnail:
+    title: Slide Thumbnail
+    key:
+    - image_id
+    format: png
+    path: thumbnails/{image_id}.png
+  cells:
+    title: Classified Cell Coordinates
+    key:
+    - image_id
+    - cell_id
+    format: parquet
+    path: cells/cell_coordinates/{image_id}.parquet
+  tumor_cell_patches:
+    title: Tumor Cell Patches
+    key:
+    - image_id
+    - cell_id
+    format: hdf5
+    path: cells/tumor_cell_patches/{image_id}.hdf5
+  mitotic_cells:
+    title: Mitotic Figure Labels
+    key:
+    - image_id
+    - cell_id
+    format: parquet
+    path: cells/mitotic/{image_id}.parquet
+  tile_cell_counts:
+    title: Per-Tile Cell Counts
+    key:
+    - size_mm
+    - image_id
+    - tile_id
+    format: parquet
+    path: cells/tile_counts/size_mm={size_mm}/{image_id}.parquet
+  aligned_patch_embeddings:
+    title: Aligned Patch Embeddings
+    key:
+    - fold
+    - image_id
+    - tile_id
+    format: hdf5
+    path: mil/patch_embeddings/fold={fold}/{image_id}.hdf5
+  patch_attention:
+    title: Patch Attention Scores
+    key:
+    - fold
+    - image_id
+    - tile_id
+    format: parquet
+    path: mil/attention/fold={fold}/{image_id}.parquet
+  aligned_slide_embedding:
+    title: Aligned Slide Embedding
+    key:
+    - fold
+    - image_id
+    format: npy
+    path: mil/slide_embedding/fold={fold}/{image_id}.npy
+  whole_image_risk_score:
+    title: Whole-Image Risk Score (Per-Fold)
+    key:
+    - fold
+    - image_id
+    format: csv
+    path: mil/fold={fold}/whole_image_risk_score.csv
+  whole_image_risk_score_ensemble:
+    title: Whole-Image Risk Score (Ensemble)
+    key:
+    - image_id
+    format: csv
+    path: results/whole_image_risk_score.csv
+  cellular_features:
+    title: Cellular Composition Features
+    key:
+    - image_id
+    format: csv
+    path: results/cellular_features.csv
+  cellular_risk_score:
+    title: Cellular Composition Risk Score
+    key:
+    - image_id
+    format: csv
+    path: results/cellular_risk_score.csv
+  path_concept_predictions:
+    title: Concept Predictions
+    key:
+    - image_id
+    format: csv
+    path: results/path_concept_predictions.csv
+  path_concept_risk_score:
+    title: Concept-Based Risk Score
+    key:
+    - image_id
+    format: csv
+    path: results/path_concept_risk_score.csv
+  tile_clusters:
+    title: Per-Tile Cluster Assignments
+    key:
+    - image_id
+    - tile_id
+    format: parquet
+    path: morphology/clusters/{image_id}.parquet
+  patch_morphology_presence:
+    title: Cluster Presence Scores
+    key:
+    - image_id
+    format: csv
+    path: results/patch_morphology_presence.csv
+  patch_morphology_risk_score:
+    title: Patch Morphology Risk Score
+    key:
+    - image_id
+    format: csv
+    path: results/patch_morphology_risk_score.csv
+  staging_risk_score:
+    title: Staging Risk Score
+    key:
+    - image_id
+    format: csv
+    path: results/staging_risk_score.csv
+  clinical_risk_score:
+    title: Clinical Risk Score
+    key:
+    - image_id
+    format: csv
+    path: results/clinical_risk_score.csv
+  helios_risk_score:
+    title: HELIOS Risk Score
+    key:
+    - image_id
+    format: csv
+    path: results/helios_risk_score.csv
+  survival_curve:
+    title: Survival Curve
+    key:
+    - image_id
+    - time
+    format: csv
+    path: results/survival_curve/{image_id}.csv
+  case_report:
+    title: Case Report (JSON)
+    key:
+    - image_id
+    format: json
+    path: reports/{image_id}/report.json
+  case_report_md:
+    title: Case Report (Markdown)
+    key:
+    - image_id
+    format: md
+    path: reports/{image_id}/report.md
+  case_assets:
+    title: Rendered Report Assets
+    key:
+    - image_id
+    - asset_id
+    format: png
+    path: reports/{image_id}/assets/{asset_id}.png
+  cohort_summary:
+    title: Cohort Summary Table
+    key:
+    - image_id
+    format: csv
+    path: reports/cohort_summary.csv
+  model_mil:
+    title: A-MIL Model Bundle
+    key:
+    - fold
+    format: bundle
+    path: models/mil/fold={fold}/checkpoint.pt
+  model_concepts:
+    title: Concept Models Bundle
+    key:
+    - fold
+    format: bundle
+    path: models/concepts/fold={fold}/checkpoint.pt
+  model_cellular:
+    title: Cellular Composition Risk Model
+    key:
+    - fold
+    format: bundle
+    path: models/cellular/fold={fold}/model.pkl
+  model_morphology:
+    title: Morphology Model Bundle
+    key:
+    - fold
+    format: bundle
+    path: models/morphology/fold={fold}/model.pkl
+  model_fusion:
+    title: HELIOS Risk Model
+    key:
+    - fold
+    format: bundle
+    path: models/fusion/fold={fold}/model.pkl
+  model_staging:
+    title: Staging Risk Model
+    key:
+    - fold
+    format: bundle
+    path: models/staging/fold={fold}/model.pkl
+  model_clinical:
+    title: Clinical Risk Model
+    key:
+    - fold
+    format: bundle
+    path: models/clinical/fold={fold}/model.pkl
+  model_cyclegan:
+    title: CycleGAN Stain Generator
+    key:
+    - target
+    format: bundle
+    path: models/cyclegan/target={target}/checkpoint.pt

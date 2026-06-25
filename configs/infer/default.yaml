@@ -1,0 +1,5 @@
+# Inference defaults. Fold cardinality comes from shipped per-fold models;
+# absent cv_splits => ensemble (not out-of-fold).
+version: v000
+paths:
+  base: ./data

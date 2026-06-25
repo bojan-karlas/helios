@@ -1,0 +1,735 @@
+# ----------------------------------------------------------------------------------------------------------------------
+# Data Dictionary for Pathology Image Metadata (version 0.1)
+# ----------------------------------------------------------------------------------------------------------------------
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Pathology Image Metadata Fields
+# ----------------------------------------------------------------------------------------------------------------------
+
+- name: image_id
+  type: string
+  description: Unique identifier for the pathology image.
+  caption: Image ID
+  example: MGH-SKCM-P00001-S01-B1-I1
+- name: image_id_old
+  type: string
+  description: Previous identifier for the pathology image (e.g., when obtained from external sources).
+  caption: Old Image ID
+  example: BD2021_00016804
+- name: image_scanning_site
+  type: string
+  description: Facility where the pathology image was scanned.
+  caption: Scanning Site
+  example: MGH-PATH-CORE
+- name: image_group_id
+  type: string
+  description: |
+    Identifier for the group of images in a given cohort that share the same scanning site and scanning date.
+    This can be used to control for batch effects in image analysis.
+  caption: Image Group ID
+  example: OncDRS-2025
+- name: image_specimen_type
+  type: categorical
+  description: Type of imaged specimen.
+  caption: Specimen Type
+  values:
+  - value: FFPE
+    description: Formalin-Fixed Paraffin-Embedded tissue.
+  - value: FF
+    description: Fresh Frozen tissue.
+- name: image_width
+  type: integer
+  unit: pixels
+  description: Width of the pathology image in pixels.
+  caption: Image Width [px]
+  example: 145920
+- name: image_height
+  type: integer
+  unit: pixels
+  description: Height of the pathology image in pixels.
+  caption: Image Height [px]
+  example: 36608
+- name: image_mpp
+  type: float
+  unit: microns per pixel
+  description: Microns per pixel for the pathology image, indicating the resolution.
+  caption: Image Microns Per Pixel [µm/px]
+  example: 0.2205752602788071
+- name: image_magnification
+  type: integer
+  unit: zoom level
+  description: Objective power used during image acquisition.
+  caption: Image Magnification [x]
+  example: 40
+- name: image_quality_issue_present
+  type: boolean
+  description: Indicates whether any quality issues are present (True) or absent (False) in the pathology image.
+  caption: Image Quality Issue Present
+  example: False
+- name: image_quality_issue_type
+  type: categorical
+  description: Type of quality issue present in the pathology image, if any.
+  caption: Image Quality Issue Type
+  values:
+  - value: Blurry
+  - value: Underexposed
+  - value: Overexposed
+  - value: Tissue folding
+  - value: Air bubbles
+  - value: Necrosis
+  - value: Missing tissue
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Patient Clinical Metadata Fields
+# ----------------------------------------------------------------------------------------------------------------------
+
+- name: patient_id
+  type: string
+  description: Unique identifier for the patient associated with the image.
+  caption: Patient ID
+  example: MGH-SKCM-P00001
+- name: patient_treatment_site
+  type: string
+  description: Medical center where the patient received treatment.
+  caption: Patient Treatment Site
+- name: patient_last_followup_date
+  type: date
+  description: Date of the patient's last follow-up (i.e., last recorded contact).
+  caption: Patient Last Follow-up Date
+  example: 2017-09-02
+- name: patient_os_death_date
+  type: date
+  description: Date of the patient's death, if applicable. Null if the patient is alive.
+  caption: Patient Death Date
+  example: 2017-09-02
+- name: patient_os_death
+  type: boolean
+  description: Indicates whether the patient is deceased (True) or alive (False).
+  caption: Patient Deceased
+  example: True
+- name: patient_dss_death
+  type: boolean
+  description: Indicates whether the patient died specifically from the disease (True) or from other causes (False).
+  caption: Patient Deceased from Disease
+  example: True
+- name: patient_sex
+  type: categorical
+  description: Sex of the patient.
+  caption: Patient Sex
+  values:
+  - value: Female
+  - value: Male
+- name: patient_race
+  type: categorical
+  description: Racial group of the patient.
+  caption: Patient Race
+  values:
+  - value: White
+  - value: Asian
+  - value: Black or African American
+  - value: Unknown/Other
+- name: patient_history_contains_melanoma
+  type: boolean
+  description: Indicates whether the patient has a history of melanoma (True) or not (False).
+  caption: Patient has History of Melanoma
+  example: True
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Disease-specific Metadata Fields
+# ----------------------------------------------------------------------------------------------------------------------
+
+- name: disease_diagnosis_date
+  type: date
+  description: Date when the disease was diagnosed.
+  caption: Disease Diagnosis Date
+  example: 2013-11-14
+- name: disease_treatment_start_date
+  type: date
+  description: Date when the treatment for the disease started.
+  caption: Disease Treatment Start Date
+  example: 2013-12-05
+- name: disease_age_at_diagnosis
+  type: integer
+  unit: years
+  description: Age of the patient at the time of disease diagnosis.
+  caption: Disease Age at Diagnosis [years]
+  example: 81
+- name: disease_os_days
+  type: integer
+  unit: days
+  description: Overall survival time in days from diagnosis to death or last follow-up.
+  caption: Disease Overall Survival [days]
+  example: 1388
+- name: disease_os_years
+  type: float
+  unit: years
+  description: Overall survival time in years from diagnosis to death or last follow-up.
+  caption: Disease Overall Survival [years]
+  example: 3.8
+- name: disease_dss_days
+  type: integer
+  unit: days
+  description: Disease-specific survival time in days from diagnosis to death from the disease or last follow-up.
+  caption: Disease-Specific Survival [days]
+  example: 1388
+- name: disease_dss_years
+  type: float
+  unit: years
+  description: Disease-specific survival time in years from diagnosis to death from the disease or last follow-up.
+  caption: Disease-Specific Survival [years]
+  example: 3.8
+- name: disease_pfs_recurred_date
+  type: date
+  description: Date when the disease recurred, if applicable.
+  caption: Disease Recurrence Date
+  example: 2016-10-21
+- name: disease_pfs_recurred
+  type: boolean
+  description: Indicates whether the disease has recurred (True) or not (False).
+  caption: Disease Recurrence
+  example: True
+- name: disease_pfs_recurred_days
+  type: integer
+  unit: days
+  description: Progression-free survival time in days until disease recurrence.
+  caption: Disease Recurrence-Free Survival [days]
+  example: 1072
+- name: disease_pfs_recurred_years
+  type: float
+  unit: years
+  description: Progression-free survival time in years until disease recurrence.
+  caption: Disease Recurrence-Free Survival [years]
+  example: 2.93
+- name: disease_pfs_recurred_locoregional
+  type: boolean
+  description: |
+    Indicates whether the disease recurred (True) or not (False) locoregionally (i.e., near the original site
+    or regional lymph nodes).
+  caption: Disease Locoregional Recurrence
+  example: True
+- name: disease_pfs_recurred_locoregional_days
+  type: integer
+  unit: days
+  description: Progression-free survival time in days until locoregional disease recurrence.
+  caption: Disease Locoregional Recurrence-Free Survival [days]
+  example: 1072
+- name: disease_pfs_recurred_locoregional_years
+  type: float
+  unit: years
+  description: Progression-free survival time in years until locoregional disease recurrence.
+  caption: Disease Locoregional Recurrence-Free Survival [years]
+  example: 2.93
+- name: disease_pfs_recurred_distant
+  type: boolean
+  description: |
+    Indicates whether the disease recurred (True) or not (False) at distant sites (i.e., distant metastasis).
+  caption: Disease Distant Recurrence
+  example: True
+- name: disease_pfs_recurred_distant_days
+  type: integer
+  unit: days
+  description: Progression-free survival time in days until distant disease recurrence.
+  caption: Disease Distant Recurrence-Free Survival [days]
+  example: 1072
+- name: disease_pfs_recurred_distant_years
+  type: float
+  unit: years
+  description: Progression-free survival time in years until distant disease recurrence.
+  caption: Disease Distant Recurrence-Free Survival [years]
+  example: 2.93
+- name: disease_pfs_recurred_5yfu
+  type: boolean
+  description: Indicates whether the disease recurred (True) or not (False) within a 5-year follow-up period.
+  caption: Disease 5-Year Follow-up Recurrence
+  example: True
+- name: disease_pfs_progressed
+  type: boolean
+  description: Indicates whether the disease has progressed (True) or not (False).
+  caption: Disease Progression
+  example: True
+- name: disease_pfs_progressed_days
+  type: integer
+  unit: days
+  description: Progression-free survival time in days until disease progression.
+  caption: Disease Progression-Free Survival [days]
+  example: 1072
+- name: disease_pfs_progressed_years
+  type: float
+  unit: years
+  description: Progression-free survival time in years until disease progression.
+  caption: Disease Progression-Free Survival [years]
+  example: 2.93
+- name: disease_slnb_performed
+  type: boolean
+  description: Indicates whether a sentinel lymph node biopsy (SLNB) was performed (True) or not (False).
+  caption: Disease SLNB Performed
+  example: True
+- name: disease_slnb_positive
+  type: boolean
+  description: Indicates whether the sentinel lymph node biopsy (SLNB) was positive (True) or negative (False).
+  caption: Disease SLNB Positive
+  example: True
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Sample-specific Metadata Fields
+# ----------------------------------------------------------------------------------------------------------------------
+
+- name: sample_id
+  type: string
+  description: Unique identifier for the tissue sample from which the image was derived.
+  caption: Sample ID
+  example: MGH-SKCM-P00001-S01
+- name: sample_collection_date
+  type: date
+  description: Date when the tissue sample was collected.
+  caption: Sample Collection Date
+  example: 2013-11-14
+- name: sample_tissue_laterality
+  type: categorical
+  description: Laterality of the tissue sample (i.e., which side of the body it was taken from).
+  caption: Sample Tissue Laterality
+  values:
+  - value: Left
+  - value: Right
+  - value: Midline
+- name: sample_tissue_site
+  type: categorical
+  description: Anatomical site from which the tissue sample was taken.
+  caption: Sample Tissue Site
+  values:
+  - value: Skin of scalp and neck
+  - value: Skin of upper limb and shoulder
+  - value: Skin of face
+  - value: Skin of trunk
+  - value: Skin of lower limb and hip
+  - value: Skin of hand, foot or nail
+  - value: Nasal cavity and paranasal sinuses
+  - value: Oral cavity and pharynx
+  - value: Skin, NOS
+  - value: Axillary or upper limb lymph node
+  - value: Inguinal, pelvic or lower limb lymph node
+  - value: Cervical lymph node
+  - value: Central or intra-abdominal lymph node
+  - value: Lymph node, NOS
+  - value: Soft tissue of head, face and neck
+  - value: Soft tissue of upper limb and shoulder
+  - value: Soft tissue of trunk
+  - value: Soft tissue of lower limb and hip
+  - value: Soft tissue, NOS
+  - value: Lung, NOS
+  - value: Spinal cord
+  - value: Brain, NOS
+  - value: Small intestine, NOS
+  - value: Liver, NOS
+  - value: Pancreas, NOS
+  - value: Bone, NOS
+  - value: Spleen
+  - value: Adrenal gland
+  - value: Abdomen, NOS
+  - value: Retroperitoneal space, NOS
+  - value: Parotid gland
+  - value: Vagina
+  - value: Endometrium
+  - value: Vulva
+  - value: Peritoneum, NOS
+  - value: Anus and anal canal
+  - value: Jejunum
+  - value: Thorax, NOS
+  - value: Colon, NOS
+  - value: Pelvis, NOS
+  - value: Other
+- name: sample_tissue_site_category
+  type: categorical
+  description: Broad category of the anatomical site from which the tissue sample was taken.
+  caption: Sample Tissue Site Category
+  values:
+  - value: Skin
+  - value: Mucosa
+  - value: Lymph node
+  - value: Soft tissue
+  - value: Other
+- name: sample_metastatic
+  type: boolean
+  description: Indicates whether the tissue sample is metastatic (True) or primary (False).
+  caption: Sample Metastatic
+  example: False
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Tumor Pathological Staging Metadata Fields
+# ----------------------------------------------------------------------------------------------------------------------
+
+- name: path_stage
+  type: categorical
+  description: Pathological stage of the disease at time of diagnosis.
+  caption: Disease Stage
+  values:
+  - value: 0
+  - value: 1
+  - value: 2
+  - value: 3
+  - value: 4
+- name: path_stage_substage
+  type: categorical
+  description: Substage of the pathological stage.
+  caption: Disease Substage
+  values:
+  - value: "0"
+  - value: 1A
+  - value: 1B
+  - value: 2A
+  - value: 2B
+  - value: 2C
+  - value: 3A
+  - value: 3B
+  - value: 3C
+  - value: 3D
+  - value: "4"
+- name: path_stage_tumor
+  type: categorical
+  description: Tumor (T) component of the pathological stage (based on AJCC 8th edition).
+  caption: Disease Stage (Tumor Component)
+  values:
+  - value: TX
+    description: Primary tumor cannot be assessed.
+  - value: T0
+    description: No evidence of primary tumor.
+  - value: Tis
+    description: Melanoma in situ.
+  - value: T1
+    description: Tumor thickness ≤1.0 mm.
+  - value: T2
+    description: Tumor thickness 1.01-2.0 mm.
+  - value: T3
+    description: Tumor thickness 2.01-4.0 mm.
+  - value: T4
+    description: Tumor thickness >4.0 mm.
+- name: path_stage_tumor_substage
+  type: categorical
+  description: Tumor (T) component of the pathological stage and substage (based on AJCC 8th edition).
+  caption: Disease Substage (Tumor Component)
+  values:
+  - value: TX
+    description: Primary tumor cannot be assessed.
+  - value: T0
+    description: No evidence of primary tumor.
+  - value: Tis
+    description: Melanoma in situ.
+  - value: T1a
+    description: Tumor thickness ≤0.8 mm without ulceration.
+  - value: T1b
+    description: Tumor thickness ≤0.8 mm with ulceration or tumor thickness 0.8-1.0 mm with or without ulceration.
+  - value: T2a
+    description: Tumor thickness 1.01-2.0 mm without ulceration.
+  - value: T2b
+    description: Tumor thickness 1.01-2.0 mm with ulceration.
+  - value: T3a
+    description: Tumor thickness 2.01-4.0 mm without ulceration.
+  - value: T3b
+    description: Tumor thickness 2.01-4.0 mm with ulceration.
+  - value: T4a
+    description: Tumor thickness >4.0 mm without ulceration.
+  - value: T4b
+    description: Tumor thickness >4.0 mm with ulceration.
+- name: path_stage_lymph
+  type: categorical
+  description: Lymph node (N) component of the pathological stage (based on AJCC 8th edition).
+  caption: Disease Stage (Lymph Node Component)
+  values:
+  - value: NX
+    description: Regional lymph nodes cannot be assessed.
+  - value: N0
+    description: No regional lymph node metastasis.
+  - value: N1
+    description: Metastasis in 1 regional lymph node.
+  - value: N2
+    description: |
+      Metastasis in 2-3 regional lymph nodes or in-transit, satellite, and/or microsatellite metastases
+      without metastatic regional lymph nodes.
+  - value: N3
+    description: |
+      Metastasis in 4 or more regional lymph nodes; or metastasis in regional lymph nodes with in-transit,
+      satellite, and/or microsatellite metastases.
+- name: path_stage_lymph_substage
+  type: categorical
+  description: Lymph node (N) component of the pathological stage and substage (based on AJCC 8th edition).
+  caption: Disease Substage (Lymph Node Component)
+  values:
+  - value: NX
+    description: Regional lymph nodes cannot be assessed.
+  - value: N0
+    description: No regional lymph node metastasis.
+  - value: N1a
+    description: |
+      Metastasis in 1 regional lymph node, clinically occult. No in-transit, satellite, or microsatellite metastases.
+  - value: N1b
+    description: |
+      Metastasis in 1 regional lymph node, clinically detected. No in-transit, satellite, or microsatellite
+      metastases.
+  - value: N2a
+    description: |
+      Metastasis in 2-3 regional lymph nodes, clinically occult. No in-transit, satellite, or microsatellite
+      metastases.
+  - value: N2b
+    description: |
+      Metastasis in 2-3 regional lymph nodes, clinically detected. No in-transit, satellite, or microsatellite
+      metastases.
+  - value: N2c
+    description: |
+      In-transit, satellite, and/or microsatellite metastases without metastatic regional lymph nodes.
+  - value: N3a
+    description: |
+      Metastasis in 4 or more regional lymph nodes, clinically occult. May include in-transit, satellite, and/or
+      microsatellite metastases.
+  - value: N3b
+    description: |
+      Metastasis in 4 or more regional lymph nodes, clinically detected. May include in-transit, satellite, and/or
+      microsatellite metastases.
+  - value: N3c
+    description: |
+      Metastasis in regional lymph nodes with in-transit, satellite, and/or microsatellite metastases.
+- name: path_stage_metastasis
+  type: categorical
+  description: Distant metastasis (M) component of the pathological stage (based on AJCC 8th edition).
+  caption: Disease Stage (Distant Metastasis Component)
+  values:
+  - value: MX
+    description: Distant metastasis cannot be assessed.
+  - value: M0
+    description: No distant metastasis.
+  - value: M1
+    description: Distant metastasis present.
+- name: path_stage_metastasis_substage
+  type: categorical
+  description: Distant metastasis (M) component of the pathological stage (based on AJCC 8th edition).
+  caption: Disease Substage (Distant Metastasis Component)
+  values:
+  - value: MX
+    description: Distant metastasis cannot be assessed.
+  - value: M0
+    description: No distant metastasis.
+  - value: M1a
+    description: Distant metastasis to skin, subcutaneous tissues, or distant lymph nodes.
+  - value: M1b
+    description: Distant metastasis to lung.
+  - value: M1c
+    description: Distant metastasis to non-CNS visceral sites.
+  - value: M1d
+    description: Distant metastasis to central nervous system (CNS) with or without other sites.
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Tumor Pathology Metadata Fields
+# ----------------------------------------------------------------------------------------------------------------------
+
+- name: path_histologic_subtype
+  type: categorical
+  description: Histologic subtype of the pathology.
+  caption: Histologic Subtype
+  values:
+  - value: Superficial spreading melanoma
+  - value: Nodular melanoma
+  - value: Lentigo maligna melanoma
+  - value: Acral lentiginous melanoma
+  - value: Melanoma, NOS
+  - value: Desmoplastic melanoma
+  - value: Mucosal melanoma
+  - value: Occult melanoma
+- name: path_thickness
+  type: float
+  unit: millimeters
+  description: Thickness of the tumor in millimeters.
+  caption: Tumor Thickness [mm]
+  example: 5.1
+- name: path_ulceration_present
+  type: boolean
+  description: Indicates whether ulceration is present (True) or absent (False) in the tumor pathology.
+  caption: Tumor Ulceration Present
+  example: False
+- name: path_anatomic_level
+  type: categorical
+  description: Anatomic (Clark) level of the tumor. Values range from 1 to 5.
+  caption: Tumor Anatomic (Clark) Level
+  values:
+  - value: 1
+  - value: 2
+  - value: 3
+  - value: 4
+  - value: 5
+- name: path_mitoses_rate
+  type: integer
+  description: |
+    Number of mitoses per square millimeter in the tumor pathology. They are estimated by the pathologist while
+    examining 10 high-power fields (HPF).
+  caption: Tumor Mitotic Rate [per mm²]
+  example: 3
+- name: path_mitoses_present
+  type: boolean
+  description: Indicates whether mitoses are present (True) or absent (False) in the tumor pathology.
+  caption: Tumor Mitoses Present
+  example: True
+- name: path_microsatellites_present
+  type: boolean
+  description: Indicates whether microsatellites are present (True) or absent (False) in the tumor pathology.
+  caption: Tumor Microsatellites Present
+  example: False
+- name: path_radial_growth_present
+  type: boolean
+  description: Indicates whether radial growth phase is present (True) or absent (False) in the tumor pathology.
+  caption: Tumor Radial Growth Present
+  example: True
+- name: path_vertical_growth_present
+  type: boolean
+  description: Indicates whether vertical growth phase is present (True) or absent (False) in the tumor pathology.
+  caption: Tumor Vertical Growth Present
+  example: True
+- name: path_vertical_growth_type
+  type: categorical
+  description: Type of vertical growth phase in the tumor pathology.
+  caption: Tumor Vertical Growth Type
+  values:
+  - value: Absent
+  - value: Epithelioid
+  - value: Epithelioid and small cell
+  - value: Epithelioid and spindled
+  - value: Small cell
+  - value: Spindled
+  - value: Other
+- name: path_precursor_lesion_present
+  type: boolean
+  description: Indicates whether a precursor lesion is present (True) or absent (False) in the tumor pathology.
+  caption: Precursor Lesion Present
+  example: False
+- name: path_precursor_lesion_type
+  type: categorical
+  description: Type of precursor lesion present in the tumor pathology.
+  caption: Precursor Lesion Type
+  values:
+  - value: Benign nevus
+  - value: Dysplastic nevus
+  - value: Lentigo maligna
+- name: path_til_presence
+  type: boolean
+  description: |
+    Indicates whether tumor-infiltrating lymphocytes (TILs) are present (True) or absent (False) in the tumor pathology.
+  caption: TIL Presence
+  example: True
+- name: path_til_pattern
+  type: categorical
+  description: Pattern of tumor-infiltrating lymphocytes (TILs) present in the tumor pathology.
+  caption: TIL Pattern
+  values:
+  - value: Absent
+  - value: Non-brisk
+  - value: Brisk
+- name: path_regression_present
+  type: boolean
+  description: Indicates whether regression is present (True) or absent (False) in the tumor pathology.
+  caption: Regression Present
+  example: False
+- name: path_perineural_invasion_present
+  type: boolean
+  description: Indicates whether perineural invasion is present (True) or absent (False) in the tumor pathology.
+  caption: Perineural Invasion Present
+  example: False
+- name: path_lymphovascular_invasion_present
+  type: boolean
+  description: Indicates whether lymphovascular invasion is present (True) or absent (False) in the tumor pathology.
+  caption: Lymphovascular Invasion Present
+  example: False
+- name: path_wle_margin
+  type: float
+  unit: millimeters
+  description: Width of the wide local excision (WLE) margin in millimeters.
+  caption: Wide Local Excision Margin [mm]
+  example: 2
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Omics Fields: Ploidy, Purity, and Genome Doubling
+# ----------------------------------------------------------------------------------------------------------------------
+
+
+- name: omics_braf_mutation_present
+  type: boolean
+  description: Indicates whether a BRAF mutation is present (True) or absent (False) in the tissue sample.
+  caption: Sample BRAF Mutation Present
+  example: True
+- name: omics_nras_mutation_present
+  type: boolean
+  description: Indicates whether an NRAS mutation is present (True) or absent (False) in the tissue sample.
+  caption: Sample NRAS Mutation Present
+  example: False
+- name: omics_tumor_mutation_burden
+  type: float
+  unit: mutations per megabase
+  description: Tumor mutation burden (TMB) of the tissue sample, measured in mutations per megabase.
+  caption: Sample Tumor Mutation Burden [mut/Mb]
+  example: 12.5
+- name: omics_ploidy_absolute
+  type: float
+  description: Ploidy value of the tumor sample based on the ABSOLUTE analysis method.
+  caption: Tumor Ploidy (ABSOLUTE)
+  example: 2.3
+- name: omics_purity_absolute
+  type: float
+  description: Purity value of the tumor sample based on the ABSOLUTE analysis method.
+  caption: Tumor Purity (ABSOLUTE)
+  example: 0.75
+- name: omics_genome_doubled_absolute
+  type: boolean
+  description: |
+    Indicates whether genome doubling is present (True) or absent (False) based on the ABSOLUTE analysis method.
+  caption: Genome Doubled (ABSOLUTE)
+  example: True
+- name: omics_ploidy_facets_auth
+  type: float
+  description: Ploidy value of the tumor sample based on the FACETS analysis method (author's version).
+  caption: Tumor Ploidy (FACETS - Author)
+  example: 2.5
+- name: omics_purity_facets_auth
+  type: float
+  description: Purity value of the tumor sample based on the FACETS analysis method (author's version).
+  caption: Tumor Purity (FACETS - Author)
+  example: 0.7
+- name: omics_genome_doubled_facets_auth
+  type: boolean
+  description: |
+    Indicates whether genome doubling is present (True) or absent (False) based on the FACETS analysis method
+    (author's version).
+  caption: Genome Doubled (FACETS - Author)
+  example: True
+- name: omics_ploidy_facets_supp
+  type: float
+  description: Ploidy value of the tumor sample based on the FACETS analysis method (supplementary material version).
+  caption: Tumor Ploidy (FACETS - Supplementary)
+  example: 2.4
+- name: omics_purity_facets_supp
+  type: float
+  description: Purity value of the tumor sample based on the FACETS analysis method (supplementary material version).
+  caption: Tumor Purity (FACETS - Supplementary)
+  example: 0.72
+- name: omics_genome_doubled_facets_supp
+  type: boolean
+  description: |
+    Indicates whether genome doubling is present (True) or absent (False) based on the FACETS analysis method
+    (supplementary material version).
+  caption: Genome Doubled (FACETS - Supplementary)
+  example: True
+- name: omics_ploidy_ascat
+  type: float
+  description: Ploidy value of the tumor sample based on the ASCAT analysis method.
+  caption: Tumor Ploidy (ASCAT)
+  example: 2.6
+- name: omics_purity_ascat
+  type: float
+  description: Purity value of the tumor sample based on the ASCAT analysis method.
+  caption: Tumor Purity (ASCAT)
+  example: 0.68
+- name: omics_genome_doubled_ascat
+  type: boolean
+  description: |
+    Indicates whether genome doubling is present (True) or absent (False) based on the ASCAT analysis method.
+  caption: Genome Doubled (ASCAT)
+  example: False
+
+# ----------------------------------------------------------------------------------------------------------------------
+# End of Data Dictionary
+# ----------------------------------------------------------------------------------------------------------------------

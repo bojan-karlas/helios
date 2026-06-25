@@ -1,0 +1,6 @@
+# Patch Morphology Analysis training overrides.
+cv:
+  n_folds: 5
+stages:
+  morphology_training:
+    params: {}

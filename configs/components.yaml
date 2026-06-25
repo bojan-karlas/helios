@@ -1,0 +1,602 @@
+# GENERATED from dev/notes/agent/pipeline-spec.yaml — do not hand-edit.
+# Regenerate via scripts/gen_registries.py (or the dev spec workflow).
+components:
+  cv_splits_generation:
+    title: CV Splits Generation
+    kind: processing
+    phase: preprocess
+    mode:
+    - train
+    fold: none
+    module: helios.data.cv_splits
+    consumes:
+    - image_metadata
+    produces:
+    - cv_splits
+    partitions: []
+    params:
+      n_folds: 5
+      val_fraction: 0.0
+      stratify_by:
+      - disease_pfs_recurrence_5yfu
+      group_by: patient_id
+      seed: 0
+  thumbnail_extraction:
+    title: Thumbnail Extraction
+    kind: processing
+    phase: preprocess
+    mode:
+    - train
+    - infer
+    fold: none
+    module: helios.processing.thumbnail
+    consumes:
+    - wsi
+    produces:
+    - thumbnail
+    partitions: []
+    params: {}
+  tile_extraction:
+    title: Tile Extraction
+    kind: processing
+    phase: preprocess
+    mode:
+    - train
+    - infer
+    fold: none
+    module: helios.processing.tiling
+    consumes:
+    - wsi
+    - image_metadata
+    produces:
+    - tile_metadata
+    - tiles
+    partitions:
+    - size_mm
+    - image_id
+    params:
+      size_mm:
+      - 0.0625
+      - 0.125
+      - 0.25
+  background_removal:
+    title: Background Removal
+    kind: processing
+    phase: preprocess
+    mode:
+    - train
+    - infer
+    fold: none
+    module: helios.processing.background
+    consumes:
+    - thumbnail
+    - tile_metadata
+    produces:
+    - tile_background
+    - background_mask
+    partitions:
+    - size_mm
+    - image_id
+    params: {}
+  stain_normalization:
+    title: Stain Normalization / Augmentation
+    kind: processing
+    phase: preprocess
+    mode:
+    - train
+    - infer
+    fold: none
+    module: helios.processing.normalization
+    consumes:
+    - tiles
+    - model_cyclegan
+    produces:
+    - tile_normalization
+    partitions:
+    - target
+    - size_mm
+    - image_id
+    params:
+      target:
+      - MGB+MRV
+      - VISIOMEL
+  feature_extraction:
+    title: Foundation Feature Extraction
+    kind: processing
+    phase: preprocess
+    mode:
+    - train
+    - infer
+    fold: none
+    module: helios.processing.features
+    consumes:
+    - tiles
+    produces:
+    - tile_features
+    partitions:
+    - size_mm
+    - model
+    - image_id
+    params:
+      model:
+      - virchow2
+  feature_extraction_normalized:
+    title: Foundation Feature Extraction (Normalized)
+    kind: processing
+    phase: preprocess
+    mode:
+    - train
+    - infer
+    fold: none
+    module: helios.processing.features
+    consumes:
+    - tile_normalization
+    produces:
+    - tile_normalization_features
+    partitions:
+    - target
+    - size_mm
+    - model
+    - image_id
+    params: {}
+  cell_segmentation:
+    title: CellViT++ Cell Segmentation
+    kind: inference
+    phase: cell
+    mode:
+    - train
+    - infer
+    fold: none
+    module: helios.models.cell.segmentation
+    consumes:
+    - wsi
+    produces:
+    - cells
+    partitions: []
+    params: {}
+  tumor_patch_extraction:
+    title: Tumor Cell Patch Extraction
+    kind: processing
+    phase: cell
+    mode:
+    - train
+    - infer
+    fold: none
+    module: helios.processing.tumor_patches
+    consumes:
+    - wsi
+    - cells
+    produces:
+    - tumor_cell_patches
+    partitions: []
+    params: {}
+  mitotic_classification:
+    title: OMG-Net Mitotic Figure Classification
+    kind: inference
+    phase: cell
+    mode:
+    - train
+    - infer
+    fold: none
+    module: helios.models.cell.mitotic
+    consumes:
+    - tumor_cell_patches
+    produces:
+    - mitotic_cells
+    partitions: []
+    params: {}
+  tile_cell_aggregation:
+    title: Per-Tile Cell Aggregation
+    kind: analysis
+    phase: cell
+    mode:
+    - train
+    - infer
+    fold: none
+    module: helios.analysis.cellular_composition
+    consumes:
+    - cells
+    - mitotic_cells
+    - tile_metadata
+    produces:
+    - tile_cell_counts
+    partitions: []
+    params: {}
+  cyclegan_training:
+    title: CycleGAN Stain-Augmentation Training
+    kind: training
+    phase: mil
+    mode:
+    - train
+    fold: none
+    module: helios.models.foundation.cyclegan
+    consumes:
+    - tiles
+    produces:
+    - model_cyclegan
+    partitions: []
+    params: {}
+  mil_training:
+    title: A-MIL Training
+    kind: training
+    phase: mil
+    mode:
+    - train
+    fold: map
+    module: helios.models.mil.train
+    consumes:
+    - tile_features
+    - tile_normalization_features
+    - tile_background
+    - image_metadata
+    - cv_splits
+    produces:
+    - model_mil
+    partitions:
+    - fold
+    - size_mm
+    - model
+    params:
+      aug_swap_prob: 0.5
+  mil_inference:
+    title: A-MIL Inference
+    kind: inference
+    phase: mil
+    mode:
+    - train
+    - infer
+    fold: map
+    module: helios.models.mil.infer
+    consumes:
+    - tile_features
+    - tile_background
+    - model_mil
+    produces:
+    - aligned_patch_embeddings
+    - patch_attention
+    - aligned_slide_embedding
+    - whole_image_risk_score
+    partitions:
+    - fold
+    params: {}
+  whole_image_risk_reduce:
+    title: Whole-Image Risk Reduction
+    kind: analysis
+    phase: mil
+    mode:
+    - train
+    - infer
+    fold: reduce
+    module: helios.models.mil.reduce
+    consumes:
+    - whole_image_risk_score
+    - cv_splits
+    produces:
+    - whole_image_risk_score_ensemble
+    partitions: []
+    params: {}
+  cellular_features_compute:
+    title: Cellular Composition Feature Computation
+    kind: analysis
+    phase: analysis
+    mode:
+    - train
+    - infer
+    fold: none
+    module: helios.analysis.cellular_composition
+    consumes:
+    - tile_cell_counts
+    produces:
+    - cellular_features
+    partitions: []
+    params: {}
+  cellular_risk_training:
+    title: Cellular Risk Training
+    kind: training
+    phase: analysis
+    mode:
+    - train
+    fold: map
+    module: helios.models.cellular.train
+    consumes:
+    - cellular_features
+    - image_metadata
+    - cv_splits
+    produces:
+    - model_cellular
+    partitions:
+    - fold
+    params: {}
+  cellular_risk_infer:
+    title: Cellular Risk Inference
+    kind: inference
+    phase: analysis
+    mode:
+    - train
+    - infer
+    fold: reduce
+    module: helios.models.cellular.infer
+    consumes:
+    - cellular_features
+    - model_cellular
+    - cv_splits
+    produces:
+    - cellular_risk_score
+    partitions: []
+    params: {}
+  concept_models_training:
+    title: Pathology Concept Training
+    kind: training
+    phase: analysis
+    mode:
+    - train
+    fold: map
+    module: helios.models.concepts.train
+    consumes:
+    - aligned_slide_embedding
+    - whole_image_risk_score
+    - image_metadata
+    - cv_splits
+    produces:
+    - model_concepts
+    partitions:
+    - fold
+    params:
+      n_bootstrap: 100
+  concept_infer:
+    title: Pathology Concept Inference
+    kind: inference
+    phase: analysis
+    mode:
+    - train
+    - infer
+    fold: reduce
+    module: helios.models.concepts.infer
+    consumes:
+    - aligned_slide_embedding
+    - whole_image_risk_score
+    - model_concepts
+    - cv_splits
+    produces:
+    - path_concept_predictions
+    - path_concept_risk_score
+    partitions: []
+    params: {}
+  morphology_training:
+    title: Morphology Clustering Risk Training
+    kind: training
+    phase: analysis
+    mode:
+    - train
+    fold: map
+    module: helios.models.morphology.train
+    consumes:
+    - aligned_patch_embeddings
+    - patch_attention
+    - image_metadata
+    - cv_splits
+    produces:
+    - model_morphology
+    partitions:
+    - fold
+    params: {}
+  morphology_infer:
+    title: Morphology Clustering Risk Inference
+    kind: inference
+    phase: analysis
+    mode:
+    - train
+    - infer
+    fold: reduce
+    module: helios.models.morphology.infer
+    consumes:
+    - aligned_patch_embeddings
+    - patch_attention
+    - model_morphology
+    - cv_splits
+    produces:
+    - tile_clusters
+    - patch_morphology_presence
+    - patch_morphology_risk_score
+    partitions: []
+    params: {}
+  staging_risk_training:
+    title: Staging Risk Training
+    kind: training
+    phase: analysis
+    mode:
+    - train
+    fold: map
+    module: helios.models.staging.train
+    consumes:
+    - image_metadata
+    - cv_splits
+    produces:
+    - model_staging
+    partitions:
+    - fold
+    params:
+      feature: path_stage_substage
+      target: disease_pfs_recurrence_5yfu
+      estimator: sklearn_linear
+  staging_risk_infer:
+    title: Staging Risk Inference
+    kind: inference
+    phase: analysis
+    mode:
+    - train
+    - infer
+    fold: reduce
+    module: helios.models.staging.infer
+    consumes:
+    - image_metadata
+    - model_staging
+    - cv_splits
+    produces:
+    - staging_risk_score
+    partitions: []
+    params: {}
+  clinical_risk_training:
+    title: Clinical Risk Training
+    kind: training
+    phase: analysis
+    mode:
+    - train
+    fold: map
+    module: helios.models.clinical.train
+    consumes:
+    - image_metadata
+    - cv_splits
+    produces:
+    - model_clinical
+    partitions:
+    - fold
+    params:
+      features:
+      - patient_age_at_diagnosis
+      - patient_sex
+      - sample_tissue_site_category
+      target: disease_pfs_recurrence_5yfu
+      estimator: sklearn_linear
+  clinical_risk_infer:
+    title: Clinical Risk Inference
+    kind: inference
+    phase: analysis
+    mode:
+    - train
+    - infer
+    fold: reduce
+    module: helios.models.clinical.infer
+    consumes:
+    - image_metadata
+    - model_clinical
+    - cv_splits
+    produces:
+    - clinical_risk_score
+    partitions: []
+    params: {}
+  fusion_training:
+    title: HELIOS Risk Training
+    kind: training
+    phase: fusion
+    mode:
+    - train
+    fold: map
+    module: helios.models.fusion.train
+    consumes:
+    - cellular_risk_score
+    - path_concept_risk_score
+    - patch_morphology_risk_score
+    - staging_risk_score
+    - clinical_risk_score
+    - image_metadata
+    - cv_splits
+    produces:
+    - model_fusion
+    partitions:
+    - fold
+    params: {}
+  fusion_infer:
+    title: HELIOS Risk Inference
+    kind: fusion
+    phase: fusion
+    mode:
+    - train
+    - infer
+    fold: reduce
+    module: helios.models.fusion.infer
+    consumes:
+    - cellular_risk_score
+    - path_concept_risk_score
+    - patch_morphology_risk_score
+    - staging_risk_score
+    - clinical_risk_score
+    - model_fusion
+    - cv_splits
+    produces:
+    - helios_risk_score
+    - survival_curve
+    partitions: []
+    params: {}
+  case_report_build:
+    title: Case Report (JSON)
+    kind: report
+    phase: report
+    mode:
+    - infer
+    fold: none
+    module: helios.report.case_report
+    consumes:
+    - helios_risk_score
+    - whole_image_risk_score_ensemble
+    - survival_curve
+    - path_concept_predictions
+    - cellular_features
+    - patch_morphology_presence
+    - tile_clusters
+    - cells
+    - tile_cell_counts
+    produces:
+    - case_report
+    partitions: []
+    params: {}
+  assets_render:
+    title: Render Assets
+    kind: report
+    phase: report
+    mode:
+    - infer
+    fold: reduce
+    module: helios.report.assets
+    consumes:
+    - case_report
+    - tile_metadata
+    - tile_clusters
+    - patch_attention
+    - cells
+    - thumbnail
+    - cv_splits
+    produces:
+    - case_assets
+    partitions: []
+    params: {}
+  markdown_render:
+    title: Case Report (Markdown)
+    kind: report
+    phase: report
+    mode:
+    - infer
+    fold: none
+    module: helios.report.markdown
+    consumes:
+    - case_report
+    - case_assets
+    produces:
+    - case_report_md
+    partitions: []
+    params: {}
+  cohort_summarize:
+    title: Cohort Summary View
+    kind: report
+    phase: report
+    mode:
+    - infer
+    fold: none
+    module: helios.report.summary
+    consumes:
+    - helios_risk_score
+    - cellular_risk_score
+    - path_concept_risk_score
+    - patch_morphology_risk_score
+    - staging_risk_score
+    - clinical_risk_score
+    - whole_image_risk_score_ensemble
+    - cellular_features
+    - path_concept_predictions
+    - patch_morphology_presence
+    - survival_curve
+    - image_metadata
+    produces:
+    - cohort_summary
+    partitions: []
+    params: {}

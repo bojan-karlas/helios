@@ -1,0 +1,898 @@
+# ======================================================================================================================
+# HELIOS Pipeline Specification
+# ----------------------------------------------------------------------------------------------------------------------
+# Purpose: a single, editable source of truth describing every functional component of the HELIOS pipeline
+#          (data processing, model training, inference, analysis, reporting), with explicit inputs/outputs.
+#
+# How the DAG works (IMPORTANT):
+#   - The pipeline graph is BIPARTITE — it always has exactly two kinds of nodes:
+#       (1) ARTIFACTS  (data nodes)     = every file/table the pipeline reads or writes (see `artifacts:`).
+#       (2) COMPONENTS (operator nodes) = functional units that consume artifacts and produce artifacts.
+#   - Each component declares `consumes:` and `produces:` lists of ARTIFACT ids.
+#   - Edges are derived DIRECTLY from those lists (no hand-maintained dependencies):
+#       artifact  --> component   for each id in the component's `consumes`
+#       component --> artifact    for each id in the component's `produces`
+#   - Keep `consumes`/`produces` correct and the bipartite graph stays consistent by construction.
+#   - render-pipeline-workflow-diagram.py walks these lists to emit Mermaid/Graphviz
+#     (data nodes, trainable-operator nodes, and plain-operator nodes are colored distinctly).
+#
+# Conventions:
+#   - id:          stable snake_case identifier (used as DAG node id and to match artifacts).
+#   - kind:        processing | training | inference | analysis | fusion | report
+#   - trainable:   (optional bool) marks a model-fitting step for diagram coloring.
+#                  Defaults to (kind == training) when omitted.
+#   - phase:       preprocess | cell | mil | analysis | fusion | report   (coarse grouping for layout/coloring)
+#   - mode:        [train, infer] which workflow(s) the component runs in (some run in both, some train-only).
+#   - fold:        none | map | reduce   (how the component relates to CV folds; default none)
+#                  none   = fold-agnostic (pre-CV or no per-fold behavior).
+#                  map    = runs ONCE PER FOLD (parallel work unit), emits per-fold artifacts (fold in key/path).
+#                  reduce = consumes the K per-fold artifacts (+ cv_splits) and emits reduced (fold-free) outputs.
+#   - module:      target python module (where the code WILL live). Stubs first.
+#   - consumes/produces: artifact ids.
+#   - params:      free-form knobs (resolution choices, thresholds...). Edit freely.
+#   - notes:       anything else.
+#
+# ARTIFACT identity & storage (replaces the old `scope`):
+#   - key:         the field(s) that UNIQUELY identify one record/instance of the artifact
+#                  (the entity grain). e.g. tiles -> [size_mm, image_id, tile_id]; image_metadata -> [image_id].
+#                  An empty key ([]) means a singleton artifact (e.g. a model bundle).
+#   - path:        a RELATIVE filepath TEMPLATE (str) with `{field}` placeholders drawn from `key`.
+#                  It is relative to a dataset root that is resolved at RUNTIME and may differ by role
+#                  (input vs. intermediate vs. output, possibly scoped by job_id) -- TBD.
+#                  Placeholders that appear in `path` determine the file granularity (one file per distinct
+#                  combination of those fields); key fields NOT in `path` become the ROWS within each file.
+#                  Hive-style `field={field}/` segments are used for partition-like dirs; the final segment
+#                  is the file (with extension). e.g. tile_features key=[size_mm,model,image_id,tile_id]
+#                  path=preprocessing/tile_features/size_mm={size_mm}/{model}/{image_id}/{image_id}.hdf5
+#                  -> one file per (size_mm,model,image_id) with one row per tile_id.
+#                  NOTE: `tile_id` is the positional index of a tile's row within its (row-oriented) file;
+#                        the grid coords `tile_row`, `tile_col` are available as columns alongside it.
+#
+# CROSS-VALIDATION & FOLDS:
+#   - K-fold CV is OPTIONAL and driven by cv_splits (image_id -> fold, split). Absent => K=1, no folds.
+#   - `fold` is an OPTIONAL key dimension. When present it is ALWAYS the outermost coordinate and materializes
+#     as a `fold={fold}/` PATH SEGMENT (never a column). An artifact is one of:
+#       (a) per-fold     -> `fold` in key + `fold={fold}/` in path  => K physical instances (one per fold).
+#                           These are the K independently-fit models and the MIL outputs consumed by per-fold
+#                           training (embeddings, attention, per-fold whole-image score).
+#       (b) reduced      -> NO `fold` in key/path; ONE instance per image. Produced by a fold-aware (reduce)
+#                           component that collapses the K per-fold inputs: OUT-OF-FOLD selection on the CV
+#                           cohort (each image scored by its TEST-fold model) / ENSEMBLE average on deploy.
+#                           Reduced SCORE tables additionally carry a `fold` PROVENANCE COLUMN (= the test fold
+#                           that produced each image's OOF value; null on deploy/ensemble) so fold-stratified
+#                           evaluation (per-fold bootstrap -> average across folds -> CI/median) works directly.
+#       (c) fold-free    -> computed before/independently of CV (preprocessing, cells, cellular_features). No fold.
+#   - When BOTH the per-fold and the reduced value have real consumers, they are TWO artifacts joined by an
+#     explicit reduce component (the only case today: whole_image_risk_score [per-fold] ->
+#     whole_image_risk_score_ensemble [reduced]); otherwise reduction is private inside the producing component.
+# ======================================================================================================================
+
+version: 0.1
+
+# ----------------------------------------------------------------------------------------------------------------------
+# ARTIFACT REGISTRY  (data nodes of the bipartite graph). Add/rename artifacts here; components reference these ids.
+# Identity = `key`; physical layout = `path` template (see header legend above).
+# ----------------------------------------------------------------------------------------------------------------------
+artifacts:
+
+  # --- user-provided input ---
+
+  - id: wsi
+    title: Whole Slide Image
+    key: [image_id]
+    format: svs/tiff/ndpi
+    path: wsi/{image_id}.svs
+    description: |
+      H&E-stained whole slide image. Flat set under wsi/ (subfolders cosmetic, ignored).
+
+  - id: image_metadata
+    title: Image Metadata Table
+    key: [image_id]
+    format: csv
+    path: metadata/image_metadata.csv
+    description: |
+      image_metadata.csv (join of sample_metadata [labels+patient] + image_file_metadata [tech]). Conforms to
+      image_metadata.datadict.yaml. Authoritative source of labels, pathology concepts, staging.
+
+  - id: cv_splits
+    title: Cross-Validation Splits
+    key: [image_id, fold]
+    format: csv
+    path: metadata/cv_splits.csv
+    description: |
+      OPTIONAL tidy long table assigning each image to CV folds. Columns: image_id, fold, split in {train,val?,test}
+      (val optional — if absent and a model needs validation, it does a random train/val split of the train rows).
+      One row per (image_id, fold). Cohort-level single file (like image_metadata.csv). On the training cohort each
+      image appears in exactly one fold's test split (its OOF/provenance fold). Fold cardinality is driven by
+      cv_splits ONLY on the training cohort (absent => K=1, trained without CV); at inference folds come from the
+      shipped per-fold models and absent cv_splits just means reduce uses ensemble (not OOF). Generated by
+      cv_splits_generation from image_metadata.
+
+  # --- preprocessing artifacts (produced) ---
+
+  - id: background_mask
+    title: Background Mask (Debug)
+    key: [image_id]
+    format: png
+    path: debug/background_mask/{image_id}.png
+    description: |
+      Thumbnail-resolution binary mask of background/non-tissue pixels from color-based processing. Used to derive
+      per-tile background flags; saved mainly for debugging/QC.
+
+  - id: tile_metadata
+    title: Tile Metadata
+    key: [size_mm, image_id, tile_id]
+    format: parquet
+    path: metadata/tile_metadata/size_mm={size_mm}/{image_id}.parquet
+    description: |
+      Per-tile grid + pixel coords. Row-oriented: one row per tile, indexed by tile_id (the row's position).
+      Columns: tile_row, tile_col, tile_x, tile_y, tile_width, tile_height.
+
+  - id: tiles
+    title: Tile Images
+    key: [size_mm, image_id, tile_id]
+    format: hdf5
+    path: tiles/size_mm={size_mm}/{image_id}/{image_id}.hdf5
+    description: |
+      Extracted tile image ndarrays (every tile in the grid, background not yet removed).
+
+  - id: tile_background
+    title: Tile Background Flags
+    key: [size_mm, image_id, tile_id]
+    format: parquet
+    path: preprocessing/tile_background/size_mm={size_mm}/{image_id}.parquet
+    description: |
+      Per-tile binary background flag — 1 if the tile maps onto background_mask pixels. Consumed downstream to drop
+      non-tissue tiles (NOT used to gate feature extraction).
+
+  - id: tile_features
+    title: Tile (Patch) Embeddings
+    key: [size_mm, model, image_id, tile_id]
+    format: hdf5
+    path: preprocessing/tile_features/size_mm={size_mm}/{model}/{image_id}/{image_id}.hdf5
+    description: |
+      Foundation-model embedding per tile. model in {virchow2,uni,uni2,conch,conch1.5,chief,
+      ctranspath,dino,gigapath,musk,phikon2,resnet-50}.
+
+  - id: tile_normalization
+    title: Stain-Normalized Tiles
+    key: [target, size_mm, image_id, tile_id]
+    format: hdf5
+    path: preprocessing/tile_normalization/target={target}/size_mm={size_mm}/{image_id}/{image_id}.hdf5
+    description: Stain-normalized/augmented tiles. target is the dataset used to train a stain normalizer.
+
+  - id: tile_normalization_features
+    title: Stain-Normalized Tile Embeddings
+    key: [target, size_mm, model, image_id, tile_id]
+    format: hdf5
+    path: preprocessing/tile_normalization_features/target={target}/size_mm={size_mm}/{model}/{image_id}/{image_id}.hdf5
+    description: Foundation embeddings computed on stain-normalized tiles.
+
+  - id: thumbnail
+    title: Slide Thumbnail
+    key: [image_id]
+    format: png
+    path: thumbnails/{image_id}.png
+    description: |
+      Low-resolution full-slide RGB thumbnail extracted directly from the WSI; input to color-based background
+      detection.
+
+  # --- cell pipeline artifacts ---
+
+  - id: cells
+    title: Classified Cell Coordinates
+    key: [image_id, cell_id]
+    format: parquet
+    path: cells/cell_coordinates/{image_id}.parquet
+    description: |
+      All CellViT++ detected cells with location and type (tumor/immune/connective/epithelial/other).
+
+  - id: tumor_cell_patches
+    title: Tumor Cell Patches
+    key: [image_id, cell_id]
+    format: hdf5
+    path: cells/tumor_cell_patches/{image_id}.hdf5
+    description: |
+      Square image patches centered on detected tumor cells (input to OMG-Net mitotic classifier).
+
+  - id: mitotic_cells
+    title: Mitotic Figure Labels
+    key: [image_id, cell_id]
+    format: parquet
+    path: cells/mitotic/{image_id}.parquet
+    description: Per tumor-cell binary mitotic-figure prediction (OMG-Net).
+
+  - id: tile_cell_counts
+    title: Per-Tile Cell Counts
+    key: [size_mm, image_id, tile_id]
+    format: parquet
+    path: cells/tile_counts/size_mm={size_mm}/{image_id}.parquet
+    description: n_tumor, n_lymph, n_mitosis per tile.
+
+  # --- MIL artifacts ---
+
+  - id: aligned_patch_embeddings
+    title: Aligned Patch Embeddings
+    key: [fold, image_id, tile_id]
+    format: hdf5
+    path: mil/patch_embeddings/fold={fold}/{image_id}.hdf5
+    description: |
+      A-MIL alignment-projected patch embeddings (recurrence-aligned space). Per-fold: one set per fold MIL model
+      (consumed by per-fold morphology training).
+
+  - id: patch_attention
+    title: Patch Attention Scores
+    key: [fold, image_id, tile_id]
+    format: parquet
+    path: mil/attention/fold={fold}/{image_id}.parquet
+    description: |
+      A-MIL attention score per patch. Per-fold (one per fold MIL model); reporting OOF-selects the image's
+      test-fold attention.
+
+  - id: aligned_slide_embedding
+    title: Aligned Slide Embedding
+    key: [fold, image_id]
+    format: npy
+    path: mil/slide_embedding/fold={fold}/{image_id}.npy
+    description: |
+      A-MIL attention-pooled, alignment-projected slide-level embedding. Per-fold (one per fold MIL model);
+      consumed by per-fold concept training/inference.
+
+  - id: whole_image_risk_score
+    title: Whole-Image Risk Score (Per-Fold)
+    key: [fold, image_id]
+    format: csv
+    path: mil/fold={fold}/whole_image_risk_score.csv
+    description: |
+      A-MIL classifier scalar risk, PER FOLD: one CSV per fold (one row per image_id scored by that fold's MIL
+      model). Consumed per-fold by concept training/inference (the concept residual regressor is fit per fold).
+      Reduced to whole_image_risk_score_ensemble for shipping.
+
+  - id: whole_image_risk_score_ensemble
+    title: Whole-Image Risk Score (Ensemble)
+    key: [image_id]
+    format: csv
+    path: results/whole_image_risk_score.csv
+    description: |
+      Shipped whole-image risk: one row per image_id, OOF on the CV cohort (test-fold model) / ensemble-averaged on
+      deploy. Carries a `fold` provenance column (= test fold producing each image's OOF value; null on deploy).
+
+  # --- analysis artifacts (per-module sub-scores + features) ---
+
+  - id: cellular_features
+    title: Cellular Composition Features
+    key: [image_id]
+    format: csv
+    path: results/cellular_features.csv
+    description: eTIL, mitosis-to-tumor ratio, TIL coverage, mitotic coverage.
+
+  - id: cellular_risk_score
+    title: Cellular Composition Risk Score
+    key: [image_id]
+    format: csv
+    path: results/cellular_risk_score.csv
+    description: |
+      Recurrence-risk sub-score from the cellular composition model. One row per image (OOF/ensemble) + `fold`
+      provenance column (test fold; null on deploy).
+
+  - id: path_concept_predictions
+    title: Concept Predictions
+    key: [image_id]
+    format: csv
+    path: results/path_concept_predictions.csv
+    description: |
+      Predicted pathological concepts (ulceration, breslow, mitotic rate, radial growth, ...).
+
+  - id: path_concept_risk_score
+    title: Concept-Based Risk Score
+    key: [image_id]
+    format: csv
+    path: results/path_concept_risk_score.csv
+    description: |
+      Recurrence-risk sub-score from the concept-bottleneck model (+ residual correction). One row per image
+      (OOF/ensemble) + `fold` provenance column (test fold; null on deploy).
+
+  - id: tile_clusters
+    title: Per-Tile Cluster Assignments
+    key: [image_id, tile_id]
+    format: parquet
+    path: morphology/clusters/{image_id}.parquet
+    description: |
+      Leiden cluster id (+ attention) per high-attention tile. Reduced (OOF on CV cohort: image's test-fold
+      morphology model / ensemble on deploy); one assignment per image.
+
+  - id: patch_morphology_presence
+    title: Cluster Presence Scores
+    key: [image_id]
+    format: csv
+    path: results/patch_morphology_presence.csv
+    description: |
+      Per-slide presence/proportion of each morphology cluster (feature for the morphology risk model).
+
+  - id: patch_morphology_risk_score
+    title: Patch Morphology Risk Score
+    key: [image_id]
+    format: csv
+    path: results/patch_morphology_risk_score.csv
+    description: |
+      Recurrence-risk sub-score from the cluster-presence morphology model. One row per image (OOF/ensemble) +
+      `fold` provenance column (test fold; null on deploy).
+
+  - id: staging_risk_score
+    title: Staging Risk Score
+    key: [image_id]
+    format: csv
+    path: results/staging_risk_score.csv
+    description: |
+      Recurrence-risk sub-score; linear model on AJCC stage feature (default path_stage_substage). One row per
+      image (OOF/ensemble) + `fold` provenance column (test fold; null on deploy).
+
+  - id: clinical_risk_score
+    title: Clinical Risk Score
+    key: [image_id]
+    format: csv
+    path: results/clinical_risk_score.csv
+    description: |
+      Recurrence-risk sub-score; linear model on clinical features (default patient_age_at_diagnosis, patient_sex,
+      sample_tissue_site_category). One row per image (OOF/ensemble) + `fold` provenance column (test fold; null
+      on deploy).
+
+  # --- fusion + outputs ---
+
+  - id: helios_risk_score
+    title: HELIOS Risk Score
+    key: [image_id]
+    format: csv
+    path: results/helios_risk_score.csv
+    description: |
+      Final fused recurrence-risk scores. One row per image_id with columns risk_helios (image-only, excludes
+      staging) and risk_helios_s (HELIOS + staging sub-score). OOF/ensemble + `fold` provenance column (test fold;
+      null on deploy).
+
+  - id: survival_curve
+    title: Survival Curve
+    key: [image_id, time]
+    format: csv
+    path: results/survival_curve/{image_id}.csv
+    description: |
+      Predicted recurrence-free probability over time, one CSV per image_id (rows = timepoints; columns time, recurrence_free_prob).
+
+  - id: case_report
+    title: Case Report (JSON)
+    key: [image_id]
+    format: json
+    path: reports/{image_id}/report.json
+    description: |
+      Authoritative structured per-image report (headline risk, sub-scores, concepts, refs).
+
+  - id: case_report_md
+    title: Case Report (Markdown)
+    key: [image_id]
+    format: md
+    path: reports/{image_id}/report.md
+    description: |
+      Human-readable report rendered from case_report.json (Jinja2); embeds assets; PDF source.
+
+  - id: case_assets
+    title: Rendered Report Assets
+    key: [image_id, asset_id]
+    format: png
+    path: reports/{image_id}/assets/{asset_id}.png
+    description: |
+      Pre-rendered figures referenced by the report (attention/cluster/TIL/mitosis overlays).
+
+  - id: cohort_summary
+    title: Cohort Summary Table
+    key: [image_id]
+    format: csv
+    path: reports/cohort_summary.csv
+    description: |
+      Wide cohort table: one row per image_id, JOINed from the per-component batch result CSVs (+ image_metadata).
+
+  # --- trained model bundles (consumed by inference) ---
+
+  - id: model_mil
+    title: A-MIL Model Bundle
+    key: [fold]
+    path: models/mil/fold={fold}/checkpoint.pt
+    description: |
+      Attention-MIL bundle (alignment + attention + pooling + classifier). One per fold (K independently-fit
+      models; ensembled at deploy, never a single all-data model).
+
+  - id: model_concepts
+    title: Concept Models Bundle
+    key: [fold]
+    path: models/concepts/fold={fold}/checkpoint.pt
+    description: |
+      Per-fold bundle of concept models: for EACH concept, a SET of linear probes (LogReg categorical / Ridge
+      numerical) produced by BOOTSTRAPPING the concept-training set (n_bootstrap replicas, default ~100) so concept
+      predictions come with an uncertainty distribution. Also holds the concept risk model + residual
+      error-correction model. One bundle per fold (each internally holds n_bootstrap x n_concepts probes).
+
+  - id: model_cellular
+    title: Cellular Composition Risk Model
+    key: [fold]
+    path: models/cellular/fold={fold}/model.pkl
+    description: Simple ML risk model (LogReg/RandomForest) over cellular composition features. One per fold.
+
+  - id: model_morphology
+    title: Morphology Model Bundle
+    key: [fold]
+    path: models/morphology/fold={fold}/model.pkl
+    description: PCA + Leiden clustering + cluster-presence risk model. One per fold.
+
+  - id: model_fusion
+    title: HELIOS Risk Model
+    key: [fold]
+    path: models/fusion/fold={fold}/model.pkl
+    description: Simple model combining sub-scores into the final HELIOS / HELIOS-S risk. One per fold.
+
+  - id: model_staging
+    title: Staging Risk Model
+    key: [fold]
+    path: models/staging/fold={fold}/model.pkl
+    description: sklearn linear model mapping AJCC stage feature to recurrence risk. One per fold.
+
+  - id: model_clinical
+    title: Clinical Risk Model
+    key: [fold]
+    path: models/clinical/fold={fold}/model.pkl
+    description: sklearn linear model mapping clinical features to recurrence risk. One per fold.
+
+  - id: model_cyclegan
+    title: CycleGAN Stain Generator
+    key: [target]
+    path: models/cyclegan/target={target}/checkpoint.pt
+    description: Stain normalization/augmentation generator (train-only).
+
+# ----------------------------------------------------------------------------------------------------------------------
+# COMPONENTS  (operator nodes of the bipartite graph = future modules). Edit inputs/outputs/description freely.
+# NOTE: a component's `partitions` lists the dimensions it FANS OUT over when run (parallel work units),
+#       which is distinct from an artifact's `path` template (on-disk file layout).
+# ----------------------------------------------------------------------------------------------------------------------
+components:
+
+  # ===== CROSS-VALIDATION SETUP =====
+
+  - id: cv_splits_generation
+    title: CV Splits Generation
+    kind: processing
+    phase: preprocess
+    mode: [train]
+    fold: none
+    module: helios.data.cv_splits
+    consumes: [image_metadata]
+    produces: [cv_splits]
+    params:
+      n_folds: 5
+      val_fraction: 0.0        # >0 to carve a val split out of each fold's train rows
+      stratify_by: [disease_pfs_recurrence_5yfu]   # configurable; group_by patient to avoid leakage
+      group_by: patient_id
+      seed: 0
+    description: |
+      Generate the cv_splits.csv for a cohort from image_metadata: assign each image to K folds (optionally
+      patient-grouped to prevent leakage, optionally stratified by label). Train-only, run once per training cohort.
+
+  # ===== PREPROCESSING =====
+
+  - id: thumbnail_extraction
+    title: Thumbnail Extraction
+    kind: processing
+    phase: preprocess
+    mode: [train, infer]
+    module: helios.processing.thumbnail
+    consumes: [wsi]
+    produces: [thumbnail]
+    description: Extract a low-resolution full-slide RGB thumbnail directly from the WSI.
+
+  - id: tile_extraction
+    title: Tile Extraction
+    kind: processing
+    phase: preprocess
+    mode: [train, infer]
+    module: helios.processing.tiling
+    consumes: [wsi, image_metadata]
+    produces: [tile_metadata, tiles]
+    partitions: [size_mm, image_id]
+    params:
+      size_mm: [0.0625, 0.125, 0.250]
+    description: |
+      Partition the slide into a fixed-size tile grid; record per-tile coords and extract tile images.
+
+  - id: background_removal
+    title: Background Removal
+    kind: processing
+    phase: preprocess
+    mode: [train, infer]
+    module: helios.processing.background
+    consumes: [thumbnail, tile_metadata]
+    produces: [tile_background, background_mask]
+    partitions: [size_mm, image_id]
+    description: |
+      Color-based background detection on the thumbnail -> background pixel mask; map every tile onto the mask to set
+      a per-tile background flag. Emits tile_background (flags) and background_mask (debug image).
+
+  - id: stain_normalization
+    title: Stain Normalization / Augmentation
+    kind: processing
+    phase: preprocess
+    mode: [train, infer]
+    module: helios.processing.normalization
+    consumes: [tiles, model_cyclegan]
+    produces: [tile_normalization]
+    partitions: [target, size_mm, image_id]
+    params:
+      target: [MGB+MRV, VISIOMEL]
+    description: |
+      Apply stain normalization/augmentation (CycleGAN) to reduce staining variability.
+
+  - id: feature_extraction
+    title: Foundation Feature Extraction
+    kind: processing
+    phase: preprocess
+    mode: [train, infer]
+    module: helios.processing.features
+    consumes: [tiles]
+    produces: [tile_features]
+    partitions: [size_mm, model, image_id]
+    params:
+      model: [virchow2]     # default best; others available
+    description: |
+      Encode EVERY tile into a foundation-model embedding (background tiles are NOT skipped, so changing the
+      background algorithm does not require re-extracting features).
+
+  - id: feature_extraction_normalized
+    title: Foundation Feature Extraction (Normalized)
+    kind: processing
+    phase: preprocess
+    mode: [train, infer]
+    module: helios.processing.features
+    consumes: [tile_normalization]
+    produces: [tile_normalization_features]
+    partitions: [target, size_mm, model, image_id]
+    description: Foundation embeddings computed on stain-normalized tiles (optional variant).
+
+  # ===== CELL DETECTION & CLASSIFICATION PIPELINE =====
+
+  - id: cell_segmentation
+    title: CellViT++ Cell Segmentation
+    kind: inference
+    phase: cell
+    mode: [train, infer]
+    module: helios.models.cell.segmentation
+    consumes: [wsi]
+    produces: [cells]
+    description: |
+      Run pretrained CellViT++ (from its pip package) to instance-segment all cells and classify type
+      (tumor/immune/connective/epithelial/other) with coordinates. CellViT applies its OWN internal background
+      detection, so no tile_background/mask input is needed here.
+
+  - id: tumor_patch_extraction
+    title: Tumor Cell Patch Extraction
+    kind: processing
+    phase: cell
+    mode: [train, infer]
+    module: helios.processing.tumor_patches
+    consumes: [wsi, cells]
+    produces: [tumor_cell_patches]
+    description: Cut square patches centered on detected tumor cells for mitotic classification.
+
+  - id: mitotic_classification
+    title: OMG-Net Mitotic Figure Classification
+    kind: inference
+    phase: cell
+    mode: [train, infer]
+    module: helios.models.cell.mitotic
+    consumes: [tumor_cell_patches]
+    produces: [mitotic_cells]
+    description: |
+      Pass tumor-cell patches through OMG-Net (vendored ResNet-18 model code with pretrained weights) to flag
+      mitotic figures. Inference only — OMG-Net is trained in a separate repo.
+
+  - id: tile_cell_aggregation
+    title: Per-Tile Cell Aggregation
+    kind: analysis
+    phase: cell
+    mode: [train, infer]
+    module: helios.analysis.cellular_composition
+    consumes: [cells, mitotic_cells, tile_metadata]
+    produces: [tile_cell_counts]
+    description: |
+      Count tumor/immune/mitosis per tile (background debris removed using DBSCAN);
+      threshold-classify tiles (TIL-/mitosis-dominant).
+
+  # ===== WHOLE-SLIDE MIL PIPELINE =====
+
+  - id: cyclegan_training
+    title: CycleGAN Stain-Augmentation Training
+    kind: training
+    phase: mil
+    mode: [train]
+    module: helios.models.foundation.cyclegan
+    consumes: [tiles]
+    produces: [model_cyclegan]
+    description: Train stain augmentation generator (train-only).
+
+  - id: mil_training
+    title: A-MIL Training
+    kind: training
+    phase: mil
+    mode: [train]
+    fold: map
+    module: helios.models.mil.train
+    consumes: [tile_features, tile_normalization_features, tile_background, image_metadata, cv_splits]
+    produces: [model_mil]
+    partitions: [fold, size_mm, model]
+    params:
+      aug_swap_prob: 0.5
+    description: |
+      Train A-MIL (alignment + attention + weighted pooling + classifier) on labels. Runs once per fold (on that
+      fold's train split from cv_splits) -> one model_mil per fold. Uses tile_background to exclude background
+      tiles. Stain-augmentation = with probability aug_swap_prob, a tile's normal embedding (tile_features) is
+      swapped for its stain-normalized counterpart (tile_normalization_features).
+
+  - id: mil_inference
+    title: A-MIL Inference
+    kind: inference
+    phase: mil
+    mode: [train, infer]
+    fold: map
+    module: helios.models.mil.infer
+    consumes: [tile_features, tile_background, model_mil]
+    produces: [aligned_patch_embeddings, patch_attention, aligned_slide_embedding, whole_image_risk_score]
+    partitions: [fold]
+    description: |
+      For each fold's MIL model, score ALL images -> per-fold aligned patch/slide embeddings, attention, and
+      whole-image risk (background tiles excluded via tile_background). Per-fold outputs feed per-fold downstream
+      training; the whole-image score is reduced separately (whole_image_risk_reduce).
+
+  - id: whole_image_risk_reduce
+    title: Whole-Image Risk Reduction
+    kind: analysis
+    phase: mil
+    mode: [train, infer]
+    fold: reduce
+    module: helios.models.mil.reduce
+    consumes: [whole_image_risk_score, cv_splits]
+    produces: [whole_image_risk_score_ensemble]
+    description: |
+      Collapse the K per-fold whole-image scores to one shipped value per image: OUT-OF-FOLD (test-fold model) on
+      the CV cohort / ensemble-average on deploy. Emits a `fold` provenance column (test fold; null on deploy).
+
+  # ===== CELLULAR COMPOSITION ANALYSIS =====
+
+  - id: cellular_features_compute
+    title: Cellular Composition Feature Computation
+    kind: analysis
+    phase: analysis
+    mode: [train, infer]
+    module: helios.analysis.cellular_composition
+    consumes: [tile_cell_counts]
+    produces: [cellular_features]
+    description: Compute eTIL, mitosis-to-tumor ratio, TIL coverage, mitotic coverage.
+
+  - id: cellular_risk_training
+    title: Cellular Risk Training
+    kind: training
+    phase: analysis
+    mode: [train]
+    fold: map
+    module: helios.models.cellular.train
+    consumes: [cellular_features, image_metadata, cv_splits]
+    produces: [model_cellular]
+    partitions: [fold]
+    description: Train simple ML risk model (LogReg/RandomForest) on cellular features. One model per fold.
+
+  - id: cellular_risk_infer
+    title: Cellular Risk Inference
+    kind: inference
+    phase: analysis
+    mode: [train, infer]
+    fold: reduce
+    module: helios.models.cellular.infer
+    consumes: [cellular_features, model_cellular, cv_splits]
+    produces: [cellular_risk_score]
+    description: |
+      Score with the K fold models and reduce to one row per image (OOF on CV cohort / ensemble on deploy); emits
+      `fold` provenance column.
+
+  # ===== PATHOLOGICAL CONCEPT ANALYSIS =====
+
+  - id: concept_models_training
+    title: Pathology Concept Training
+    kind: training
+    phase: analysis
+    mode: [train]
+    fold: map
+    module: helios.models.concepts.train
+    consumes: [aligned_slide_embedding, whole_image_risk_score, image_metadata, cv_splits]
+    produces: [model_concepts]
+    partitions: [fold]
+    params:
+      n_bootstrap: 100   # bootstrap replicas per concept (set n_bootstrap=1 to disable)
+    description: |
+      Per-concept linear probes on aligned slide embeddings — LogReg (categorical) / Ridge (numerical). Concept
+      ground-truth from path_* columns. Each concept probe is BOOTSTRAPPED over the training set (n_bootstrap
+      replicas) to yield a prediction distribution / uncertainty. Includes concept risk + residual error-correction
+      models (the residual regressor is fit per fold against the per-fold whole_image_risk_score). One bundle per
+      fold (holding n_bootstrap x n_concepts probes).
+      DATASET: this fit stage may bind to a SEPARATE concept-annotated cohort (per-stage `dataset` in
+      configs/train/concepts.yaml). Its aligned_slide_embedding inputs must first be produced by running that
+      cohort through preprocessing -> feature_extraction -> mil_inference with the primary-trained model_mil
+      (system checks these exist under the stage's dataset binding; else fails or offers to produce them).
+
+  - id: concept_infer
+    title: Pathology Concept Inference
+    kind: inference
+    phase: analysis
+    mode: [train, infer]
+    fold: reduce
+    module: helios.models.concepts.infer
+    consumes: [aligned_slide_embedding, whole_image_risk_score, model_concepts, cv_splits]
+    produces: [path_concept_predictions, path_concept_risk_score]
+    description: |
+      Predict concepts (+optional pathologist override); concept-based risk (+residual correction). Reduces the K
+      fold models to one row per image (OOF/ensemble); risk score carries a `fold` provenance column.
+
+  # ===== PATCH MORPHOLOGY ANALYSIS =====
+
+  - id: morphology_training
+    title: Morphology Clustering Risk Training
+    kind: training
+    phase: analysis
+    mode: [train]
+    fold: map
+    module: helios.models.morphology.train
+    consumes: [aligned_patch_embeddings, patch_attention, image_metadata, cv_splits]
+    produces: [model_morphology]
+    partitions: [fold]
+    description: |
+      Attention-percentile filter -> PCA -> Leiden clustering -> cluster exclusion -> cluster-presence risk model.
+      Stores PCA/Leiden/risk components. One bundle per fold (on that fold's per-fold embeddings/attention).
+
+  - id: morphology_infer
+    title: Morphology Clustering Risk Inference
+    kind: inference
+    phase: analysis
+    mode: [train, infer]
+    fold: reduce
+    module: helios.models.morphology.infer
+    consumes: [aligned_patch_embeddings, patch_attention, model_morphology, cv_splits]
+    produces: [tile_clusters, patch_morphology_presence, patch_morphology_risk_score]
+    description: |
+      Score with the K fold models and reduce to one row per image (OOF/ensemble). Outputs (clusters, presence,
+      risk) are fold-free; the risk score carries a `fold` provenance column.
+
+  # ===== STAGING & CLINICAL RISK (metadata-only simple models) =====
+
+  - id: staging_risk_training
+    title: Staging Risk Training
+    kind: training
+    phase: analysis
+    mode: [train]
+    fold: map
+    module: helios.models.staging.train
+    consumes: [image_metadata, cv_splits]
+    produces: [model_staging]
+    partitions: [fold]
+    params:
+      feature: path_stage_substage        # configurable
+      target: disease_pfs_recurrence_5yfu  # configurable
+      estimator: sklearn_linear
+    description: Train sklearn linear model; feature = AJCC stage column, target = 5y recurrence. One model per fold.
+
+  - id: staging_risk_infer
+    title: Staging Risk Inference
+    kind: inference
+    phase: analysis
+    mode: [train, infer]
+    fold: reduce
+    module: helios.models.staging.infer
+    consumes: [image_metadata, model_staging, cv_splits]
+    produces: [staging_risk_score]
+    description: Reduce K fold models to one row per image (OOF/ensemble); emits `fold` provenance column.
+
+  - id: clinical_risk_training
+    title: Clinical Risk Training
+    kind: training
+    phase: analysis
+    mode: [train]
+    fold: map
+    module: helios.models.clinical.train
+    consumes: [image_metadata, cv_splits]
+    produces: [model_clinical]
+    partitions: [fold]
+    params:
+      features: [patient_age_at_diagnosis, patient_sex, sample_tissue_site_category]  # configurable
+      target: disease_pfs_recurrence_5yfu  # configurable
+      estimator: sklearn_linear
+    description: Train sklearn linear model on clinical features, target = 5y recurrence. One model per fold.
+
+  - id: clinical_risk_infer
+    title: Clinical Risk Inference
+    kind: inference
+    phase: analysis
+    mode: [train, infer]
+    fold: reduce
+    module: helios.models.clinical.infer
+    consumes: [image_metadata, model_clinical, cv_splits]
+    produces: [clinical_risk_score]
+    description: Reduce K fold models to one row per image (OOF/ensemble); emits `fold` provenance column.
+
+  # ===== FUSION =====
+
+  - id: fusion_training
+    title: HELIOS Risk Training
+    kind: training
+    phase: fusion
+    mode: [train]
+    fold: map
+    module: helios.models.fusion.train
+    consumes: [cellular_risk_score, path_concept_risk_score, patch_morphology_risk_score, staging_risk_score, clinical_risk_score, image_metadata, cv_splits]
+    produces: [model_fusion]
+    partitions: [fold]
+    description: |
+      Train weighted risk fusion (simple model) on OUT-OF-FOLD sub-scores (the reduced sub-score tables already
+      hold each image's OOF value; cv_splits gives the per-fold train rows). One fusion model per fold. Trains LAST.
+
+  - id: fusion_infer
+    title: HELIOS Risk Inference
+    kind: fusion
+    phase: fusion
+    mode: [train, infer]
+    fold: reduce
+    module: helios.models.fusion.infer
+    consumes: [cellular_risk_score, path_concept_risk_score, patch_morphology_risk_score, staging_risk_score, clinical_risk_score, model_fusion, cv_splits]
+    produces: [helios_risk_score, survival_curve]
+    description: |
+      Combine sub-scores -> HELIOS (image-only) and HELIOS-S (incl. staging); risk group; survival curve. Reduces
+      the K fusion models to one row per image (OOF/ensemble); helios_risk_score carries a `fold` provenance column.
+
+  # ===== REPORTING =====
+
+  - id: case_report_build
+    title: Case Report (JSON)
+    kind: report
+    phase: report
+    mode: [infer]
+    module: helios.report.case_report
+    consumes: [helios_risk_score, whole_image_risk_score_ensemble, survival_curve, path_concept_predictions, cellular_features, patch_morphology_presence, tile_clusters, cells, tile_cell_counts]
+    produces: [case_report]
+    description: |
+      Assemble per-case report.json (headline, risk factors, concepts, refs). Source of truth.
+
+  - id: assets_render
+    title: Render Assets
+    kind: report
+    phase: report
+    mode: [infer]
+    fold: reduce
+    module: helios.report.assets
+    consumes: [case_report, tile_metadata, tile_clusters, patch_attention, cells, thumbnail, cv_splits]
+    produces: [case_assets]
+    description: |
+      Optional pre-rendered PNGs (attention heatmap, cluster map, TIL density, mitosis overlay). OOF-selects each
+      image's test-fold patch_attention (ensemble-averages on deploy) for the heatmap.
+
+  - id: markdown_render
+    title: Case Report (Markdown)
+    kind: report
+    phase: report
+    mode: [infer]
+    module: helios.report.markdown
+    consumes: [case_report, case_assets]
+    produces: [case_report_md]
+    description: |
+      Render human-readable report.md from report.json (Jinja2); embeds assets; PDF source.
+
+  - id: cohort_summarize
+    title: Cohort Summary View
+    kind: report
+    phase: report
+    mode: [infer]
+    module: helios.report.summary
+    consumes: [helios_risk_score, cellular_risk_score, path_concept_risk_score, patch_morphology_risk_score, staging_risk_score, clinical_risk_score, whole_image_risk_score_ensemble, cellular_features, path_concept_predictions, patch_morphology_presence, survival_curve, image_metadata]
+    produces: [cohort_summary]
+    description: |
+      Build the wide cohort_summary.csv by JOINing the per-component batch result CSVs (+ image_metadata) on
+      image_id (view builder; --summarize / standalone). NOT a scan of per-case report.json.

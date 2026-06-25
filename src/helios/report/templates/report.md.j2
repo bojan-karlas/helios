@@ -1,0 +1,19 @@
+# HELIOS Case Report — {{ image_id }}
+
+**Model version:** {{ version }}
+**Generated:** {{ generated_at }}
+
+## Recurrence Risk
+- **HELIOS risk score:** {{ helios_risk_score }}
+{% if survival_curve %}- **Survival curve:** see `assets/survival_curve.png`{% endif %}
+
+## Component Sub-scores
+{% for name, score in subscores.items() %}- **{{ name }}:** {{ score }}
+{% endfor %}
+
+## Pathological Concepts
+{% for name, value in concepts.items() %}- **{{ name }}:** {{ value }}
+{% endfor %}
+
+## Notes
+{{ notes | default("—") }}

@@ -1,0 +1,7 @@
+# Cellular Composition Analysis training overrides.
+cv:
+  n_folds: 5
+stages:
+  cellular_risk_training:
+    params:
+      model: random_forest

@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Environment / secrets
+.env
+
+# Produced model bundles + user data (see repository plan)
+/artifacts/
+/data/
+
+# Dev scratch datasets / sample cohorts (never commit data; may contain PHI)
+/var/
+/models/
+
+# Job outputs / intermediate roots (when placed in-repo)
+/outputs/
+/cache/
+
+# OS
+.DS_Store
+
+# Filled-in config copied from examples
+configs/examples/paths.yaml
+configs/examples/roles.custom.yaml
