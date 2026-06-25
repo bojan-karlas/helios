@@ -36,7 +36,7 @@ Build a repo that: (1) trains all HELIOS pipeline models from datasets placed in
   - preprocessing/tile_background/size_mm=<MPP>/<image_id>.parquet
   - preprocessing/tile_features/size_mm=<MPP>/<model>/<image_id>/<image_id>.hdf5
     (12 foundation models: virchow2,uni,uni2,conch,conch1.5,chief,ctranspath,dino,gigapath,musk,phikon2,resnet-50)
-  - preprocessing/tile_normalization[...]/target=<STAIN_TARGET>/size_mm=<MPP>/... (e.g. MGB+MRV, VISIOMEL)
+  - preprocessing/tile_augmentation[...]/target=<STAIN_TARGET>/size_mm=<MPP>/... (e.g. MGB+MRV, VISIOMEL)
   - thumbnails/<image_id>.png
 - PARTITION DIMENSIONS: size_mm (resolution), foundation model, stain target, image_id (opaque string).
 - Path resolution layer: (stage, image_id, size_mm, model, target) -> path. Keeps code dataset-agnostic.
@@ -118,7 +118,7 @@ Build a repo that: (1) trains all HELIOS pipeline models from datasets placed in
     - per-fold  : `fold` in key + `fold={fold}/` in path => K physical instances. These are the K models and the
         MIL outputs consumed by per-fold training: `model_*` (mil/concepts/cellular/morphology/fusion/staging/
         clinical), `aligned_slide_embedding`, `aligned_patch_embeddings`, `patch_attention`, and the per-fold
-        `whole_image_risk_score` (one CSV per fold, one row per image). `model_cyclegan` stays fold-free (pre-CV).
+        `whole_image_risk_score` (one CSV per fold, one row per image).
     - reduced   : NO fold in key/path; one instance per image, produced by a fold-aware REDUCE component that
         collapses the K inputs — OUT-OF-FOLD (each image scored by its TEST-fold model) on the CV cohort /
         ENSEMBLE-average on deploy. All shipped result CSVs (the 5 sub-scores, helios_risk_score,
@@ -140,8 +140,9 @@ Build a repo that: (1) trains all HELIOS pipeline models from datasets placed in
     - reduce = consumes the K per-fold artifacts (+ cv_splits) and emits reduced fold-free outputs. All
         `*_infer`, `fusion_infer`, `whole_image_risk_reduce`, and `assets_render` (OOF-selects test-fold
         attention for the heatmap).
-    - none   = pre-CV / fold-agnostic (preprocessing, cell pipeline, cellular_features_compute, cyclegan,
-        case_report_build, markdown_render, cohort_summarize — all consume only reduced/fold-free inputs).
+    - none   = pre-CV / fold-agnostic (preprocessing incl. pretrained CycleGAN stain augmentation, cell pipeline,
+        cellular_features_compute, case_report_build, markdown_render, cohort_summarize — all consume only
+        reduced/fold-free inputs).
 - PARALLELISM: fold is embarrassingly parallel — each `fold: map` run is an independent job writing its own
     `fold={fold}` files (no shared-writer hazard). The per-fold whole-image score is a per-fold CSV
     (`mil/fold={fold}/whole_image_risk_score.csv`) for the same reason (avoids one process holding all K MIL
@@ -299,7 +300,7 @@ helios/
                   that knows on-disk layout),
                 manifest.py (builds in-memory IMAGE INDEX: scan wsi/ flattened + join image_metadata.csv),
                 io.py (read+write together, per-format side by side: wsi/parquet/hdf5/csv/npy)
-    processing/ hybrid produce/consume stages: tiling, background, features, normalization, thumbnails
+    processing/ hybrid produce/consume stages: tiling, background, features, augmentation, thumbnails
                   (RENAMED from "stages")
     models/     PLUGGABLE STUBS (fit/save/load/predict): base.py(+registry),
                 cell/, mil/, foundation/, concepts/, cellular/, morphology/, fusion/

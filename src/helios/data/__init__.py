@@ -1,32 +1,26 @@
-"""Data layer: input contract, path resolution, IO, manifest, and registries."""
+"""Data layer: cohort dataset, path resolution, IO, and the artifact registry."""
 
+from helios.data.bundle import load_bundle, save_bundle
 from helios.data.catalog import (
     ArtifactSpec,
-    ComponentSpec,
     get_artifact,
-    get_component,
     load_artifacts,
-    load_components,
 )
+from helios.data.dataset import Dataset
 from helios.data.io import ArtifactStore, read, write
-from helios.data.manifest import Manifest, build_manifest
 from helios.data.resolver import Resolver, Roots, render_path
-from helios.data.spec import DatasetSpec
 
 __all__ = [
     "ArtifactSpec",
-    "ComponentSpec",
     "get_artifact",
-    "get_component",
     "load_artifacts",
-    "load_components",
+    "Dataset",
     "ArtifactStore",
     "read",
     "write",
-    "Manifest",
-    "build_manifest",
+    "save_bundle",
+    "load_bundle",
     "Resolver",
     "Roots",
     "render_path",
-    "DatasetSpec",
 ]

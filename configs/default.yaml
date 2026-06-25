@@ -1,0 +1,90 @@
+# GENERATED from stage signatures — do not hand-edit.
+# Keyed by verb then noun; entries are that stage's tunable parameters
+# (1:1 with `helios <verb> <noun> --help`). Change defaults in the stage
+# functions under src/helios/stages/, then run `make configs`.
+fit:
+  concept:
+    n_bootstrap: 100
+  mil:
+    aug_swap_prob: 0.5
+    device: cuda
+    model: virchow2
+    size_mm: 0.25
+    target: disease_pfs_recurrence_5yfu
+  morphology:
+    attention_percentile: 90.0
+    n_pca: 50
+  risk:
+    clinical_features:
+    - patient_age_at_diagnosis
+    - patient_sex
+    - sample_tissue_site_category
+    estimator: sklearn_linear
+    risk:
+    - cellular
+    - staging
+    - clinical
+    - helios
+    staging_feature: path_stage_substage
+    target: disease_pfs_recurrence_5yfu
+predict:
+  concept: {}
+  mil:
+    device: cuda
+    model: virchow2
+    size_mm: 0.25
+  morphology: {}
+  risk:
+    clinical_features:
+    - patient_age_at_diagnosis
+    - patient_sex
+    - sample_tissue_site_category
+    risk:
+    - cellular
+    - staging
+    - clinical
+    - helios
+    staging_feature: path_stage_substage
+prep:
+  augment:
+    batch_size: 64
+    device: cuda
+    model:
+    - virchow2
+    size_mm:
+    - 0.25
+    target:
+    - MGB+MRV
+    - VISIOMEL
+  cell-features:
+    size_mm:
+    - 0.25
+  cells:
+    device: cuda
+    patch_px: 64
+  splits:
+    group_by: patient_id
+    n_folds: 5
+    seed: 0
+    stratify_by:
+    - disease_pfs_recurrence_5yfu
+    val_fraction: 0.0
+  thumbnails:
+    max_size: 2048
+  tile-features:
+    batch_size: 64
+    device: cuda
+    model:
+    - virchow2
+    size_mm:
+    - 0.25
+  tiles:
+    size_mm:
+    - 0.0625
+    - 0.125
+    - 0.25
+    tile_px: 224
+report:
+  build:
+    assets: true
+    summarize: true

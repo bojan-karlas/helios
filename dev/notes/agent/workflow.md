@@ -75,9 +75,10 @@ HELIOS is an end-to-end computational pathology system that takes an H&E-stained
    - Divides the tissue region into fixed-size patches
    - Output: Tissue Patches
 
-3. **CycleGAN Stain Augmentation** *(training only)*
-   - Trained on the **HELIOS-2K** training dataset
-   - Applies stain normalization/augmentation to patches to reduce staining variability
+3. **CycleGAN Stain Augmentation** *(applied during MIL training only)*
+   - Trained on the **HELIOS-2K** training dataset (in the paper; **in this repo the generator is pretrained
+     externally and loaded for inference only**)
+   - Applies stain augmentation to patches to reduce staining variability
    - Output: Augmented Tissue Patches (stored as augmented HELIOS-2K)
 
 4. **Pathology Foundation Model**
@@ -327,7 +328,7 @@ WSI
 │
 └── Whole-Slide MIL Pipeline
     ├── Background Removal → Patch Extraction
-    ├── [training] CycleGAN Stain Augmentation
+    ├── [pretrained, inference only] CycleGAN Stain Augmentation
     ├── Foundation Model → Patch Embeddings
     └── A-MIL Model
         ├── [output] Aligned Patch Embeddings

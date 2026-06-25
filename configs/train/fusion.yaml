@@ -1,8 +1,0 @@
-# HELIOS Risk Model (fusion) training overrides.
-# Trains last on out-of-fold sub-scores.
-cv:
-  n_folds: 5
-stages:
-  fusion_training:
-    params:
-      model: logistic_regression

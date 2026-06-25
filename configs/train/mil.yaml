@@ -1,8 +1,0 @@
-# Whole-Slide MIL (A-MIL) training overrides.
-cv:
-  n_folds: 5
-  group_by: patient_id
-stages:
-  mil_training:
-    params:
-      aug_swap_prob: 0.5

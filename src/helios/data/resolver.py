@@ -42,6 +42,19 @@ class Roots:
     def single(cls, root: str | Path) -> Roots:
         return cls(base=Path(root))
 
+    @classmethod
+    def for_run(cls, source: str | Path, output: str | Path | None = None) -> Roots:
+        """Read inputs from ``source``; write all derived artifacts under ``output``.
+
+        ``source`` holds the read-only cohort (``wsi/``, ``metadata/``). When
+        ``output`` is given, every *derived* role (work/features/output/models)
+        falls back to it, so intermediate and result artifacts land in a separate
+        tree while the source cohort is never written to. When ``output`` is
+        ``None`` everything resolves in place under ``source`` (the common case).
+        """
+        src = Path(source)
+        return cls(base=Path(output) if output is not None else src, source=src)
+
 
 def _role_for(artifact: ArtifactSpec) -> str:
     """Classify an artifact's storage role from its path prefix."""

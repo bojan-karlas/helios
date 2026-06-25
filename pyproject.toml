@@ -18,6 +18,7 @@ dependencies = [
     "pyyaml>=6.0",
     "pydantic>=2.5",
     "typer>=0.12",
+    "tqdm>=4.66",
 ]
 
 [project.optional-dependencies]

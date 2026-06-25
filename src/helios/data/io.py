@@ -4,9 +4,18 @@ Low-level helpers dispatch on a ``format`` string; the :class:`ArtifactStore`
 ties IO to the :class:`~helios.data.resolver.Resolver` and the artifact registry
 so components read/write artifacts by id + key without knowing on-disk layout.
 
-Supported formats (scaffold): csv, parquet, json, npy, hdf5, pkl, txt/md, png.
-Whole-slide image decoding (svs/tiff/ndpi) is intentionally left to the
-component that needs it.
+Two access modes:
+
+* :meth:`ArtifactStore.read` — eager: materialize the whole artifact (small
+  tables, embeddings, configs).
+* :meth:`ArtifactStore.path` — lazy: resolve to a path the consumer opens
+  itself, for random-access streaming (e.g. sampling 1k of 50k tiles from an
+  HDF5 stack in a DataLoader) without loading everything into memory.
+
+Supported formats (scaffold): csv, parquet, json, npy, hdf5, pkl, bundle,
+txt/md, png. ``bundle`` is a provenance-bearing model directory (see
+:mod:`helios.data.bundle`). Whole-slide image decoding (svs/tiff/ndpi) is
+intentionally left to the component that needs it.
 """
 from __future__ import annotations
 
@@ -18,6 +27,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from helios.data.bundle import is_complete_bundle, load_bundle, save_bundle
 from helios.data.catalog import get_artifact
 from helios.data.resolver import Resolver
 
@@ -45,6 +55,8 @@ def read(path: str | Path, fmt: str) -> Any:
     if base == "pkl":
         with path.open("rb") as f:
             return pickle.load(f)
+    if base == "bundle":
+        return load_bundle(path)
     if base in {"txt", "md"}:
         return path.read_text()
     if base == "png":
@@ -73,6 +85,8 @@ def write(obj: Any, path: str | Path, fmt: str) -> Path:
     elif base == "pkl":
         with path.open("wb") as f:
             pickle.dump(obj, f)
+    elif base == "bundle":
+        save_bundle(obj, path)
     elif base in {"txt", "md"}:
         path.write_text(str(obj))
     elif base == "png":
@@ -99,10 +113,25 @@ class ArtifactStore:
         path = self.resolver.path(artifact_id, **keys)
         return read(path, artifact.format)
 
+    def path(self, artifact_id: str, **keys) -> Path:
+        """Resolve an artifact to its on-disk path WITHOUT reading it.
+
+        This is the streaming seam: large random-access artifacts (e.g. an HDF5
+        tile stack of 50k tiles) should be opened lazily by the consumer — a
+        torch/tf ``Dataset`` opens this path per worker and slices only the tiles
+        a batch needs, rather than having :meth:`read` load the whole array into
+        memory. :meth:`read` stays the convenient eager path for small artifacts.
+        """
+        return self.resolver.path(artifact_id, **keys)
+
     def write(self, artifact_id: str, obj: Any, **keys) -> Path:
         artifact = get_artifact(artifact_id)
         path = self.resolver.path(artifact_id, **keys)
         return write(obj, path, artifact.format)
 
     def exists(self, artifact_id: str, **keys) -> bool:
-        return self.resolver.exists(artifact_id, **keys)
+        artifact = get_artifact(artifact_id)
+        path = self.resolver.path(artifact_id, **keys)
+        if artifact.format.split("/")[0] == "bundle":
+            return is_complete_bundle(path)
+        return path.exists()

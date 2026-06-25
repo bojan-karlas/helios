@@ -30,4 +30,4 @@ dist/
 
 # Filled-in config copied from examples
 configs/examples/paths.yaml
-configs/examples/roles.custom.yaml
+configs/examples/column_mapping.custom.yaml

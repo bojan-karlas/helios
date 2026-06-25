@@ -1,0 +1,56 @@
+# HELIOS column mapping (default binding).
+#
+# The column mapping binds abstract pipeline inputs to concrete image_metadata column names.
+# Override this file (or point `column_mapping:` in a run config at another file) to run
+# on a cohort whose columns are named differently. All names below MUST exist in
+# configs/schema/image_metadata.datadict.yaml.
+
+# Identifiers / grouping.
+image_id: image_id
+split_group: patient_id          # patient-level CV to avoid leakage
+
+# Tiling resolver inputs.
+tiling:
+  mpp: image_mpp
+  width: image_width
+  height: image_height
+  magnification: image_magnification
+
+# Prediction targets (risk / fusion / survival).
+targets:
+  recurrence: disease_pfs_recurred
+  recurrence_days: disease_pfs_recurred_days
+  recurrence_years: disease_pfs_recurred_years
+  recurrence_5yfu_censor: disease_pfs_recurred_5yfu
+  recurrence_locoregional: disease_pfs_recurred_locoregional
+  recurrence_distant: disease_pfs_recurred_distant
+  os_death: patient_os_death
+  os_days: disease_os_days
+  os_years: disease_os_years
+
+# Pathological concepts (ground truth for concept analysis).
+concepts:
+  thickness: path_thickness
+  ulceration: path_ulceration_present
+  mitoses_rate: path_mitoses_rate
+  radial_growth: path_radial_growth_present
+  # optional extras:
+  til_pattern: path_til_pattern
+  vertical_growth: path_vertical_growth_present
+  anatomic_level: path_anatomic_level
+
+# Staging risk-score inputs.
+staging:
+  stage: path_stage
+  stage_substage: path_stage_substage
+  tumor: path_stage_tumor
+  tumor_substage: path_stage_tumor_substage
+  lymph: path_stage_lymph
+  metastasis: path_stage_metastasis
+
+# Clinical risk-score inputs.
+clinical:
+  sex: patient_sex
+  age_at_diagnosis: disease_age_at_diagnosis
+  tissue_site: sample_tissue_site
+  tissue_site_category: sample_tissue_site_category

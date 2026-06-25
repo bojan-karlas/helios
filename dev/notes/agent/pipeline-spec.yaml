@@ -154,19 +154,19 @@ artifacts:
       Foundation-model embedding per tile. model in {virchow2,uni,uni2,conch,conch1.5,chief,
       ctranspath,dino,gigapath,musk,phikon2,resnet-50}.
 
-  - id: tile_normalization
-    title: Stain-Normalized Tiles
+  - id: tile_augmentation
+    title: Stain-Augmented Tiles
     key: [target, size_mm, image_id, tile_id]
     format: hdf5
-    path: preprocessing/tile_normalization/target={target}/size_mm={size_mm}/{image_id}/{image_id}.hdf5
-    description: Stain-normalized/augmented tiles. target is the dataset used to train a stain normalizer.
+    path: preprocessing/tile_augmentation/target={target}/size_mm={size_mm}/{image_id}/{image_id}.hdf5
+    description: Stain-augmented tiles. target is the dataset used to train a stain augmenter.
 
-  - id: tile_normalization_features
-    title: Stain-Normalized Tile Embeddings
+  - id: tile_augmentation_features
+    title: Stain-Augmented Tile Embeddings
     key: [target, size_mm, model, image_id, tile_id]
     format: hdf5
-    path: preprocessing/tile_normalization_features/target={target}/size_mm={size_mm}/{model}/{image_id}/{image_id}.hdf5
-    description: Foundation embeddings computed on stain-normalized tiles.
+    path: preprocessing/tile_augmentation_features/target={target}/size_mm={size_mm}/{model}/{image_id}/{image_id}.hdf5
+    description: Foundation embeddings computed on stain-augmented tiles.
 
   - id: thumbnail
     title: Slide Thumbnail
@@ -394,7 +394,7 @@ artifacts:
   - id: model_mil
     title: A-MIL Model Bundle
     key: [fold]
-    path: models/mil/fold={fold}/checkpoint.pt
+    path: models/mil/fold={fold}
     description: |
       Attention-MIL bundle (alignment + attention + pooling + classifier). One per fold (K independently-fit
       models; ensembled at deploy, never a single all-data model).
@@ -402,7 +402,7 @@ artifacts:
   - id: model_concepts
     title: Concept Models Bundle
     key: [fold]
-    path: models/concepts/fold={fold}/checkpoint.pt
+    path: models/concepts/fold={fold}
     description: |
       Per-fold bundle of concept models: for EACH concept, a SET of linear probes (LogReg categorical / Ridge
       numerical) produced by BOOTSTRAPPING the concept-training set (n_bootstrap replicas, default ~100) so concept
@@ -412,38 +412,32 @@ artifacts:
   - id: model_cellular
     title: Cellular Composition Risk Model
     key: [fold]
-    path: models/cellular/fold={fold}/model.pkl
+    path: models/cellular/fold={fold}
     description: Simple ML risk model (LogReg/RandomForest) over cellular composition features. One per fold.
 
   - id: model_morphology
     title: Morphology Model Bundle
     key: [fold]
-    path: models/morphology/fold={fold}/model.pkl
+    path: models/morphology/fold={fold}
     description: PCA + Leiden clustering + cluster-presence risk model. One per fold.
 
   - id: model_fusion
     title: HELIOS Risk Model
     key: [fold]
-    path: models/fusion/fold={fold}/model.pkl
+    path: models/fusion/fold={fold}
     description: Simple model combining sub-scores into the final HELIOS / HELIOS-S risk. One per fold.
 
   - id: model_staging
     title: Staging Risk Model
     key: [fold]
-    path: models/staging/fold={fold}/model.pkl
+    path: models/staging/fold={fold}
     description: sklearn linear model mapping AJCC stage feature to recurrence risk. One per fold.
 
   - id: model_clinical
     title: Clinical Risk Model
     key: [fold]
-    path: models/clinical/fold={fold}/model.pkl
+    path: models/clinical/fold={fold}
     description: sklearn linear model mapping clinical features to recurrence risk. One per fold.
-
-  - id: model_cyclegan
-    title: CycleGAN Stain Generator
-    key: [target]
-    path: models/cyclegan/target={target}/checkpoint.pt
-    description: Stain normalization/augmentation generator (train-only).
 
 # ----------------------------------------------------------------------------------------------------------------------
 # COMPONENTS  (operator nodes of the bipartite graph = future modules). Edit inputs/outputs/description freely.
@@ -512,19 +506,21 @@ components:
       Color-based background detection on the thumbnail -> background pixel mask; map every tile onto the mask to set
       a per-tile background flag. Emits tile_background (flags) and background_mask (debug image).
 
-  - id: stain_normalization
-    title: Stain Normalization / Augmentation
+  - id: stain_augmentation
+    title: Stain Augmentation
     kind: processing
     phase: preprocess
     mode: [train, infer]
-    module: helios.processing.normalization
-    consumes: [tiles, model_cyclegan]
-    produces: [tile_normalization]
+    module: helios.processing.augmentation
+    consumes: [tiles]
+    produces: [tile_augmentation]
     partitions: [target, size_mm, image_id]
     params:
       target: [MGB+MRV, VISIOMEL]
     description: |
-      Apply stain normalization/augmentation (CycleGAN) to reduce staining variability.
+      Apply stain augmentation to reduce staining variability, using a pretrained CycleGAN stain
+      generator. The generator is TRAINED IN A SEPARATE REPO and loaded internally (per target),
+      mirroring how CellViT++/OMG-Net weights are loaded — this repo runs inference only.
 
   - id: feature_extraction
     title: Foundation Feature Extraction
@@ -541,16 +537,16 @@ components:
       Encode EVERY tile into a foundation-model embedding (background tiles are NOT skipped, so changing the
       background algorithm does not require re-extracting features).
 
-  - id: feature_extraction_normalized
-    title: Foundation Feature Extraction (Normalized)
+  - id: feature_extraction_augmented
+    title: Foundation Feature Extraction (Augmented)
     kind: processing
     phase: preprocess
     mode: [train, infer]
     module: helios.processing.features
-    consumes: [tile_normalization]
-    produces: [tile_normalization_features]
+    consumes: [tile_augmentation]
+    produces: [tile_augmentation_features]
     partitions: [target, size_mm, model, image_id]
-    description: Foundation embeddings computed on stain-normalized tiles (optional variant).
+    description: Foundation embeddings computed on stain-augmented tiles (optional variant).
 
   # ===== CELL DETECTION & CLASSIFICATION PIPELINE =====
 
@@ -603,16 +599,6 @@ components:
 
   # ===== WHOLE-SLIDE MIL PIPELINE =====
 
-  - id: cyclegan_training
-    title: CycleGAN Stain-Augmentation Training
-    kind: training
-    phase: mil
-    mode: [train]
-    module: helios.models.foundation.cyclegan
-    consumes: [tiles]
-    produces: [model_cyclegan]
-    description: Train stain augmentation generator (train-only).
-
   - id: mil_training
     title: A-MIL Training
     kind: training
@@ -620,7 +606,7 @@ components:
     mode: [train]
     fold: map
     module: helios.models.mil.train
-    consumes: [tile_features, tile_normalization_features, tile_background, image_metadata, cv_splits]
+    consumes: [tile_features, tile_augmentation_features, tile_background, image_metadata, cv_splits]
     produces: [model_mil]
     partitions: [fold, size_mm, model]
     params:
@@ -629,7 +615,7 @@ components:
       Train A-MIL (alignment + attention + weighted pooling + classifier) on labels. Runs once per fold (on that
       fold's train split from cv_splits) -> one model_mil per fold. Uses tile_background to exclude background
       tiles. Stain-augmentation = with probability aug_swap_prob, a tile's normal embedding (tile_features) is
-      swapped for its stain-normalized counterpart (tile_normalization_features).
+      swapped for its stain-augmented counterpart (tile_augmentation_features).
 
   - id: mil_inference
     title: A-MIL Inference

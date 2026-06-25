@@ -1,7 +1,0 @@
-# Cell Detection & Classification training overrides.
-stages:
-  cyclegan_training:
-    params:
-      epochs: 100
-  mitotic_classification:
-    params: {}

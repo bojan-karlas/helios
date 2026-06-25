@@ -1,12 +1,13 @@
 %% Auto-generated from the HELIOS pipeline spec. Do not edit by hand.
 graph LR
   subgraph preprocess
-    background_removal["Background & Artifact Removal"]
-    tiling["Tiling"]
-    tile_background_flagging["Tile Background Flagging"]
-    stain_normalization["Stain Normalization / Augmentation"]
+    cv_splits_generation["CV Splits Generation"]
+    thumbnail_extraction["Thumbnail Extraction"]
+    tile_extraction["Tile Extraction"]
+    background_removal["Background Removal"]
+    stain_augmentation["Stain Augmentation"]
     feature_extraction["Foundation Feature Extraction"]
-    feature_extraction_normalized["Foundation Feature Extraction (Normalized)"]
+    feature_extraction_augmented["Foundation Feature Extraction (Augmented)"]
   end
   subgraph cell
     cell_segmentation["CellViT++ Cell Segmentation"]
@@ -15,26 +16,26 @@ graph LR
     tile_cell_aggregation["Per-Tile Cell Aggregation"]
   end
   subgraph mil
-    cyclegan_training["CycleGAN Stain-Augmentation Training"]
     mil_training["A-MIL Training"]
     mil_inference["A-MIL Inference"]
+    whole_image_risk_reduce["Whole-Image Risk Reduction"]
   end
   subgraph analysis
-    cellular_features_compute["Cellular Composition Features"]
-    cellular_risk_training["Cellular Risk Model Training"]
-    cellular_risk_infer["Cellular Risk Scoring"]
-    concept_models_training["Concept Models Training"]
-    concept_infer["Concept Prediction & Risk"]
-    morphology_training["Morphology Clustering Training"]
-    morphology_infer["Morphology Clustering & Risk"]
-    staging_risk_training["Staging Risk Model Training"]
-    staging_risk_infer["Staging Risk Scoring"]
-    clinical_risk_training["Clinical Risk Model Training"]
-    clinical_risk_infer["Clinical Risk Scoring"]
+    cellular_features_compute["Cellular Composition Feature Computation"]
+    cellular_risk_training["Cellular Risk Training"]
+    cellular_risk_infer["Cellular Risk Inference"]
+    concept_models_training["Pathology Concept Training"]
+    concept_infer["Pathology Concept Inference"]
+    morphology_training["Morphology Clustering Risk Training"]
+    morphology_infer["Morphology Clustering Risk Inference"]
+    staging_risk_training["Staging Risk Training"]
+    staging_risk_infer["Staging Risk Inference"]
+    clinical_risk_training["Clinical Risk Training"]
+    clinical_risk_infer["Clinical Risk Inference"]
   end
   subgraph fusion
-    fusion_training["Fusion Model Training"]
-    fusion_infer["Risk Fusion"]
+    fusion_training["HELIOS Risk Training"]
+    fusion_infer["HELIOS Risk Inference"]
   end
   subgraph report
     case_report_build["Case Report (JSON)"]
@@ -42,154 +43,163 @@ graph LR
     markdown_render["Case Report (Markdown)"]
     cohort_summarize["Cohort Summary View"]
   end
-  aligned_patch_embeddings(["Aligned Patch Embeddings"])
-  aligned_slide_embedding(["Aligned Slide Embedding"])
-  case_assets(["Rendered Assets"])
-  case_report(["Case Report (JSON)"])
-  case_report_md(["Case Report (Markdown)"])
-  cells(["Cell Detections"])
-  cellular_features(["Cellular Composition Features"])
-  cellular_risk_score(["cellular_risk_score"])
-  clinical_risk_score(["clinical_risk_score"])
-  cluster_presence(["Cluster Presence Scores"])
-  cohort_summary(["Cohort Summary Table"])
-  concept_predictions(["Concept Predictions"])
-  concept_risk_score(["concept_risk_score"])
-  helios_risk_score(["helios_risk_score"])
-  helios_s_risk_score(["helios_s_risk_score"])
-  image_metadata(["Image Metadata Table"])
-  mitotic_cells(["Mitotic Figure Labels"])
-  model_cell(["model_cell"])
-  model_cellular(["model_cellular"])
-  model_clinical(["model_clinical"])
-  model_concepts(["model_concepts"])
-  model_cyclegan(["model_cyclegan"])
-  model_fusion(["model_fusion"])
-  model_mil(["model_mil"])
-  model_morphology(["model_morphology"])
-  model_staging(["model_staging"])
-  morphology_risk_score(["morphology_risk_score"])
-  patch_attention(["Patch Attention Scores"])
-  staging_risk_score(["staging_risk_score"])
-  survival_curve(["survival_curve"])
-  thumbnail(["Slide Thumbnail"])
-  tile_background(["Tile Background Flags"])
-  tile_cell_class(["Per-Tile Cell-Based Class"])
-  tile_cell_counts(["Per-Tile Cell Counts"])
-  tile_clusters(["Per-Tile Cluster Assignments"])
-  tile_features(["Tile (Patch) Embeddings"])
-  tile_metadata(["Tile Metadata"])
-  tile_normalization(["Stain-Normalized Tiles"])
-  tile_normalization_features(["Stain-Normalized Tile Embeddings"])
-  tiles(["Tiles"])
-  tissue_mask(["Tissue/Background Mask"])
-  tumor_cell_patches(["Tumor Cell Patches"])
-  whole_image_risk_score(["Whole-Image Risk Score"])
-  wsi(["Whole Slide Image"])
-  wsi --> background_removal
-  background_removal --> tissue_mask
-  background_removal --> thumbnail
-  wsi --> tiling
-  tissue_mask --> tiling
-  image_metadata --> tiling
-  tiling --> tile_metadata
-  tiling --> tiles
-  tiles --> tile_background_flagging
-  tile_metadata --> tile_background_flagging
-  tile_background_flagging --> tile_background
-  tiles --> stain_normalization
-  model_cyclegan --> stain_normalization
-  stain_normalization --> tile_normalization
+  aligned_patch_embeddings["Aligned Patch Embeddings"]
+  aligned_slide_embedding["Aligned Slide Embedding"]
+  background_mask["Background Mask (Debug)"]
+  case_assets["Rendered Report Assets"]
+  case_report["Case Report (JSON)"]
+  case_report_md["Case Report (Markdown)"]
+  cells["Classified Cell Coordinates"]
+  cellular_features["Cellular Composition Features"]
+  cellular_risk_score["Cellular Composition Risk Score"]
+  clinical_risk_score["Clinical Risk Score"]
+  cohort_summary["Cohort Summary Table"]
+  cv_splits["Cross-Validation Splits"]
+  helios_risk_score["HELIOS Risk Score"]
+  image_metadata["Image Metadata Table"]
+  mitotic_cells["Mitotic Figure Labels"]
+  model_cellular["Cellular Composition Risk Model"]
+  model_clinical["Clinical Risk Model"]
+  model_concepts["Concept Models Bundle"]
+  model_fusion["HELIOS Risk Model"]
+  model_mil["A-MIL Model Bundle"]
+  model_morphology["Morphology Model Bundle"]
+  model_staging["Staging Risk Model"]
+  patch_attention["Patch Attention Scores"]
+  patch_morphology_presence["Cluster Presence Scores"]
+  patch_morphology_risk_score["Patch Morphology Risk Score"]
+  path_concept_predictions["Concept Predictions"]
+  path_concept_risk_score["Concept-Based Risk Score"]
+  staging_risk_score["Staging Risk Score"]
+  survival_curve["Survival Curve"]
+  thumbnail["Slide Thumbnail"]
+  tile_augmentation["Stain-Augmented Tiles"]
+  tile_augmentation_features["Stain-Augmented Tile Embeddings"]
+  tile_background["Tile Background Flags"]
+  tile_cell_counts["Per-Tile Cell Counts"]
+  tile_clusters["Per-Tile Cluster Assignments"]
+  tile_features["Tile (Patch) Embeddings"]
+  tile_metadata["Tile Metadata"]
+  tiles["Tile Images"]
+  tumor_cell_patches["Tumor Cell Patches"]
+  whole_image_risk_score["Whole-Image Risk Score (Per-Fold)"]
+  whole_image_risk_score_ensemble["Whole-Image Risk Score (Ensemble)"]
+  wsi["Whole Slide Image"]
+  image_metadata --> cv_splits_generation
+  cv_splits_generation --> cv_splits
+  wsi --> thumbnail_extraction
+  thumbnail_extraction --> thumbnail
+  wsi --> tile_extraction
+  image_metadata --> tile_extraction
+  tile_extraction --> tile_metadata
+  tile_extraction --> tiles
+  thumbnail --> background_removal
+  tile_metadata --> background_removal
+  background_removal --> tile_background
+  background_removal --> background_mask
+  tiles --> stain_augmentation
+  stain_augmentation --> tile_augmentation
   tiles --> feature_extraction
-  tile_background --> feature_extraction
   feature_extraction --> tile_features
-  tile_normalization --> feature_extraction_normalized
-  feature_extraction_normalized --> tile_normalization_features
+  tile_augmentation --> feature_extraction_augmented
+  feature_extraction_augmented --> tile_augmentation_features
   wsi --> cell_segmentation
-  tissue_mask --> cell_segmentation
-  model_cell --> cell_segmentation
   cell_segmentation --> cells
   wsi --> tumor_patch_extraction
   cells --> tumor_patch_extraction
   tumor_patch_extraction --> tumor_cell_patches
   tumor_cell_patches --> mitotic_classification
-  model_cell --> mitotic_classification
   mitotic_classification --> mitotic_cells
   cells --> tile_cell_aggregation
   mitotic_cells --> tile_cell_aggregation
   tile_metadata --> tile_cell_aggregation
   tile_cell_aggregation --> tile_cell_counts
-  tile_cell_aggregation --> tile_cell_class
-  tiles --> cyclegan_training
-  cyclegan_training --> model_cyclegan
   tile_features --> mil_training
+  tile_augmentation_features --> mil_training
+  tile_background --> mil_training
   image_metadata --> mil_training
+  cv_splits --> mil_training
   mil_training --> model_mil
   tile_features --> mil_inference
+  tile_background --> mil_inference
   model_mil --> mil_inference
   mil_inference --> aligned_patch_embeddings
   mil_inference --> patch_attention
   mil_inference --> aligned_slide_embedding
   mil_inference --> whole_image_risk_score
+  whole_image_risk_score --> whole_image_risk_reduce
+  cv_splits --> whole_image_risk_reduce
+  whole_image_risk_reduce --> whole_image_risk_score_ensemble
   tile_cell_counts --> cellular_features_compute
-  tile_cell_class --> cellular_features_compute
   cellular_features_compute --> cellular_features
   cellular_features --> cellular_risk_training
   image_metadata --> cellular_risk_training
+  cv_splits --> cellular_risk_training
   cellular_risk_training --> model_cellular
   cellular_features --> cellular_risk_infer
   model_cellular --> cellular_risk_infer
+  cv_splits --> cellular_risk_infer
   cellular_risk_infer --> cellular_risk_score
   aligned_slide_embedding --> concept_models_training
+  whole_image_risk_score --> concept_models_training
   image_metadata --> concept_models_training
+  cv_splits --> concept_models_training
   concept_models_training --> model_concepts
   aligned_slide_embedding --> concept_infer
   whole_image_risk_score --> concept_infer
   model_concepts --> concept_infer
-  concept_infer --> concept_predictions
-  concept_infer --> concept_risk_score
+  cv_splits --> concept_infer
+  concept_infer --> path_concept_predictions
+  concept_infer --> path_concept_risk_score
   aligned_patch_embeddings --> morphology_training
   patch_attention --> morphology_training
   image_metadata --> morphology_training
+  cv_splits --> morphology_training
   morphology_training --> model_morphology
   aligned_patch_embeddings --> morphology_infer
   patch_attention --> morphology_infer
   model_morphology --> morphology_infer
+  cv_splits --> morphology_infer
   morphology_infer --> tile_clusters
-  morphology_infer --> cluster_presence
-  morphology_infer --> morphology_risk_score
+  morphology_infer --> patch_morphology_presence
+  morphology_infer --> patch_morphology_risk_score
   image_metadata --> staging_risk_training
+  cv_splits --> staging_risk_training
   staging_risk_training --> model_staging
   image_metadata --> staging_risk_infer
   model_staging --> staging_risk_infer
+  cv_splits --> staging_risk_infer
   staging_risk_infer --> staging_risk_score
   image_metadata --> clinical_risk_training
+  cv_splits --> clinical_risk_training
   clinical_risk_training --> model_clinical
   image_metadata --> clinical_risk_infer
   model_clinical --> clinical_risk_infer
+  cv_splits --> clinical_risk_infer
   clinical_risk_infer --> clinical_risk_score
   cellular_risk_score --> fusion_training
-  concept_risk_score --> fusion_training
-  morphology_risk_score --> fusion_training
+  path_concept_risk_score --> fusion_training
+  patch_morphology_risk_score --> fusion_training
   staging_risk_score --> fusion_training
   clinical_risk_score --> fusion_training
   image_metadata --> fusion_training
+  cv_splits --> fusion_training
   fusion_training --> model_fusion
   cellular_risk_score --> fusion_infer
-  concept_risk_score --> fusion_infer
-  morphology_risk_score --> fusion_infer
+  path_concept_risk_score --> fusion_infer
+  patch_morphology_risk_score --> fusion_infer
   staging_risk_score --> fusion_infer
   clinical_risk_score --> fusion_infer
   model_fusion --> fusion_infer
+  cv_splits --> fusion_infer
   fusion_infer --> helios_risk_score
-  fusion_infer --> helios_s_risk_score
   fusion_infer --> survival_curve
   helios_risk_score --> case_report_build
-  helios_s_risk_score --> case_report_build
+  whole_image_risk_score_ensemble --> case_report_build
   survival_curve --> case_report_build
-  concept_predictions --> case_report_build
+  path_concept_predictions --> case_report_build
   cellular_features --> case_report_build
-  cluster_presence --> case_report_build
+  patch_morphology_presence --> case_report_build
   tile_clusters --> case_report_build
   cells --> case_report_build
   tile_cell_counts --> case_report_build
@@ -200,23 +210,27 @@ graph LR
   patch_attention --> assets_render
   cells --> assets_render
   thumbnail --> assets_render
+  cv_splits --> assets_render
   assets_render --> case_assets
   case_report --> markdown_render
   case_assets --> markdown_render
   markdown_render --> case_report_md
-  case_report --> cohort_summarize
+  helios_risk_score --> cohort_summarize
+  cellular_risk_score --> cohort_summarize
+  path_concept_risk_score --> cohort_summarize
+  patch_morphology_risk_score --> cohort_summarize
+  staging_risk_score --> cohort_summarize
+  clinical_risk_score --> cohort_summarize
+  whole_image_risk_score_ensemble --> cohort_summarize
+  cellular_features --> cohort_summarize
+  path_concept_predictions --> cohort_summarize
+  patch_morphology_presence --> cohort_summarize
+  survival_curve --> cohort_summarize
+  image_metadata --> cohort_summarize
   cohort_summarize --> cohort_summary
-  classDef preprocess fill:#cfe8ff,stroke:#333,color:#000;
-  classDef cell fill:#d7f0d2,stroke:#333,color:#000;
-  classDef mil fill:#ffe7c2,stroke:#333,color:#000;
-  classDef analysis fill:#e7d7ff,stroke:#333,color:#000;
-  classDef fusion fill:#ffd6d6,stroke:#333,color:#000;
-  classDef report fill:#eaeaea,stroke:#333,color:#000;
-  classDef artifact fill:#fffbe6,stroke:#b8860b,stroke-dasharray:3 2,color:#000;
-  class background_removal,tiling,tile_background_flagging,stain_normalization,feature_extraction,feature_extraction_normalized preprocess;
-  class cell_segmentation,tumor_patch_extraction,mitotic_classification,tile_cell_aggregation cell;
-  class cyclegan_training,mil_training,mil_inference mil;
-  class cellular_features_compute,cellular_risk_training,cellular_risk_infer,concept_models_training,concept_infer,morphology_training,morphology_infer,staging_risk_training,staging_risk_infer,clinical_risk_training,clinical_risk_infer analysis;
-  class fusion_training,fusion_infer fusion;
-  class case_report_build,assets_render,markdown_render,cohort_summarize report;
-  class aligned_patch_embeddings,aligned_slide_embedding,case_assets,case_report,case_report_md,cells,cellular_features,cellular_risk_score,clinical_risk_score,cluster_presence,cohort_summary,concept_predictions,concept_risk_score,helios_risk_score,helios_s_risk_score,image_metadata,mitotic_cells,model_cell,model_cellular,model_clinical,model_concepts,model_cyclegan,model_fusion,model_mil,model_morphology,model_staging,morphology_risk_score,patch_attention,staging_risk_score,survival_curve,thumbnail,tile_background,tile_cell_class,tile_cell_counts,tile_clusters,tile_features,tile_metadata,tile_normalization,tile_normalization_features,tiles,tissue_mask,tumor_cell_patches,whole_image_risk_score,wsi artifact;
+  classDef dataNode fill:#FAC802,stroke:#000000,stroke-width:2px,color:#000;
+  classDef compNode fill:#2BBFD9,stroke:#000000,stroke-width:2px,color:#000;
+  classDef trainNode fill:#C670D2,stroke:#000000,stroke-width:2px,color:#000;
+  class aligned_patch_embeddings,aligned_slide_embedding,background_mask,case_assets,case_report,case_report_md,cells,cellular_features,cellular_risk_score,clinical_risk_score,cohort_summary,cv_splits,helios_risk_score,image_metadata,mitotic_cells,model_cellular,model_clinical,model_concepts,model_fusion,model_mil,model_morphology,model_staging,patch_attention,patch_morphology_presence,patch_morphology_risk_score,path_concept_predictions,path_concept_risk_score,staging_risk_score,survival_curve,thumbnail,tile_augmentation,tile_augmentation_features,tile_background,tile_cell_counts,tile_clusters,tile_features,tile_metadata,tiles,tumor_cell_patches,whole_image_risk_score,whole_image_risk_score_ensemble,wsi dataNode;
+  class cv_splits_generation,thumbnail_extraction,tile_extraction,background_removal,stain_augmentation,feature_extraction,feature_extraction_augmented,cell_segmentation,tumor_patch_extraction,mitotic_classification,tile_cell_aggregation,mil_inference,whole_image_risk_reduce,cellular_features_compute,cellular_risk_infer,concept_infer,morphology_infer,staging_risk_infer,clinical_risk_infer,fusion_infer,case_report_build,assets_render,markdown_render,cohort_summarize compNode;
+  class mil_training,cellular_risk_training,concept_models_training,morphology_training,staging_risk_training,clinical_risk_training,fusion_training trainNode;

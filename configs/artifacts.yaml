@@ -1,5 +1,5 @@
 # GENERATED from dev/notes/agent/pipeline-spec.yaml — do not hand-edit.
-# Regenerate via scripts/gen_registries.py (or the dev spec workflow).
+# Regenerate via scripts/gen_registries.py
 artifacts:
   wsi:
     title: Whole Slide Image
@@ -59,17 +59,17 @@ artifacts:
     - tile_id
     format: hdf5
     path: preprocessing/tile_features/size_mm={size_mm}/{model}/{image_id}/{image_id}.hdf5
-  tile_normalization:
-    title: Stain-Normalized Tiles
+  tile_augmentation:
+    title: Stain-Augmented Tiles
     key:
     - target
     - size_mm
     - image_id
     - tile_id
     format: hdf5
-    path: preprocessing/tile_normalization/target={target}/size_mm={size_mm}/{image_id}/{image_id}.hdf5
-  tile_normalization_features:
-    title: Stain-Normalized Tile Embeddings
+    path: preprocessing/tile_augmentation/target={target}/size_mm={size_mm}/{image_id}/{image_id}.hdf5
+  tile_augmentation_features:
+    title: Stain-Augmented Tile Embeddings
     key:
     - target
     - size_mm
@@ -77,7 +77,7 @@ artifacts:
     - image_id
     - tile_id
     format: hdf5
-    path: preprocessing/tile_normalization_features/target={target}/size_mm={size_mm}/{model}/{image_id}/{image_id}.hdf5
+    path: preprocessing/tile_augmentation_features/target={target}/size_mm={size_mm}/{model}/{image_id}/{image_id}.hdf5
   thumbnail:
     title: Slide Thumbnail
     key:
@@ -247,46 +247,40 @@ artifacts:
     key:
     - fold
     format: bundle
-    path: models/mil/fold={fold}/checkpoint.pt
+    path: models/mil/fold={fold}
   model_concepts:
     title: Concept Models Bundle
     key:
     - fold
     format: bundle
-    path: models/concepts/fold={fold}/checkpoint.pt
+    path: models/concepts/fold={fold}
   model_cellular:
     title: Cellular Composition Risk Model
     key:
     - fold
     format: bundle
-    path: models/cellular/fold={fold}/model.pkl
+    path: models/cellular/fold={fold}
   model_morphology:
     title: Morphology Model Bundle
     key:
     - fold
     format: bundle
-    path: models/morphology/fold={fold}/model.pkl
+    path: models/morphology/fold={fold}
   model_fusion:
     title: HELIOS Risk Model
     key:
     - fold
     format: bundle
-    path: models/fusion/fold={fold}/model.pkl
+    path: models/fusion/fold={fold}
   model_staging:
     title: Staging Risk Model
     key:
     - fold
     format: bundle
-    path: models/staging/fold={fold}/model.pkl
+    path: models/staging/fold={fold}
   model_clinical:
     title: Clinical Risk Model
     key:
     - fold
     format: bundle
-    path: models/clinical/fold={fold}/model.pkl
-  model_cyclegan:
-    title: CycleGAN Stain Generator
-    key:
-    - target
-    format: bundle
-    path: models/cyclegan/target={target}/checkpoint.pt
+    path: models/clinical/fold={fold}

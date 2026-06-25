@@ -2,7 +2,7 @@
 
 MAKEFLAGS += --no-print-directory
 
-SUMMARY := HELIOS computational-pathology pipeline. Scaffold with runnable seams and stubbed domain logic. Use uv for dependency management; src-layout means install-first.
+SUMMARY := HELIOS computational-pathology pipeline. Pure components composed by CLI-callable stages (prep/fit/predict/report). Use uv for dependency management; src-layout means install-first.
 
 MY_DIR_PATH := $(dir $(realpath $(firstword $(MAKEFILE_LIST))))
 ROOT_DIR_PATH := $(realpath $(MY_DIR_PATH))
@@ -16,15 +16,15 @@ include $(ROOT_DIR_PATH)/dev/makefiles/show-help.mk
 install:
 	$(UV) sync --extra dev
 
+.PHONY: shell
+## Open a sub-shell with the project virtualenv activated.
+shell:
+	$(UV) run $${SHELL:-bash}
+
 .PHONY: test
-## Run the test suite (incl. the end-to-end smoke test on synthetic fixtures).
+## Run the test suite.
 test:
 	$(UV) run pytest
-
-.PHONY: smoke
-## Run only the end-to-end pipeline smoke test.
-smoke:
-	$(UV) run pytest tests/test_smoke.py -v
 
 .PHONY: lint
 ## Run ruff (lint) and mypy (type-check).
@@ -38,15 +38,10 @@ format:
 	$(UV) run ruff format src tests
 	$(UV) run ruff check --fix src tests
 
-.PHONY: fit
-## Run the training pipeline (helios fit). Pass ARGS="--config ...".
-fit:
-	$(UV) run helios fit $(ARGS)
-
-.PHONY: predict
-## Run the inference pipeline (helios predict). Pass ARGS="--config ...".
-predict:
-	$(UV) run helios predict $(ARGS)
+.PHONY: configs
+## Regenerate configs/default.yaml from stage signatures.
+configs:
+	$(UV) run python scripts/gen_configs.py
 
 .PHONY: clean
 ## Remove caches and build artifacts (keeps .venv).

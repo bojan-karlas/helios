@@ -1,7 +1,0 @@
-# Pathological Concept Analysis training overrides.
-cv:
-  n_folds: 5
-stages:
-  concept_models_training:
-    params:
-      n_bootstrap: 100   # bootstrap concept models per concept per fold
