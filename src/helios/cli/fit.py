@@ -37,6 +37,26 @@ def mil(
     size_mm: float | None = typer.Option(None, "--size-mm", help="Tile resolution to train on."),
     model: str | None = typer.Option(None, "--model", help="Foundation model providing tile features."),
     target: str | None = typer.Option(None, "--target", help="Outcome column to train against."),
+    aug_swap_prob: float | None = typer.Option(
+        None, "--aug-swap-prob", help="Per-tile probability of swapping in the stain-augmented embedding."
+    ),
+    aug_mode: str | None = typer.Option(
+        None, "--aug-mode", help="'replace' swaps a tile's embedding in place; 'augment' appends it to the bag."
+    ),
+    n_branches: int | None = typer.Option(None, "--n-branches", help="Number of gated-attention branches (K)."),
+    num_heads: int | None = typer.Option(None, "--num-heads", help="Attention heads per branch."),
+    dropout_rate: float | None = typer.Option(None, "--dropout-rate", help="Dropout rate throughout the network."),
+    lambda_div: float | None = typer.Option(
+        None, "--lambda-div", help="Weight of the branch-attention diversity loss."
+    ),
+    lr: float | None = typer.Option(None, "--lr", help="Adam learning rate."),
+    weight_decay: float | None = typer.Option(None, "--weight-decay", help="Adam weight decay."),
+    max_epochs: int | None = typer.Option(None, "--max-epochs", help="Max training epochs per fold."),
+    patience: int | None = typer.Option(None, "--patience", help="Early-stopping patience (epochs)."),
+    val_frac: float | None = typer.Option(
+        None, "--val-frac", help="Fraction of each fold's train slides held out for early-stopping."
+    ),
+    seed: int | None = typer.Option(None, "--seed", help="Random seed."),
     device: str | None = typer.Option(None, "--device", help="Torch device (cuda, cpu)."),
     filter: str | None = _FILTER,
     config: Path | None = _CONFIG,
@@ -44,7 +64,24 @@ def mil(
 ) -> None:
     """Train the whole-slide A-MIL model."""
     datasets = resolve_datasets(datasets_arg(dataset), where=filter)
-    overrides = {"size_mm": size_mm, "model": model, "target": target, "device": device}
+    overrides = {
+        "size_mm": size_mm,
+        "model": model,
+        "target": target,
+        "aug_swap_prob": aug_swap_prob,
+        "aug_mode": aug_mode,
+        "n_branches": n_branches,
+        "num_heads": num_heads,
+        "dropout_rate": dropout_rate,
+        "lambda_div": lambda_div,
+        "lr": lr,
+        "weight_decay": weight_decay,
+        "max_epochs": max_epochs,
+        "patience": patience,
+        "val_frac": val_frac,
+        "seed": seed,
+        "device": device,
+    }
     params = load_stage_params("fit", "mil", config_path=config, overrides=overrides)
     fit_mil(
         datasets=datasets, output_root=output_root, force=force,
@@ -76,17 +113,36 @@ def concept(
 def morphology(
     dataset: list[str] = _DATASET,
     output_root: Path | None = _OUTPUT_ROOT,
-    attention_percentile: float | None = typer.Option(
-        None, "--attention-percentile", help="Attention filter percentile."
+    target: str | None = typer.Option(None, "--target", help="Outcome column to train against."),
+    attention_cutoff: float | None = typer.Option(
+        None, "--attention-cutoff", help="Cumulative attention-mass cutoff for the tile filter."
     ),
     n_pca: int | None = typer.Option(None, "--n-pca", help="PCA components before clustering."),
+    k_micro: int | None = typer.Option(None, "--k-micro", help="FAISS k-means over-cluster count."),
+    k_neighbors: int | None = typer.Option(None, "--k-neighbors", help="kNN graph neighbors for Leiden."),
+    resolution: float | None = typer.Option(None, "--resolution", help="Leiden resolution parameter."),
+    significance_alpha: float | None = typer.Option(
+        None, "--significance-alpha", help="BH-adjusted p-value threshold for cluster exclusion."
+    ),
+    estimator: str | None = typer.Option(None, "--estimator", help="Cluster-presence risk estimator."),
+    seed: int | None = typer.Option(None, "--seed", help="Random seed."),
     filter: str | None = _FILTER,
     config: Path | None = _CONFIG,
     force: bool = _FORCE,
 ) -> None:
     """Train the patch-morphology clustering risk model."""
     datasets = resolve_datasets(datasets_arg(dataset), where=filter)
-    overrides = {"attention_percentile": attention_percentile, "n_pca": n_pca}
+    overrides = {
+        "target": target,
+        "attention_cutoff": attention_cutoff,
+        "n_pca": n_pca,
+        "k_micro": k_micro,
+        "k_neighbors": k_neighbors,
+        "resolution": resolution,
+        "significance_alpha": significance_alpha,
+        "estimator": estimator,
+        "seed": seed,
+    }
     params = load_stage_params("fit", "morphology", config_path=config, overrides=overrides)
     fit_morphology(
         datasets=datasets, output_root=output_root, force=force,

@@ -35,9 +35,50 @@ def detect_background(
     -------
     tuple
         ``(tile_background, background_mask)`` where ``tile_background`` has one
-        row per tile (``tile_id, is_background``) and ``background_mask`` is the
+        row per tile (``tile_id, tile_background``) and ``background_mask`` is the
         boolean thumbnail-resolution tissue mask (debug image).
     """
-    raise NotImplementedError(
-        "Segment background on the thumbnail and set a per-tile background flag."
+    if thumbnail.ndim != 3 or thumbnail.shape[-1] < 3:
+        raise ValueError("thumbnail must have shape (H, W, 3)")
+    required = {"tile_id", "tile_x", "tile_y", "tile_width", "tile_height"}
+    missing = required - set(tile_metadata.columns)
+    if missing:
+        raise ValueError(f"tile_metadata is missing columns: {sorted(missing)}")
+
+    from PIL import Image
+    from scipy import ndimage
+
+    rgb = np.asarray(thumbnail[..., :3], dtype=np.uint8)
+    hsv = np.asarray(Image.fromarray(rgb).convert("HSV"), dtype=np.uint8)
+    saturation = hsv[..., 1]
+    value = hsv[..., 2]
+
+    # Port the reference extractor's dominant rules: pale bright glass and
+    # very dark scanner/artifact pixels are both unsuitable for embeddings.
+    background = (saturation <= saturation_threshold) & (value >= 215)
+    artifact = value <= 70
+    background = ndimage.median_filter(background | artifact, size=5).astype(bool)
+
+    if tile_metadata.empty:
+        flags = pd.DataFrame({"tile_id": pd.Series(dtype=int), "tile_background": pd.Series(dtype=bool)})
+        return flags, background
+
+    slide_width = int((tile_metadata["tile_x"] + tile_metadata["tile_width"]).max())
+    slide_height = int((tile_metadata["tile_y"] + tile_metadata["tile_height"]).max())
+    thumb_height, thumb_width = background.shape
+    values: list[bool] = []
+    for row in tile_metadata.itertuples(index=False):
+        x0 = int(np.floor(row.tile_x * thumb_width / slide_width))
+        x1 = int(np.ceil((row.tile_x + row.tile_width) * thumb_width / slide_width))
+        y0 = int(np.floor(row.tile_y * thumb_height / slide_height))
+        y1 = int(np.ceil((row.tile_y + row.tile_height) * thumb_height / slide_height))
+        region = background[max(0, y0) : min(thumb_height, y1), max(0, x0) : min(thumb_width, x1)]
+        values.append(bool(region.size == 0 or np.mean(region) > 0.5))
+
+    flags = pd.DataFrame(
+        {
+            "tile_id": tile_metadata["tile_id"].to_numpy(),
+            "tile_background": np.asarray(values, dtype=bool),
+        }
     )
+    return flags, background

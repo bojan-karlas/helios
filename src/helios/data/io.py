@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import pickle
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
@@ -60,7 +61,10 @@ def read(path: str | Path, fmt: str) -> Any:
     if base in {"txt", "md"}:
         return path.read_text()
     if base == "png":
-        return path.read_bytes()
+        from PIL import Image
+
+        with Image.open(path) as image:
+            return np.asarray(image).copy()
     raise ValueError(f"Unsupported read format: {fmt!r}")
 
 
@@ -90,7 +94,21 @@ def write(obj: Any, path: str | Path, fmt: str) -> Path:
     elif base in {"txt", "md"}:
         path.write_text(str(obj))
     elif base == "png":
-        path.write_bytes(obj if isinstance(obj, (bytes, bytearray)) else bytes(obj))
+        if isinstance(obj, (bytes, bytearray)):
+            # Preserve already-encoded PNG payloads.
+            with BytesIO(obj) as stream:
+                from PIL import Image
+
+                with Image.open(stream) as image:
+                    image.verify()
+            path.write_bytes(obj)
+        else:
+            from PIL import Image
+
+            array = np.asarray(obj)
+            if array.dtype == np.bool_:
+                array = array.astype(np.uint8) * 255
+            Image.fromarray(array).save(path, format="PNG")
     else:
         raise ValueError(f"Unsupported write format: {fmt!r}")
     return path

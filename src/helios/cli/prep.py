@@ -58,13 +58,32 @@ def splits(
     dataset: list[str] = _DATASET,
     output_root: Path | None = _OUTPUT_ROOT,
     n_folds: int | None = typer.Option(None, "--n-folds", help="Number of CV folds."),
+    val_fraction: float | None = typer.Option(
+        None, "--val-fraction", help="Fraction of each fold's train rows carved off as val."
+    ),
+    stratify_by: str | None = typer.Option(
+        None, "--stratify-by", help="Comma list of columns to stratify on (joint key if >1)."
+    ),
+    group_by: str | None = typer.Option(
+        None,
+        "--group-by",
+        help="Column kept within one fold (e.g. patient_id). To disable grouping (no CLI"
+        " override for 'None' — flags can't distinguish unset from explicit-None), use a"
+        " --config YAML with 'group_by: null' instead.",
+    ),
     seed: int | None = typer.Option(None, "--seed", help="RNG seed."),
     config: Path | None = _CONFIG,
     force: bool = _FORCE,
 ) -> None:
     """Generate cross-validation splits for a training cohort."""
     datasets = resolve_datasets(datasets_arg(dataset))
-    overrides = {"n_folds": n_folds, "seed": seed}
+    overrides = {
+        "n_folds": n_folds,
+        "val_fraction": val_fraction,
+        "stratify_by": csv(stratify_by),
+        "group_by": group_by,
+        "seed": seed,
+    }
     params = load_stage_params("prep", "splits", config_path=config, overrides=overrides)
     prep_splits(
         datasets=datasets, output_root=output_root, force=force,
@@ -97,12 +116,19 @@ def tiles(
     output_root: Path | None = _OUTPUT_ROOT,
     size_mm: str | None = typer.Option(None, "--size-mm", help="Comma list of resolutions."),
     tile_px: int | None = typer.Option(None, "--tile-px", help="Tile edge length in pixels."),
+    stride_fraction: float | None = typer.Option(
+        None, "--stride-fraction", help="Grid stride as a fraction of tile width (0.5 gives 50% overlap)."
+    ),
     config: Path | None = _CONFIG,
     force: bool = _FORCE,
 ) -> None:
     """Tile each slide and flag background tiles."""
     datasets = resolve_datasets(datasets_arg(dataset))
-    overrides = {"size_mm": csv_floats(size_mm), "tile_px": tile_px}
+    overrides = {
+        "size_mm": csv_floats(size_mm),
+        "tile_px": tile_px,
+        "stride_fraction": stride_fraction,
+    }
     params = load_stage_params("prep", "tiles", config_path=config, overrides=overrides)
     prep_tiles(
         datasets=datasets, output_root=output_root, force=force,

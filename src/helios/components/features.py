@@ -16,6 +16,8 @@ IMPLEMENTER NOTES
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import nullcontext
+from functools import lru_cache
 from typing import Literal, get_args
 
 import numpy as np
@@ -81,6 +83,8 @@ def extract_features(
         Tile embeddings of shape ``(n_tiles, D)``; row ``i`` corresponds to
         ``tiles[i]``. ``D`` is model-dependent.
     """
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive")
     encoder = _load_encoder(model, device=device)
     n = int(len(tiles))
     n_batches = (n + batch_size - 1) // batch_size if batch_size > 0 else 0
@@ -95,9 +99,62 @@ def extract_features(
     return np.concatenate(chunks, axis=0)
 
 
+@lru_cache(maxsize=None)
 def _load_encoder(model: FeatureModel, *, device: str) -> Encoder:
     """Load the encoder callable for ``model`` (weights loaded here, not in the stage)."""
+    if model == "virchow2":
+        return _load_virchow2(device=device)
     raise NotImplementedError(
         f"Encoder {model!r} is not implemented yet. Load its weights here and "
         f"return a callable mapping uint8[N,H,W,3] tiles to float32[N,D] embeddings."
     )
+
+
+def _load_virchow2(*, device: str) -> Encoder:
+    """Load Paige Virchow2 and return its official 2,560-dim tile encoder.
+
+    The Hugging Face repository is gated. Users must accept its terms and make
+    a token available through ``huggingface-cli login`` or ``HF_TOKEN`` before
+    the first invocation. Weights are cached by Hugging Face and this encoder
+    is cached by :func:`_load_encoder` for reuse across slides in one process.
+    """
+    import timm
+    import torch
+    from PIL import Image
+    from timm.data import resolve_data_config
+    from timm.data.transforms_factory import create_transform
+    from timm.layers import SwiGLUPacked
+
+    resolved_device = torch.device(device)
+    if resolved_device.type == "cuda" and not torch.cuda.is_available():
+        resolved_device = torch.device("cpu")
+
+    backbone = timm.create_model(
+        "hf-hub:paige-ai/Virchow2",
+        pretrained=True,
+        mlp_layer=SwiGLUPacked,
+        act_layer=torch.nn.SiLU,
+    ).eval().to(resolved_device)
+    transform = create_transform(**resolve_data_config(backbone.pretrained_cfg, model=backbone))
+
+    def encode(batch: NDArray[np.uint8]) -> NDArray[np.float32]:
+        if batch.ndim != 4 or batch.shape[-1] != 3:
+            raise ValueError("Virchow2 input must have shape (N, H, W, 3)")
+        if len(batch) == 0:
+            return np.empty((0, 2560), dtype=np.float32)
+        inputs = torch.stack([transform(Image.fromarray(tile, mode="RGB")) for tile in batch]).to(resolved_device)
+        autocast = (
+            torch.autocast(device_type="cuda", dtype=torch.float16)
+            if resolved_device.type == "cuda"
+            else nullcontext()
+        )
+        with torch.inference_mode(), autocast:
+            tokens = backbone(inputs)
+            if tokens.ndim != 3 or tokens.shape[1] <= 5 or tokens.shape[2] != 1280:
+                raise ValueError(f"Unexpected Virchow2 output shape: {tuple(tokens.shape)}")
+            class_token = tokens[:, 0]
+            patch_tokens = tokens[:, 5:]  # tokens 1-4 are register tokens
+            embeddings = torch.cat([class_token, patch_tokens.mean(dim=1)], dim=-1)
+        return embeddings.float().cpu().numpy().astype(np.float32, copy=False)
+
+    return encode

@@ -8,6 +8,7 @@ reducing the K fold models internally.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 import pandas as pd
 
@@ -28,16 +29,32 @@ from helios.stages._runtime import (
 )
 
 # -- configurable defaults (source of truth for configs/default.yaml) ----------
-DEFAULT_ATTENTION_PERCENTILE: float = 90.0
+DEFAULT_TARGET: str = "disease_pfs_recurrence_5yfu"
+DEFAULT_ATTENTION_CUTOFF: float = 0.8
 DEFAULT_N_PCA: int = 50
+DEFAULT_K_MICRO: int = 3000
+DEFAULT_K_NEIGHBORS: int = 20
+DEFAULT_RESOLUTION: float = 1.0
+DEFAULT_SIGNIFICANCE_ALPHA: float = 0.05
+DEFAULT_ESTIMATOR: str = "random_forest"
+DEFAULT_SEED: int = 42
 
 
 def fit_morphology(
     *,
     datasets: DatasetArgs,
     output_root: str | Path | None = None,
-    attention_percentile: float = DEFAULT_ATTENTION_PERCENTILE,
+    target: str = DEFAULT_TARGET,
+    attention_cutoff: float = DEFAULT_ATTENTION_CUTOFF,
     n_pca: int = DEFAULT_N_PCA,
+    k_micro: int = DEFAULT_K_MICRO,
+    k_neighbors: int = DEFAULT_K_NEIGHBORS,
+    resolution: float = DEFAULT_RESOLUTION,
+    significance_alpha: float = DEFAULT_SIGNIFICANCE_ALPHA,
+    estimator: Literal["random_forest", "logreg_l2", "logreg_l1", "elasticnet", "gradient_boosting"] = (
+        DEFAULT_ESTIMATOR  # type: ignore[assignment]
+    ),
+    seed: int = DEFAULT_SEED,
     force: bool = False,
     progress: Progress = DEFAULT_PROGRESS,
 ) -> None:
@@ -65,14 +82,21 @@ def fit_morphology(
             ids = train_ids(store, fold, where=ds.where)
             for image_id in ids:
                 paths[image_id] = store.path("aligned_patch_embeddings", fold=fold, image_id=image_id)
-                attention.append(store.read("patch_attention", fold=fold, image_id=image_id))
+                attention.append(store.read("patch_attention", fold=fold, image_id=image_id).assign(image_id=image_id))
             labels.append(meta.loc[[i for i in ids if i in meta.index]].reset_index())
         bundle = train_morphology(
             paths,
             pd.concat(attention, ignore_index=True) if attention else pd.DataFrame(),
             pd.concat(labels, ignore_index=True),
-            attention_percentile=attention_percentile,
+            target=target,
+            attention_cutoff=attention_cutoff,
             n_pca=n_pca,
+            k_micro=k_micro,
+            k_neighbors=k_neighbors,
+            resolution=resolution,
+            significance_alpha=significance_alpha,
+            estimator=estimator,
+            seed=seed,
         )
         out.write("model_morphology", bundle, fold=fold)
         progress.log(f"wrote model_morphology fold={fold}")
