@@ -25,9 +25,6 @@ dist/
 /outputs/
 /cache/
 
-# Model checkpoints (large binaries)
-/checkpoints/
-
 # OS
 .DS_Store
 

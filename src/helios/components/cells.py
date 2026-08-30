@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import json
 import shutil
-import subprocess
 import tempfile
 from functools import cache
 from pathlib import Path
@@ -37,10 +36,13 @@ import lightning as L
 import numpy as np
 import openslide
 import pandas as pd
+import ray
 import torch
 import torch.nn as nn
 import torchvision
 import torchvision.transforms as T
+from cellvit.inference.inference import CellViTInference
+from cellvit.utils.ressource_manager import SystemConfiguration
 from sklearn.cluster import DBSCAN
 from torch.nn.functional import softmax
 from torch.utils.data import DataLoader, Dataset
@@ -121,46 +123,53 @@ def segment_cells(
         outdir_path = Path(outdir)
     outdir_path.mkdir(parents=True, exist_ok=True)
 
-    cmd = [
-        "cellvit-inference",
-        "--model", "SAM",
-        "--outdir", str(outdir_path),
-        "--nuclei_taxonomy", "pannuke",
-        "--geojson",
-        "process_wsi",
-        "--wsi_path", wsi_path,
-    ]
+    torch_device = torch.device(device)
+    if torch_device.type != "cuda":
+        raise ValueError(
+            "CellViT inference requires a CUDA device; use device='cuda' or "
+            "device='cuda:<index>'."
+        )
+    gpu_index = torch_device.index if torch_device.index is not None else 0
 
-    # stdout/stderr are inherited (not captured) so CellViT's own tqdm progress
-    # bar renders live in the terminal, instead of being buffered and dumped
-    # only after the process exits.
-    proc = subprocess.run(cmd)
-    if proc.returncode != 0 and (image_mpp is not None or image_magnification is not None):
-        # CellViT occasionally can't auto-detect MPP/magnification from the
-        # WSI's own metadata; retry once, forcing the values from image_metadata.csv.
-        fallback_cmd = list(cmd)
-        if image_mpp is not None:
-            fallback_cmd += ["--wsi_mpp", str(image_mpp)]
-        if image_magnification is not None:
-            fallback_cmd += ["--wsi_magnification", str(image_magnification)]
+    def run_inference(mpp: float | None = None, magnification: int | None = None) -> None:
+        # This is intentionally an in-process call: breakpoints can be placed
+        # here or inside CellViT without crossing a CLI subprocess boundary.
+        try:
+            system_configuration = SystemConfiguration(gpu=gpu_index)
+            detector = CellViTInference(
+                model_name="SAM",
+                outdir=outdir_path,
+                system_configuration=system_configuration,
+                nuclei_taxonomy="pannuke",
+                geojson=True,
+            )
+            detector.process_wsi(
+                wsi_path=wsi_path,
+                wsi_mpp=mpp,
+                wsi_magnification=magnification,
+            )
+        finally:
+            ray.shutdown()
 
+    try:
+        run_inference()
+    except Exception as first_error:
+        if image_mpp is None and image_magnification is None:
+            raise RuntimeError(
+                f"CellViT inference failed for {wsi_path}."
+            ) from first_error
+
+        # CellViT occasionally cannot auto-detect metadata; retry once with
+        # the values supplied by image_metadata.csv.
         shutil.rmtree(outdir_path, ignore_errors=True)
         outdir_path.mkdir(parents=True, exist_ok=True)
-        fallback_proc = subprocess.run(fallback_cmd)
-        if fallback_proc.returncode == 0:
-            proc = fallback_proc
-        else:
+        try:
+            run_inference(image_mpp, image_magnification)
+        except Exception as fallback_error:
             raise RuntimeError(
-                f"cellvit-inference failed (exit {proc.returncode}) for {wsi_path}, "
-                f"and the retry with image_metadata.csv's mpp/magnification fallback "
-                f"also failed (exit {fallback_proc.returncode}). See CellViT's own "
-                f"output above for the underlying error."
-            )
-    elif proc.returncode != 0:
-        raise RuntimeError(
-            f"cellvit-inference failed (exit {proc.returncode}) for {wsi_path}. "
-            f"See CellViT's own output above for the underlying error."
-        )
+                f"CellViT inference failed for {wsi_path}, and the retry with "
+                "image_metadata.csv's mpp/magnification fallback also failed."
+            ) from fallback_error
 
     # CellViT emits several *.geojson files per slide (e.g. tissue vs. detection
     # layers). We want only the cell-detection output. This pattern matches both
@@ -452,7 +461,7 @@ class Classifier(L.LightningModule):
 
 # --- Checkpoint + config (same as the standalone script) ---
 _CKPT_DIR = Path(__file__).resolve().parent.parent.parent.parent / "checkpoints"
-MITOSIS_CKPT = str(_CKPT_DIR / "mitosis.ckpt")
+MITOSIS_CKPT = str(_CKPT_DIR / "mitosis" / "mitosis.ckpt")
 
 # Index of the "mitotic" class in the model's 2-class output. Flip to 0 if your
 # training used the opposite convention.
