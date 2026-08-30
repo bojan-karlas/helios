@@ -37,6 +37,9 @@ def mil(
     size_mm: float | None = typer.Option(None, "--size-mm", help="Tile resolution to train on."),
     model: str | None = typer.Option(None, "--model", help="Foundation model providing tile features."),
     target: str | None = typer.Option(None, "--target", help="Outcome column to train against."),
+    augmentation_target: str | None = typer.Option(
+        None, "--augmentation-target", help="Stain target whose augmented tile features are used during MIL training."
+    ),
     aug_swap_prob: float | None = typer.Option(
         None, "--aug-swap-prob", help="Per-tile probability of swapping in the stain-augmented embedding."
     ),
@@ -68,6 +71,7 @@ def mil(
         "size_mm": size_mm,
         "model": model,
         "target": target,
+        "augmentation_target": augmentation_target,
         "aug_swap_prob": aug_swap_prob,
         "aug_mode": aug_mode,
         "n_branches": n_branches,

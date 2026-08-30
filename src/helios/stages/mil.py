@@ -32,6 +32,7 @@ from helios.stages._runtime import (
 DEFAULT_SIZE_MM: float = 0.25
 DEFAULT_MODEL: str = "virchow2"
 DEFAULT_TARGET: str = "disease_pfs_recurrence_5yfu"
+DEFAULT_AUGMENTATION_TARGET: str | None = None
 DEFAULT_AUG_SWAP_PROB: float = 0.5
 DEFAULT_AUG_MODE: Literal["replace", "augment"] = "replace"
 DEFAULT_N_BRANCHES: int = 4
@@ -54,6 +55,7 @@ def fit_mil(
     size_mm: float = DEFAULT_SIZE_MM,
     model: str = DEFAULT_MODEL,
     target: str = DEFAULT_TARGET,
+    augmentation_target: str | None = DEFAULT_AUGMENTATION_TARGET,
     aug_swap_prob: float = DEFAULT_AUG_SWAP_PROB,
     aug_mode: Literal["replace", "augment"] = DEFAULT_AUG_MODE,
     n_branches: int = DEFAULT_N_BRANCHES,
@@ -100,7 +102,17 @@ def fit_mil(
                             "tile_features", size_mm=size_mm, model=model, image_id=image_id
                         ),
                         background_path=store.path("tile_background", size_mm=size_mm, image_id=image_id),
-                        aug_features_path=None,
+                        aug_features_path=(
+                            store.path(
+                                "tile_augmentation_features",
+                                target=augmentation_target,
+                                size_mm=size_mm,
+                                model=model,
+                                image_id=image_id,
+                            )
+                            if augmentation_target is not None
+                            else None
+                        ),
                         label=_label(labels, image_id, target),
                     )
                 )

@@ -8,6 +8,7 @@ fit:
   mil:
     aug_mode: replace
     aug_swap_prob: 0.5
+    augmentation_target: null
     device: cuda
     dropout_rate: 0.1
     lambda_div: 0.01
@@ -65,15 +66,16 @@ predict:
     staging_feature: path_stage_substage
 prep:
   augment:
+    augmentation_batch_size: 16
     batch_size: 64
+    checkpoint: []
     device: cuda
     model:
     - virchow2
     size_mm:
     - 0.25
-    target:
-    - MGB+MRV
-    - VISIOMEL
+    stain_model_root: src/helios/models/multistain_cyclegan
+    target: []
   cell-features:
     size_mm:
     - 0.25

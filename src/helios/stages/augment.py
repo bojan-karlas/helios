@@ -12,7 +12,7 @@ from pathlib import Path
 import numpy as np
 from numpy.typing import NDArray
 
-from helios.components.augmentation import STAIN_TARGETS, augment_stains
+from helios.components.augmentation import augment_stains
 from helios.components.features import FEATURE_MODELS, extract_features
 from helios.progress import DEFAULT_PROGRESS, Progress
 from helios.stages._runtime import (
@@ -24,10 +24,13 @@ from helios.stages._runtime import (
 )
 
 # -- configurable defaults (source of truth for configs/default.yaml) ----------
-DEFAULT_TARGETS: list[str] = ["MGB+MRV", "VISIOMEL"]
+DEFAULT_TARGETS: list[str] = []
+DEFAULT_CHECKPOINTS: list[str] = []
+DEFAULT_STAIN_MODEL_ROOT: str = "src/helios/models/multistain_cyclegan"
 DEFAULT_SIZE_MM: list[float] = [0.25]
 DEFAULT_MODELS: list[str] = ["virchow2"]
 DEFAULT_BATCH_SIZE: int = 64
+DEFAULT_AUGMENTATION_BATCH_SIZE: int = 16
 DEFAULT_DEVICE: str = "cuda"
 
 
@@ -36,9 +39,12 @@ def prep_augment(
     datasets: DatasetArgs,
     output_root: str | Path | None = None,
     target: list[str] = DEFAULT_TARGETS,
+    checkpoint: list[str] = DEFAULT_CHECKPOINTS,
+    stain_model_root: str | Path = DEFAULT_STAIN_MODEL_ROOT,
     size_mm: list[float] = DEFAULT_SIZE_MM,
     model: list[str] = DEFAULT_MODELS,
     batch_size: int = DEFAULT_BATCH_SIZE,
+    augmentation_batch_size: int = DEFAULT_AUGMENTATION_BATCH_SIZE,
     device: str = DEFAULT_DEVICE,
     image_ids: list[str] | None = None,
     force: bool = False,
@@ -52,17 +58,23 @@ def prep_augment(
     """
     resolved = resolve_datasets(datasets)
     single_output_guard(resolved, output_root)
-    _validate(target, model)
+    checkpoints = _resolve_checkpoints(target, checkpoint, stain_model_root)
+    _validate(target, checkpoints, model)
 
     for ds in resolved:
         store = cohort_store(ds.root, output_root)
         ids = select_image_ids(ds, store, image_ids)
-        units = [(t, s, i) for t in target for s in size_mm for i in ids]
+        units = [(t, c, s, i) for t, c in zip(target, checkpoints, strict=True) for s in size_mm for i in ids]
 
-        for t, s, image_id in progress.task(units, desc=f"augment {ds.name}"):
+        for t, checkpoint_path, s, image_id in progress.task(units, desc=f"augment {ds.name}"):
             if force or not store.exists("tile_augmentation", target=t, size_mm=s, image_id=image_id):
                 tiles = _tiles_array(store.read("tiles", size_mm=s, image_id=image_id))
-                augmented = augment_stains(tiles, target=t, device=device)  # type: ignore[arg-type]
+                augmented = augment_stains(
+                    tiles,
+                    checkpoint=checkpoint_path,
+                    batch_size=augmentation_batch_size,
+                    device=device,
+                )
                 store.write(
                     "tile_augmentation", {"tiles": augmented}, target=t, size_mm=s, image_id=image_id
                 )
@@ -92,13 +104,27 @@ def prep_augment(
                 )
 
 
-def _validate(target: list[str], model: list[str]) -> None:
-    unknown_t = [t for t in target if t not in STAIN_TARGETS]
-    if unknown_t:
-        raise ValueError(f"Unknown stain target(s) {unknown_t}. Available: {list(STAIN_TARGETS)}.")
+def _validate(target: list[str], checkpoint: list[str], model: list[str]) -> None:
+    if len(target) != len(checkpoint):
+        raise ValueError(
+            "target and checkpoint must have the same number of values "
+            "(one user-trained G_A checkpoint per stain target)."
+        )
+    if len(set(target)) != len(target):
+        raise ValueError("stain target names must be unique")
     unknown_m = [m for m in model if m not in FEATURE_MODELS]
     if unknown_m:
         raise ValueError(f"Unknown feature model(s) {unknown_m}. Available: {list(FEATURE_MODELS)}.")
+
+
+def _resolve_checkpoints(
+    targets: list[str], checkpoints: list[str], stain_model_root: str | Path
+) -> list[str]:
+    """Use explicit paths or the conventional per-target local model path."""
+    if checkpoints:
+        return checkpoints
+    root = Path(stain_model_root)
+    return [str(root / target / "latest_net_G_A.pth") for target in targets]
 
 
 def _tiles_array(tiles: object) -> NDArray[np.uint8]:

@@ -37,7 +37,9 @@ _FORCE = typer.Option(False, "--force", help="Re-derive even if outputs exist.")
 @prep_app.callback(invoke_without_command=True)
 def prep_all(
     ctx: typer.Context,
-    dataset: list[str] = _DATASET,
+    dataset: list[str] | None = typer.Option(
+        None, "--dataset", help="Cohort root(s) or cohort file(s); repeatable or comma-separated."
+    ),
     output_root: Path | None = _OUTPUT_ROOT,
     config: Path | None = _CONFIG,
     force: bool = _FORCE,
@@ -45,6 +47,8 @@ def prep_all(
     """Run every prep stage in order (deployment-style full prep for a cohort)."""
     if ctx.invoked_subcommand is not None:
         return
+    if not dataset:
+        raise typer.BadParameter("at least one --dataset is required")
     datasets = resolve_datasets(datasets_arg(dataset))
     progress = console_progress(output_root or datasets[0].root)
     for noun, stage in STAGES["prep"].items():
@@ -142,15 +146,32 @@ def augment(
     dataset: list[str] = _DATASET,
     output_root: Path | None = _OUTPUT_ROOT,
     target: str | None = typer.Option(None, "--target", help="Comma list of stain targets."),
+    checkpoint: str | None = typer.Option(
+        None, "--checkpoint", help="Comma list of user-trained MultiStain-CycleGAN G_A checkpoints."
+    ),
+    stain_model_root: Path | None = typer.Option(
+        None, "--stain-model-root", help="Root for <target>/latest_net_G_A.pth checkpoint lookup."
+    ),
     size_mm: str | None = typer.Option(None, "--size-mm", help="Comma list of resolutions."),
     model: str | None = typer.Option(None, "--model", help="Comma list of foundation models."),
+    augmentation_batch_size: int | None = typer.Option(
+        None, "--augmentation-batch-size", help="Tiles per CycleGAN forward pass."
+    ),
     device: str | None = typer.Option(None, "--device", help="Torch device (cuda, cpu)."),
     config: Path | None = _CONFIG,
     force: bool = _FORCE,
 ) -> None:
     """Stain-augment tiles and extract augmented features."""
     datasets = resolve_datasets(datasets_arg(dataset))
-    overrides = {"target": csv(target), "size_mm": csv_floats(size_mm), "model": csv(model), "device": device}
+    overrides = {
+        "target": csv(target),
+        "checkpoint": csv(checkpoint),
+        "stain_model_root": stain_model_root,
+        "size_mm": csv_floats(size_mm),
+        "model": csv(model),
+        "augmentation_batch_size": augmentation_batch_size,
+        "device": device,
+    }
     params = load_stage_params("prep", "augment", config_path=config, overrides=overrides)
     prep_augment(
         datasets=datasets, output_root=output_root, force=force,
