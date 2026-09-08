@@ -207,6 +207,8 @@ A first end-to-end run against a single cohort looks like:
 helios prep --dataset /data/my_cohort        # run every prep stage in order
 helios fit  mil       --dataset /data/my_cohort
 helios predict mil    --dataset /data/my_cohort
+helios fit  concept   --dataset /data/my_cohort
+helios predict concept --dataset /data/my_cohort
 helios fit  risk      --dataset /data/my_cohort
 helios predict risk   --dataset /data/my_cohort
 helios report --dataset /data/my_cohort
@@ -329,6 +331,41 @@ cohort. With no `cv_splits`, the same code path trains a single fold-free model
 and ensembles at inference — exactly what you want when deploying to a fresh
 cohort. Splits are grouped by `patient_id` so a patient's slides never straddle
 the train/test boundary.
+
+### Pathological concept modeling
+
+Concept modeling runs after MIL inference because it consumes the per-fold
+`aligned_slide_embedding` and `whole_image_risk_score` artifacts. Training uses
+the `path_*` fields in `image_metadata.csv`: bootstrapped logistic probes learn
+binary and categorical concept activation vectors, while bootstrapped ridge
+probes learn numerical concepts. Categorical fields with more than two values
+are represented as one-vs-rest concepts and normalized as a probability
+distribution. The bootstrap ensemble also emits an uncertainty column named
+`<concept>__std` for each prediction.
+
+The predicted concepts feed a sparse Lasso concept-bottleneck model. A separate
+ridge model predicts the remaining error between the MIL risk and the
+cross-fitted concept-only risk from the slide embedding; the shipped
+`risk_score` is the concept-only score plus this residual correction. This
+preserves an explicitly inspectable concept score while allowing the corrected
+score to retain information not captured by the available pathology labels.
+
+```bash
+helios fit concept \
+  --dataset /data/my_cohort \
+  --output-root /scratch/runs/my_cohort \
+  --n-bootstrap 100
+
+helios predict concept \
+  --dataset /data/my_cohort \
+  --output-root /scratch/runs/my_cohort
+```
+
+Use the same `--output-root` used for `helios predict mil`. The prediction stage
+reduces fold outputs out-of-fold when `cv_splits` exists and averages the fold
+models for deployment cohorts without splits. Programmatic callers may pass a
+pathologist correction table to `infer_concepts`; non-null values keyed by
+`image_id` replace the corresponding predicted concepts before risk scoring.
 
 ### Configuration
 
