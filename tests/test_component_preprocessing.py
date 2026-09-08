@@ -75,6 +75,26 @@ def test_colored_ink_is_rejected_without_removing_purple_tissue() -> None:
     assert mask[:, 100:200].mean() == 1.0
 
 
+def test_background_mask_rasterizes_final_ink_tile_decision() -> None:
+    thumbnail = np.full((100, 200, 3), (120, 30, 90), dtype=np.uint8)
+    thumbnail[40:60, 140:160] = (20, 80, 180)
+    metadata = pd.DataFrame(
+        {
+            "tile_id": [0, 1],
+            "tile_x": [0, 100],
+            "tile_y": [0, 0],
+            "tile_width": [100, 100],
+            "tile_height": [100, 100],
+        }
+    )
+
+    flags, mask = detect_background(thumbnail, metadata)
+
+    assert flags["tile_background"].tolist() == [False, True]
+    assert not mask[:, :100].any()
+    assert mask[:, 100:].all(), "the PNG must show the final expanded tile rejection"
+
+
 def test_png_artifacts_round_trip_arrays(tmp_path: Path) -> None:
     path = tmp_path / "image.png"
     expected = np.arange(4 * 5 * 3, dtype=np.uint8).reshape(4, 5, 3)

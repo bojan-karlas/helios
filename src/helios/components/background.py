@@ -66,12 +66,17 @@ def detect_background(
     slide_height = int((tile_metadata["tile_y"] + tile_metadata["tile_height"]).max())
     thumb_height, thumb_width = background.shape
     values: list[bool] = []
+    regions: list[tuple[int, int, int, int]] = []
     for row in tile_metadata.itertuples(index=False):
         x0 = int(np.floor(row.tile_x * thumb_width / slide_width))
         x1 = int(np.ceil((row.tile_x + row.tile_width) * thumb_width / slide_width))
         y0 = int(np.floor(row.tile_y * thumb_height / slide_height))
         y1 = int(np.ceil((row.tile_y + row.tile_height) * thumb_height / slide_height))
-        region = rgb[max(0, y0) : min(thumb_height, y1), max(0, x0) : min(thumb_width, x1)]
+        bounds = (
+            max(0, y0), min(thumb_height, y1), max(0, x0), min(thumb_width, x1)
+        )
+        regions.append(bounds)
+        region = rgb[bounds[0] : bounds[1], bounds[2] : bounds[3]]
         values.append(
             bool(
                 region.size == 0
@@ -88,7 +93,15 @@ def detect_background(
             "tile_background": np.asarray(values, dtype=bool),
         }
     )
-    return flags, background
+    # The debug artifact should show the final decision consumed by MIL, not
+    # merely the candidate HSV pixels. Paint every rejected tile footprint into
+    # the thumbnail-resolution mask; this also makes ink-triggered dilation and
+    # the tile threshold visible.
+    final_mask = background.copy()
+    for rejected, (y0, y1, x0, x1) in zip(values, regions, strict=True):
+        if rejected:
+            final_mask[y0:y1, x0:x1] = True
+    return flags, final_mask
 
 
 def _background_pixels(
