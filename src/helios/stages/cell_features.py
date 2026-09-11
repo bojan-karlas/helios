@@ -3,6 +3,9 @@
 Aggregates the cell pipeline outputs into per-tile counts (``tile_cell_counts``,
 per size_mm) and then per-slide cellular features (``cellular_features``). These
 features feed the cellular risk model.
+
+The implementations live in :mod:`helios.components.cellular`; this stage only
+drives them per slide and writes artifacts.
 """
 from __future__ import annotations
 
@@ -23,7 +26,6 @@ from helios.stages._runtime import (
 
 # -- configurable defaults (source of truth for configs/default.yaml) ----------
 DEFAULT_SIZE_MM: list[float] = [0.25]
-
 
 def prep_cell_features(
     *,
