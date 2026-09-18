@@ -3,12 +3,22 @@
 Runs the full cell pipeline per slide: CellViT++ segmentation (``cells``) →
 tumor-cell patch extraction (``tumor_cell_patches``) → OMG-Net mitotic
 classification (``mitotic_cells``). All three external models are inference-only.
+
+The implementations live in :mod:`helios.components.cells`; this stage only
+chains them per slide and writes artifacts.
 """
 from __future__ import annotations
 
 from pathlib import Path
 
-from helios.components.cells import classify_mitoses, extract_tumor_patches, segment_cells
+import pandas as pd
+
+from helios.components.cells import (
+    classify_mitoses,
+    cluster_based_filtering,
+    extract_tumor_patches,
+    segment_cells,
+)
 from helios.progress import DEFAULT_PROGRESS, Progress
 from helios.stages._runtime import (
     DatasetArgs,
@@ -21,6 +31,26 @@ from helios.stages._runtime import (
 # -- configurable defaults (source of truth for configs/default.yaml) ----------
 DEFAULT_PATCH_PX: int = 64
 DEFAULT_DEVICE: str = "cuda"
+
+
+def _mpp_magnification_fallback(
+    image_metadata: pd.DataFrame, image_id: str
+) -> tuple[float | None, int | None]:
+    """Look up ``image_mpp`` / ``image_magnification`` for one image.
+
+    Passed to :func:`segment_cells` as a fallback for slides where CellViT
+    can't auto-detect MPP/magnification from the WSI itself (see
+    ``configs/schema/image_metadata.datadict.yaml`` for these columns).
+    """
+    row = image_metadata.loc[image_metadata["image_id"].astype(str) == image_id]
+    if row.empty:
+        return None, None
+    mpp = row["image_mpp"].iloc[0] if "image_mpp" in row else None
+    magnification = row["image_magnification"].iloc[0] if "image_magnification" in row else None
+    return (
+        float(mpp) if pd.notna(mpp) else None,
+        int(magnification) if pd.notna(magnification) else None,
+    )
 
 
 def prep_cells(
@@ -52,7 +82,11 @@ def prep_cells(
                 progress.log(f"skip cells image={image_id} (exists)")
                 continue
 
-            cells = segment_cells(wsi_path, device=device)
+            image_mpp, image_magnification = _mpp_magnification_fallback(cohort.image_metadata, image_id)
+            cells = segment_cells(
+                wsi_path, device=device, image_mpp=image_mpp, image_magnification=image_magnification
+            )
+            cells = cluster_based_filtering(cells)
             store.write("cells", cells, image_id=image_id)
 
             patch_index, patches = extract_tumor_patches(wsi_path, cells, patch_px=patch_px)

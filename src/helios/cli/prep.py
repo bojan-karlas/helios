@@ -27,6 +27,9 @@ from helios.stages.tiles import prep_tiles
 prep_app = typer.Typer(add_completion=False, help="Derive data artifacts (no fitting).")
 
 _DATASET = typer.Option(..., "--dataset", help="Cohort root(s) or cohort file(s); repeatable or comma-separated.")
+_DATASET_GROUP = typer.Option(
+    None, "--dataset", help="Cohort root(s) or cohort file(s); repeatable or comma-separated. Required for bare `helios prep`."
+)
 _OUTPUT_ROOT = typer.Option(
     None, "--output-root", help="Write derived artifacts here (source stays read-only); single --dataset only."
 )
@@ -37,9 +40,7 @@ _FORCE = typer.Option(False, "--force", help="Re-derive even if outputs exist.")
 @prep_app.callback(invoke_without_command=True)
 def prep_all(
     ctx: typer.Context,
-    dataset: list[str] | None = typer.Option(
-        None, "--dataset", help="Cohort root(s) or cohort file(s); repeatable or comma-separated."
-    ),
+    dataset: list[str] = _DATASET_GROUP,
     output_root: Path | None = _OUTPUT_ROOT,
     config: Path | None = _CONFIG,
     force: bool = _FORCE,
@@ -48,7 +49,7 @@ def prep_all(
     if ctx.invoked_subcommand is not None:
         return
     if not dataset:
-        raise typer.BadParameter("at least one --dataset is required")
+        raise typer.BadParameter("at least one --dataset is required", param_hint="--dataset")
     datasets = resolve_datasets(datasets_arg(dataset))
     progress = console_progress(output_root or datasets[0].root)
     for noun, stage in STAGES["prep"].items():
