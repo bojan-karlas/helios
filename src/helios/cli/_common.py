@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from helios.progress import Progress
+from helios.progress import Progress, configure_logging
 from helios.progress.reporter import ProgressReporter
 
 
@@ -37,5 +37,6 @@ def datasets_arg(values: list[str] | None) -> list[str]:
 
 
 def console_progress(output_root: str | Path) -> Progress:
-    """A console Progress that also writes status.json / events.jsonl."""
+    """A console Progress that also writes status.json / events.jsonl / run.log."""
+    configure_logging(Path(output_root))
     return Progress.console(reporter=ProgressReporter(Path(output_root)))

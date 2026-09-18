@@ -71,10 +71,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from numpy.typing import NDArray
-from sklearn.metrics import average_precision_score
+from sklearn.metrics import average_precision_score, roc_auc_score
 from sklearn.model_selection import train_test_split
 
 from helios.models.base import Model, register_model
+from helios.progress import DEFAULT_PROGRESS, Progress
 
 
 @dataclass(frozen=True)
@@ -371,6 +372,9 @@ class MilAttentionModel(Model):
         slides = inputs
         if not slides:
             raise ValueError("train_mil requires at least one training slide.")
+        progress: Progress = params.get("progress", DEFAULT_PROGRESS)
+        fold_label = params.get("fold_label")
+        prefix = f"[fold={fold_label}] " if fold_label is not None else ""
 
         _seed_everything(self.seed)
         rng = np.random.default_rng(self.seed)
@@ -408,15 +412,21 @@ class MilAttentionModel(Model):
                 optimizer.step()
 
             if val_refs:
-                auprc = _validation_auprc(net, val_refs, device=dev)
-                if auprc > best_auprc:
+                auprc, auroc = _validation_metrics(net, val_refs, device=dev)
+                improved = auprc > best_auprc
+                if improved:
                     best_auprc = auprc
                     best_state = {k: v.detach().cpu().clone() for k, v in net.state_dict().items()}
                     epochs_no_improve = 0
                 else:
                     epochs_no_improve += 1
-                    if epochs_no_improve >= self.patience:
-                        break
+                progress.log(
+                    f"{prefix}epoch={_epoch + 1}/{self.max_epochs} "
+                    f"val_auprc={auprc:.4f} val_auroc={auroc:.4f}"
+                    f"{' (best)' if improved else ''}"
+                )
+                if not improved and epochs_no_improve >= self.patience:
+                    break
             else:
                 # Fold too small for an internal val split: keep the final epoch's weights.
                 best_state = {k: v.detach().cpu().clone() for k, v in net.state_dict().items()}
@@ -473,6 +483,8 @@ def train_mil(
     val_frac: float = 0.15,
     seed: int = 42,
     device: str = "cuda",
+    progress: Progress = DEFAULT_PROGRESS,
+    fold: int | None = None,
 ) -> Model:
     """Fit one A-MIL model on a fold's training slides.
 
@@ -505,7 +517,7 @@ def train_mil(
         aug_mode=aug_mode,
         device=device,
     )
-    return model.fit(slides)
+    return model.fit(slides, progress=progress, fold_label=fold)
 
 
 def infer_mil(
@@ -652,9 +664,10 @@ def _split_train_val(
     return list(train), list(val)
 
 
-def _validation_auprc(
+def _validation_metrics(
     net: _MultiBranchGatedAMIL, val_refs: list[SlideFeatureRef], *, device: torch.device
-) -> float:
+) -> tuple[float, float]:
+    """Validation ``(auprc, auroc)``; ``auprc`` drives early stopping, ``auroc`` is reported alongside it."""
     net.eval()
     probs: list[float] = []
     labels: list[int] = []
@@ -670,5 +683,5 @@ def _validation_auprc(
             probs.append(float(prob.item()))
             labels.append(int(ref.label))  # type: ignore[arg-type]
     if len(set(labels)) < 2:
-        return 0.0
-    return float(average_precision_score(labels, probs))
+        return 0.0, 0.0
+    return float(average_precision_score(labels, probs)), float(roc_auc_score(labels, probs))

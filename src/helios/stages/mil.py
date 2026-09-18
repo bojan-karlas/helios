@@ -131,6 +131,8 @@ def fit_mil(
             val_frac=val_frac,
             seed=seed,
             device=device,
+            progress=progress,
+            fold=fold,
         )
         out.write("model_mil", bundle, fold=fold)
         progress.log(f"wrote model_mil fold={fold} (n_train={len(slides)})")
