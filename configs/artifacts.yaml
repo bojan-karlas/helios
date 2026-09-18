@@ -136,6 +136,13 @@ artifacts:
     - image_id
     format: npy
     path: mil/slide_embedding/fold={fold}/{image_id}.npy
+  aligned_slide_embedding_grad:
+    title: Aligned Slide Embedding Gradient
+    key:
+    - fold
+    - image_id
+    format: npy
+    path: mil/slide_embedding_grad/fold={fold}/{image_id}.npy
   whole_image_risk_score:
     title: Whole-Image Risk Score (Per-Fold)
     key:

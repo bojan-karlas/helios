@@ -6,14 +6,33 @@ fit:
   concept:
     n_bootstrap: 100
   mil:
+    aug_mode: replace
     aug_swap_prob: 0.5
+    augmentation_target: null
     device: cuda
+    dropout_rate: 0.1
+    lambda_div: 0.01
+    lr: 0.0001
+    max_epochs: 20
     model: virchow2
+    n_branches: 4
+    num_heads: 4
+    patience: 5
+    seed: 42
     size_mm: 0.25
     target: disease_pfs_recurrence_5yfu
+    val_frac: 0.15
+    weight_decay: 0.0001
   morphology:
-    attention_percentile: 90.0
+    attention_cutoff: 0.8
+    estimator: random_forest
+    k_micro: 3000
+    k_neighbors: 20
     n_pca: 50
+    resolution: 1.0
+    seed: 42
+    significance_alpha: 0.05
+    target: disease_pfs_recurrence_5yfu
   risk:
     clinical_features:
     - patient_age_at_diagnosis
@@ -47,15 +66,16 @@ predict:
     staging_feature: path_stage_substage
 prep:
   augment:
+    augmentation_batch_size: 16
     batch_size: 64
+    checkpoint: []
     device: cuda
     model:
     - virchow2
     size_mm:
     - 0.25
-    target:
-    - MGB+MRV
-    - VISIOMEL
+    stain_model_root: src/helios/models/multistain_cyclegan
+    target: []
   cell-features:
     size_mm:
     - 0.25
@@ -83,6 +103,7 @@ prep:
     - 0.0625
     - 0.125
     - 0.25
+    stride_fraction: 0.5
     tile_px: 224
 report:
   build:

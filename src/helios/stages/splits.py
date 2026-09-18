@@ -20,7 +20,7 @@ from helios.stages._runtime import (
 DEFAULT_N_FOLDS: int = 5
 DEFAULT_VAL_FRACTION: float = 0.0
 DEFAULT_STRATIFY_BY: list[str] = ["disease_pfs_recurrence_5yfu"]
-DEFAULT_GROUP_BY: str = "patient_id"
+DEFAULT_GROUP_BY: str | None = "patient_id"
 DEFAULT_SEED: int = 0
 
 
@@ -31,7 +31,7 @@ def prep_splits(
     n_folds: int = DEFAULT_N_FOLDS,
     val_fraction: float = DEFAULT_VAL_FRACTION,
     stratify_by: list[str] = DEFAULT_STRATIFY_BY,
-    group_by: str = DEFAULT_GROUP_BY,
+    group_by: str | None = DEFAULT_GROUP_BY,
     seed: int = DEFAULT_SEED,
     force: bool = False,
     progress: Progress = DEFAULT_PROGRESS,
