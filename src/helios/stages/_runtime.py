@@ -186,9 +186,27 @@ def model_folds(store: ArtifactStore, model_id: str) -> list[int | None]:
     """Folds an inference stage should score with, enumerated from saved models.
 
     Inference enumerates folds from the *model* (not ``cv_splits``): a single
-    fold-free bundle ⇒ ``[None]`` (deploy / no-CV); otherwise the CV folds whose
-    per-fold bundle exists. Returns ``[]`` when no model has been fit yet.
+    fold-free bundle ⇒ ``[None]`` (deploy / no-CV); otherwise every fold whose
+    per-fold bundle actually exists on disk. Folds are discovered by scanning
+    the model's own directory (``fold=N`` entries) rather than the scoring
+    cohort's ``cv_splits`` — a deploy cohort scored with per-fold models
+    trained elsewhere has no ``cv_splits`` of its own, so that would find
+    nothing even though the fold bundles are right there. Returns ``[]`` when
+    no model has been fit yet.
     """
     if store.exists(model_id, fold=None):
         return [None]
-    return [f for f in folds_of(store) if f is not None and store.exists(model_id, fold=f)]
+    root = store.path(model_id, fold=0).parent
+    if not root.is_dir():
+        return []
+    folds: list[int] = []
+    for entry in sorted(root.iterdir()):
+        name = entry.name
+        if name.startswith(f"{FOLD_COLUMN}="):
+            try:
+                fold = int(name[len(FOLD_COLUMN) + 1 :])
+            except ValueError:
+                continue
+            if store.exists(model_id, fold=fold):
+                folds.append(fold)
+    return sorted(folds)

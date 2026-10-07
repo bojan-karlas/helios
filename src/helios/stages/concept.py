@@ -63,10 +63,10 @@ def fit_concept(
         risk: list[pd.DataFrame] = []
         for ds, store in zip(resolved, stores, strict=True):
             meta = ds.dataset().image_metadata.set_index("image_id")
-            ids = train_ids(store, fold, where=ds.where)
+            ids = [image_id for image_id in train_ids(store, fold, where=ds.where) if image_id in meta.index]
             embeddings.append(_stack_embeddings(store, fold, ids))
-            labels.append(meta.loc[[i for i in ids if i in meta.index]].reset_index())
-            risk.append(store.read("whole_image_risk_score", fold=fold))
+            labels.append(meta.loc[ids].reset_index())
+            risk.append(_select_risk(store.read("whole_image_risk_score", fold=fold), ids))
         bundle = train_concepts(
             np.concatenate(embeddings, axis=0) if embeddings else np.empty((0, 0), np.float32),
             pd.concat(labels, ignore_index=True),
@@ -105,7 +105,10 @@ def predict_concept(
 
         models = {fold: store.read("model_concepts", fold=fold) for fold in folds}
         embeddings = {fold: _stack_embeddings(store, fold, ids) for fold in folds}
-        risk = {fold: store.read("whole_image_risk_score", fold=fold) for fold in folds}
+        risk = {
+            fold: _select_risk(store.read("whole_image_risk_score", fold=fold), ids)
+            for fold in folds
+        }
         predictions, risk_score = infer_concepts(models, embeddings, risk, read_cv_splits(store))
         store.write("path_concept_predictions", tag_dataset(predictions, ds.name))
         store.write("path_concept_risk_score", tag_dataset(risk_score, ds.name))
@@ -118,3 +121,14 @@ def _stack_embeddings(store: ArtifactStore, fold: int | None, ids: list[str]) ->
         for i in ids
     ]
     return np.stack(vectors, axis=0) if vectors else np.empty((0, 0), dtype=np.float32)
+
+
+def _select_risk(table: pd.DataFrame, ids: list[str]) -> pd.DataFrame:
+    """Select and order a per-fold risk table to match an embedding matrix."""
+    if "image_id" not in table.columns:
+        raise ValueError("whole_image_risk_score must contain image_id.")
+    indexed = table.drop_duplicates("image_id").set_index("image_id")
+    missing = [image_id for image_id in ids if image_id not in indexed.index]
+    if missing:
+        raise ValueError(f"Missing whole-image risk for image_ids: {missing[:5]}")
+    return indexed.loc[ids].reset_index()

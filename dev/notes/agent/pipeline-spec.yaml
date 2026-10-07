@@ -226,8 +226,9 @@ artifacts:
     format: parquet
     path: mil/attention/fold={fold}/{image_id}.parquet
     description: |
-      A-MIL attention score per patch. Per-fold (one per fold MIL model); reporting OOF-selects the image's
-      test-fold attention.
+      Gradient-weighted A-MIL attention (branch contributions weighted by their gradient norm w.r.t. the logit)
+      plus per-tile saliency (tile_gradient: gradient of the logit w.r.t. a per-tile scalar multiplier), one row
+      per patch. Per-fold (one per fold MIL model); reporting OOF-selects the image's test-fold attention.
 
   - id: aligned_slide_embedding
     title: Aligned Slide Embedding
@@ -235,8 +236,19 @@ artifacts:
     format: npy
     path: mil/slide_embedding/fold={fold}/{image_id}.npy
     description: |
-      A-MIL attention-pooled, alignment-projected slide-level embedding. Per-fold (one per fold MIL model);
-      consumed by per-fold concept training/inference.
+      A-MIL 128-dim penultimate bottleneck activation (post branch-fusion, pre-classifier-head), the deepest
+      pre-decision slide representation. Per-fold (one per fold MIL model); consumed by per-fold concept
+      training/inference.
+
+  - id: aligned_slide_embedding_grad
+    title: Aligned Slide Embedding Gradient
+    key: [fold, image_id]
+    format: npy
+    path: mil/slide_embedding_grad/fold={fold}/{image_id}.npy
+    description: |
+      Gradient of the pre-sigmoid A-MIL logit w.r.t. aligned_slide_embedding — a TCAV-style sensitivity signal for
+      concept-direction analysis. Per-fold; not consumed by concept training/inference itself, only by ad hoc
+      concept-sensitivity analysis (notebooks).
 
   - id: whole_image_risk_score
     title: Whole-Image Risk Score (Per-Fold)
@@ -490,6 +502,8 @@ components:
     partitions: [size_mm, image_id]
     params:
       size_mm: [0.0625, 0.125, 0.250]
+      tile_px: 224
+      stride_fraction: 0.5
     description: |
       Partition the slide into a fixed-size tile grid; record per-tile coords and extract tile images.
 
@@ -625,7 +639,14 @@ components:
     fold: map
     module: helios.models.mil.infer
     consumes: [tile_features, tile_background, model_mil]
-    produces: [aligned_patch_embeddings, patch_attention, aligned_slide_embedding, whole_image_risk_score]
+    produces:
+      [
+        aligned_patch_embeddings,
+        patch_attention,
+        aligned_slide_embedding,
+        aligned_slide_embedding_grad,
+        whole_image_risk_score,
+      ]
     partitions: [fold]
     description: |
       For each fold's MIL model, score ALL images -> per-fold aligned patch/slide embeddings, attention, and

@@ -25,6 +25,7 @@ from helios.stages._runtime import (
 # -- configurable defaults (source of truth for configs/default.yaml) ----------
 DEFAULT_SIZE_MM: list[float] = [0.0625, 0.125, 0.25]
 DEFAULT_TILE_PX: int = 224
+DEFAULT_STRIDE_FRACTION: float = 0.5
 
 
 def prep_tiles(
@@ -33,6 +34,7 @@ def prep_tiles(
     output_root: str | Path | None = None,
     size_mm: list[float] = DEFAULT_SIZE_MM,
     tile_px: int = DEFAULT_TILE_PX,
+    stride_fraction: float = DEFAULT_STRIDE_FRACTION,
     image_ids: list[str] | None = None,
     force: bool = False,
     progress: Progress = DEFAULT_PROGRESS,
@@ -50,13 +52,21 @@ def prep_tiles(
         cohort = ds.dataset()
         store = cohort_store(ds.root, output_root)
         ids = select_image_ids(ds, store, image_ids)
+        metadata = cohort.image_metadata.set_index("image_id")
         units = [(s, i) for s in size_mm for i in ids]
 
         for s, image_id in progress.task(units, desc=f"tiles {ds.name}"):
             if not force and store.exists("tiles", size_mm=s, image_id=image_id):
                 progress.log(f"skip tiles image={image_id} size_mm={s} (exists)")
                 continue
-            meta, tiles = extract_tiles(str(cohort.slides[image_id]), size_mm=s, tile_px=tile_px)
+            image_mpp = metadata.loc[image_id, "image_mpp"] if "image_mpp" in metadata.columns else None
+            meta, tiles = extract_tiles(
+                str(cohort.slides[image_id]),
+                size_mm=s,
+                tile_px=tile_px,
+                stride_fraction=stride_fraction,
+                image_mpp=image_mpp,
+            )
             store.write("tile_metadata", meta, size_mm=s, image_id=image_id)
             store.write("tiles", {"tiles": tiles}, size_mm=s, image_id=image_id)
 

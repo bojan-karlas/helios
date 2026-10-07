@@ -39,7 +39,7 @@ def cohort(tmp_path: Path) -> Path:
 def test_fit_pools_train_ids_per_fold(monkeypatch, cohort: Path) -> None:
     seen: dict[int, list[str]] = {}
 
-    def _fake_train(slides, *, aug_swap_prob=0.5, device="cuda"):
+    def _fake_train(slides, **kwargs):
         fold = len(seen)  # called once per fold in order
         ids = [s.image_id for s in slides]
         seen[fold] = ids
@@ -59,7 +59,7 @@ def test_fit_pools_train_ids_per_fold(monkeypatch, cohort: Path) -> None:
 def test_fit_filter_subsets_train_ids(monkeypatch, cohort: Path) -> None:
     seen: dict[int, list[str]] = {}
 
-    def _fake_train(slides, *, aug_swap_prob=0.5, device="cuda"):
+    def _fake_train(slides, **kwargs):
         seen[len(seen)] = [s.image_id for s in slides]
         return {}
 
@@ -80,8 +80,11 @@ def test_predict_scores_each_fold_then_reduces(monkeypatch, cohort: Path) -> Non
     def _fake_infer(model, *, features_path, background_path=None, device="cuda"):
         return MilSlideOutputs(
             patch_embeddings=np.zeros((3, 4), dtype=np.float32),
-            attention=pd.DataFrame({"tile_id": [0, 1, 2], "attention": [0.1, 0.2, 0.7]}),
+            attention=pd.DataFrame(
+                {"tile_id": [0, 1, 2], "attention": [0.1, 0.2, 0.7], "tile_gradient": [0.0, 0.0, 0.0]}
+            ),
             slide_embedding=np.ones(4, dtype=np.float32),
+            slide_embedding_grad=np.zeros(4, dtype=np.float32),
             risk_score=0.5,
         )
 
@@ -97,6 +100,7 @@ def test_predict_scores_each_fold_then_reduces(monkeypatch, cohort: Path) -> Non
         assert store.exists("whole_image_risk_score", fold=fold)
         for image_id in IMAGE_IDS:
             assert store.exists("aligned_slide_embedding", fold=fold, image_id=image_id)
+            assert store.exists("aligned_slide_embedding_grad", fold=fold, image_id=image_id)
     ensemble = store.read("whole_image_risk_score_ensemble")
     assert sorted(ensemble["image_id"]) == sorted(IMAGE_IDS)
     assert (ensemble["dataset"] == Path(cohort).name).all(), "ensemble must carry dataset provenance"

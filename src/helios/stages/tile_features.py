@@ -11,7 +11,7 @@ from pathlib import Path
 import numpy as np
 from numpy.typing import NDArray
 
-from helios.components.features import FEATURE_MODELS, extract_features
+from helios.components.features import IMPLEMENTED_FEATURE_MODELS, extract_features
 from helios.progress import DEFAULT_PROGRESS, Progress
 from helios.stages._runtime import (
     DatasetArgs,
@@ -88,12 +88,13 @@ def prep_tile_features(
                 progress.log(f"skip tile_features image={image_id} size_mm={s} model={m} (exists)")
                 continue
             tiles = _tiles_array(store.read("tiles", size_mm=s, image_id=image_id))
+            tile_ids, coords = _tile_index(store, size_mm=s, image_id=image_id, n_tiles=len(tiles))
             embeddings = extract_features(
                 tiles, model=m, batch_size=batch_size, device=device, progress=progress  # type: ignore[arg-type]
             )
             store.write(
                 "tile_features",
-                {"features": embeddings},
+                {"features": embeddings, "tile_ids": tile_ids, "coords": coords},
                 size_mm=s,
                 model=m,
                 image_id=image_id,
@@ -102,10 +103,11 @@ def prep_tile_features(
 
 
 def _validate_models(model: list[str]) -> None:
-    unknown = [m for m in model if m not in FEATURE_MODELS]
+    unknown = [m for m in model if m not in IMPLEMENTED_FEATURE_MODELS]
     if unknown:
         raise ValueError(
-            f"Unknown feature model(s) {unknown}. Available: {list(FEATURE_MODELS)}."
+            f"Unknown feature model(s): {unknown}. "
+            f"Available: {list(IMPLEMENTED_FEATURE_MODELS)}."
         )
 
 
@@ -117,3 +119,25 @@ def _tiles_array(tiles: object) -> NDArray[np.uint8]:
         else:
             raise KeyError("tiles artifact has no 'tiles' dataset")
     return np.asarray(tiles, dtype=np.uint8)
+
+
+def _tile_index(store, *, size_mm: float, image_id: str, n_tiles: int):
+    """Return row-aligned tile IDs and level-0 coordinates for MIL/provenance."""
+    if not store.exists("tile_metadata", size_mm=size_mm, image_id=image_id):
+        ids = np.arange(n_tiles, dtype=np.int64)
+        return ids, np.empty((n_tiles, 0), dtype=np.int64)
+    metadata = store.read("tile_metadata", size_mm=size_mm, image_id=image_id)
+    required = {"tile_id", "tile_x", "tile_y"}
+    missing = required - set(metadata.columns)
+    if missing:
+        raise ValueError(f"tile_metadata is missing columns: {sorted(missing)}")
+    if len(metadata) != n_tiles:
+        raise ValueError(
+            f"tile_metadata has {len(metadata)} rows but tiles has {n_tiles} rows "
+            f"for image {image_id!r}."
+        )
+    ids = metadata["tile_id"].to_numpy(dtype=np.int64)
+    if len(np.unique(ids)) != n_tiles:
+        raise ValueError(f"tile_metadata contains duplicate tile_id values for image {image_id!r}.")
+    coords = metadata[["tile_x", "tile_y"]].to_numpy(dtype=np.int64)
+    return ids, coords
