@@ -49,7 +49,7 @@ back to the factors that drove it.
 
 ```bash
 make install        # uv sync: creates .venv, installs helios + dev tools
-make shell          # open a sub-shell with the venv activated
+make shell          # load .env and activate the project environment
 make test           # end-to-end smoke run of the pipeline on synthetic fixtures
 make lint           # ruff + mypy
 helios --help       # browse the full command tree
@@ -86,35 +86,55 @@ Access belongs to an individual Hugging Face user, not merely to an
 organization, and some repositories require manual approval. Complete this
 step before starting a large extraction job.
 
-Do **not** put a Hugging Face username, password, or token in this repository,
-a YAML config, notebook, or committed `.env` file. Authenticate the machine
-once with a read-only user token:
+Create a **Read** token at <https://huggingface.co/settings/tokens> for the
+account approved above (or a fine-grained token with the necessary repository
+and gated-model read permissions). Store it only in your local, gitignored
+`.env` file:
 
 ```bash
-uv run hf auth login
-uv run hf auth whoami                 # verify the active account
+cp .env.example .env                  # first setup only; do not overwrite an existing .env
+chmod 600 .env
+# Edit .env locally and fill in HF_TOKEN. Do not paste it into shell history.
+make shell
+hf auth whoami                       # verify the active account
+helios --help                        # no uv prefix needed in this shell
 ```
 
-The Hugging Face client stores that token outside the repository at
-`$HF_HOME/token` (by default `~/.cache/huggingface/token`) and HELIOS model
-loaders discover it automatically. On a cluster, container, or CI runner where
-the filesystem is ephemeral, inject a read-only or fine-grained token through
-the job's secret manager instead:
+`make shell` and Make's other `uv run` commands load `.env` if it exists.
+Exported environment variables take precedence. The example configures:
+
+| Variable | Default | Contents |
+|---|---|---|
+| `HF_HOME` | `<repo>/var/hf-cache` | Hugging Face home; model cache is `hub/` underneath |
+| `HELIOS_MODEL_DIR` | `<repo>/var/models` | CTransPath and CHIEF Google Drive checkpoints |
+| `TORCH_HOME` | `<repo>/var/torch-cache` | PyTorch Hub downloads |
+
+These directories and `.env` are gitignored. Override cache locations with
+absolute paths in `.env` or your job environment. `HF_HUB_CACHE` can override
+the Hugging Face model cache independently of `HF_HOME`.
+The example uses relative paths: run from the repository root, or change them
+to absolute paths. Without `.env`, libraries use their standard cache locations.
+
+No `hf auth login` is required when `HF_TOKEN` is set. Alternatively, omit
+`HF_TOKEN` and run `hf auth login` inside `make shell`, or set `HF_HOME` to an
+existing Hugging Face home with saved credentials.
+
+Outside `make shell`, bare `helios` does not load `.env`.
+For a one-off invocation from the repository root:
 
 ```bash
-export HF_TOKEN="<token supplied by your secret manager>"
-helios prep tile-features \
+uv run --env-file .env helios prep tile-features \
   --dataset /data/my_cohort \
   --model virchow2 \
   --size-mm 0.25
 ```
 
-`HF_TOKEN` takes precedence over a token saved on disk. Never paste a real token
-into a shell script or scheduler file that will be committed. Model weights are
-cached under `$HF_HUB_CACHE` (by default `$HF_HOME/hub`); on compute clusters,
-point `HF_HOME` or `HF_HUB_CACHE` at persistent storage before running the
-login or extraction command. CTransPath and CHIEF use their authors' separate
-Google Drive checkpoints and therefore do not use Hugging Face credentials.
+Omit `--env-file .env` if the file does not exist. On clusters, containers, or
+CI, inject `HF_TOKEN` through the job's secret manager instead of keeping a
+local token file. Never commit credentials in `.env`, YAML, notebooks, shell
+scripts, or scheduler files, and do not share a token-bearing `.env` or cache
+directory with other users. CTransPath and CHIEF do not use Hugging Face
+credentials.
 
 ### User-trained MultiStain-CycleGAN normalization
 
