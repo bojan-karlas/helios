@@ -13,12 +13,6 @@ from pathlib import Path
 import typer
 
 from helios.cli._common import console_progress, csv, datasets_arg
-from helios.config.stage_config import load_stage_params
-from helios.data.cohort import resolve_datasets
-from helios.stages.concept import predict_concept
-from helios.stages.mil import predict_mil
-from helios.stages.morphology import predict_morphology
-from helios.stages.risk import predict_risk
 
 predict_app = typer.Typer(add_completion=False, help="Run inference (per-cohort).")
 
@@ -47,6 +41,10 @@ def mil(
     force: bool = _FORCE,
 ) -> None:
     """Score whole-slide A-MIL and reduce whole-image risk."""
+    from helios.config.stage_config import load_stage_params
+    from helios.data.cohort import resolve_datasets
+    from helios.stages.mil import predict_mil
+
     datasets = resolve_datasets(datasets_arg(dataset), where=filter)
     overrides = {"size_mm": size_mm, "model": model, "device": device}
     params = load_stage_params("predict", "mil", config_path=config, overrides=overrides)
@@ -66,6 +64,10 @@ def concept(
     force: bool = _FORCE,
 ) -> None:
     """Predict concepts and the concept-based risk score."""
+    from helios.config.stage_config import load_stage_params
+    from helios.data.cohort import resolve_datasets
+    from helios.stages.concept import predict_concept
+
     datasets = resolve_datasets(datasets_arg(dataset), where=filter)
     params = load_stage_params("predict", "concept", config_path=config)
     predict_concept(
@@ -84,6 +86,10 @@ def morphology(
     force: bool = _FORCE,
 ) -> None:
     """Assign clusters, score cluster presence, and produce morphology risk."""
+    from helios.config.stage_config import load_stage_params
+    from helios.data.cohort import resolve_datasets
+    from helios.stages.morphology import predict_morphology
+
     datasets = resolve_datasets(datasets_arg(dataset), where=filter)
     params = load_stage_params("predict", "morphology", config_path=config)
     predict_morphology(
@@ -105,6 +111,10 @@ def risk(
     force: bool = _FORCE,
 ) -> None:
     """Score the simple risk sub-models (and HELIOS fusion + survival)."""
+    from helios.config.stage_config import load_stage_params
+    from helios.data.cohort import resolve_datasets
+    from helios.stages.risk import predict_risk
+
     datasets = resolve_datasets(datasets_arg(dataset), where=filter)
     params = load_stage_params("predict", "risk", config_path=config, overrides={"risk": csv(risk)})
     predict_risk(

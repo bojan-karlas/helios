@@ -12,12 +12,6 @@ from pathlib import Path
 import typer
 
 from helios.cli._common import console_progress, csv, datasets_arg
-from helios.config.stage_config import load_stage_params
-from helios.data.cohort import resolve_datasets
-from helios.stages.concept import fit_concept
-from helios.stages.mil import fit_mil
-from helios.stages.morphology import fit_morphology
-from helios.stages.risk import fit_risk
 
 fit_app = typer.Typer(add_completion=False, help="Train models (per-fold bundles).")
 
@@ -66,6 +60,10 @@ def mil(
     force: bool = _FORCE,
 ) -> None:
     """Train the whole-slide A-MIL model."""
+    from helios.config.stage_config import load_stage_params
+    from helios.data.cohort import resolve_datasets
+    from helios.stages.mil import fit_mil
+
     datasets = resolve_datasets(datasets_arg(dataset), where=filter)
     overrides = {
         "size_mm": size_mm,
@@ -104,6 +102,10 @@ def concept(
     force: bool = _FORCE,
 ) -> None:
     """Train per-concept probes (+ concept risk + residual correction)."""
+    from helios.config.stage_config import load_stage_params
+    from helios.data.cohort import resolve_datasets
+    from helios.stages.concept import fit_concept
+
     datasets = resolve_datasets(datasets_arg(dataset), where=filter)
     params = load_stage_params("fit", "concept", config_path=config, overrides={"n_bootstrap": n_bootstrap})
     fit_concept(
@@ -135,6 +137,10 @@ def morphology(
     force: bool = _FORCE,
 ) -> None:
     """Train the patch-morphology clustering risk model."""
+    from helios.config.stage_config import load_stage_params
+    from helios.data.cohort import resolve_datasets
+    from helios.stages.morphology import fit_morphology
+
     datasets = resolve_datasets(datasets_arg(dataset), where=filter)
     overrides = {
         "target": target,
@@ -169,6 +175,10 @@ def risk(
     force: bool = _FORCE,
 ) -> None:
     """Train the simple risk sub-models (and HELIOS fusion)."""
+    from helios.config.stage_config import load_stage_params
+    from helios.data.cohort import resolve_datasets
+    from helios.stages.risk import fit_risk
+
     datasets = resolve_datasets(datasets_arg(dataset), where=filter)
     overrides = {"risk": csv(risk), "target": target, "estimator": estimator}
     params = load_stage_params("fit", "risk", config_path=config, overrides=overrides)

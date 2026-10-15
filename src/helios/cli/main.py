@@ -18,9 +18,6 @@ from helios.cli._common import console_progress, datasets_arg
 from helios.cli.fit import fit_app
 from helios.cli.predict import predict_app
 from helios.cli.prep import prep_app
-from helios.config.stage_config import load_stage_params
-from helios.data.cohort import resolve_datasets
-from helios.stages.report import build_report
 
 app = typer.Typer(add_completion=False, help="HELIOS computational-pathology pipeline.")
 app.add_typer(prep_app, name="prep")
@@ -42,6 +39,10 @@ def report(
     force: bool = typer.Option(False, "--force", help="Re-render even if reports exist."),
 ) -> None:
     """Build the per-case reports and cohort summary (web-app data package)."""
+    from helios.config.stage_config import load_stage_params
+    from helios.data.cohort import resolve_datasets
+    from helios.stages.report import build_report
+
     datasets = resolve_datasets(datasets_arg(dataset))
     overrides = {
         "assets": False if no_assets else None,

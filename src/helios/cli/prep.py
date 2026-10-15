@@ -13,16 +13,6 @@ from pathlib import Path
 import typer
 
 from helios.cli._common import console_progress, csv, csv_floats, datasets_arg
-from helios.config.stage_config import load_stage_params
-from helios.data.cohort import resolve_datasets
-from helios.stages import STAGES
-from helios.stages.augment import prep_augment
-from helios.stages.cell_features import prep_cell_features
-from helios.stages.cells import prep_cells
-from helios.stages.splits import prep_splits
-from helios.stages.thumbnails import prep_thumbnails
-from helios.stages.tile_features import prep_tile_features
-from helios.stages.tiles import prep_tiles
 
 prep_app = typer.Typer(add_completion=False, help="Derive data artifacts (no fitting).")
 
@@ -50,6 +40,10 @@ def prep_all(
         return
     if not dataset:
         raise typer.BadParameter("at least one --dataset is required", param_hint="--dataset")
+    from helios.config.stage_config import load_stage_params
+    from helios.data.cohort import resolve_datasets
+    from helios.stages import STAGES
+
     datasets = resolve_datasets(datasets_arg(dataset))
     progress = console_progress(output_root or datasets[0].root)
     for noun, stage in STAGES["prep"].items():
@@ -81,6 +75,10 @@ def splits(
     force: bool = _FORCE,
 ) -> None:
     """Generate cross-validation splits for a training cohort."""
+    from helios.config.stage_config import load_stage_params
+    from helios.data.cohort import resolve_datasets
+    from helios.stages.splits import prep_splits
+
     datasets = resolve_datasets(datasets_arg(dataset))
     overrides = {
         "n_folds": n_folds,
@@ -106,6 +104,10 @@ def thumbnails(
     force: bool = _FORCE,
 ) -> None:
     """Extract a low-resolution thumbnail per slide."""
+    from helios.config.stage_config import load_stage_params
+    from helios.data.cohort import resolve_datasets
+    from helios.stages.thumbnails import prep_thumbnails
+
     datasets = resolve_datasets(datasets_arg(dataset))
     params = load_stage_params("prep", "thumbnails", config_path=config, overrides={"max_size": max_size})
     prep_thumbnails(
@@ -128,6 +130,10 @@ def tiles(
     force: bool = _FORCE,
 ) -> None:
     """Tile each slide and flag background tiles."""
+    from helios.config.stage_config import load_stage_params
+    from helios.data.cohort import resolve_datasets
+    from helios.stages.tiles import prep_tiles
+
     datasets = resolve_datasets(datasets_arg(dataset))
     overrides = {
         "size_mm": csv_floats(size_mm),
@@ -163,6 +169,10 @@ def augment(
     force: bool = _FORCE,
 ) -> None:
     """Stain-augment tiles and extract augmented features."""
+    from helios.config.stage_config import load_stage_params
+    from helios.data.cohort import resolve_datasets
+    from helios.stages.augment import prep_augment
+
     datasets = resolve_datasets(datasets_arg(dataset))
     overrides = {
         "target": csv(target),
@@ -193,6 +203,10 @@ def tile_features(
     force: bool = _FORCE,
 ) -> None:
     """Extract foundation tile features for staged tiles."""
+    from helios.config.stage_config import load_stage_params
+    from helios.data.cohort import resolve_datasets
+    from helios.stages.tile_features import prep_tile_features
+
     datasets = resolve_datasets(datasets_arg(dataset))
     overrides = {"size_mm": csv_floats(size_mm), "model": csv(model), "batch_size": batch_size, "device": device}
     params = load_stage_params("prep", "tile-features", config_path=config, overrides=overrides)
@@ -213,6 +227,10 @@ def cells(
     force: bool = _FORCE,
 ) -> None:
     """Segment cells, cut tumor patches, and classify mitoses."""
+    from helios.config.stage_config import load_stage_params
+    from helios.data.cohort import resolve_datasets
+    from helios.stages.cells import prep_cells
+
     datasets = resolve_datasets(datasets_arg(dataset))
     overrides = {"patch_px": patch_px, "device": device}
     params = load_stage_params("prep", "cells", config_path=config, overrides=overrides)
@@ -232,6 +250,10 @@ def cell_features(
     force: bool = _FORCE,
 ) -> None:
     """Aggregate per-tile cell counts and compute cellular features."""
+    from helios.config.stage_config import load_stage_params
+    from helios.data.cohort import resolve_datasets
+    from helios.stages.cell_features import prep_cell_features
+
     datasets = resolve_datasets(datasets_arg(dataset))
     params = load_stage_params("prep", "cell-features", config_path=config, overrides={"size_mm": csv_floats(size_mm)})
     prep_cell_features(
