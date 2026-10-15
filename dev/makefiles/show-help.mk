@@ -27,7 +27,7 @@ ifdef SUMMARY
 	@echo 
 	@echo "$$(tput bold)# Summary:$$(tput sgr0)"
 	@echo 
-	@echo $(SUMMARY) | awk -F '---' \
+	@printf '%s\n' '$(subst ','\'',$(SUMMARY))' | awk -F '---' \
 		-v ncol=$$(tput cols) \
 		-v indent=1 \
 	'{ \
@@ -86,7 +86,7 @@ endif
 ifdef FOOTER
 	@echo "$$(tput bold)# More Info:$$(tput sgr0)"
 	@echo 
-	@echo $(FOOTER) | awk -F '---' \
+	@printf '%s\n' '$(subst ','\'',$(FOOTER))' | awk -F '---' \
 		-v ncol=$$(tput cols) \
 		-v indent=1 \
 	'{ \
