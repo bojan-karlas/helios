@@ -11,6 +11,8 @@ from helios.components.background import detect_background
 from helios.components.thumbnails import extract_thumbnail
 from helios.components.tiling import extract_tiles
 from helios.data.io import read, write
+from helios.stages._runtime import cohort_store
+from helios.stages.tiles import prep_tiles
 
 
 def _write_tiff(path: Path) -> np.ndarray:
@@ -102,3 +104,35 @@ def test_png_artifacts_round_trip_arrays(tmp_path: Path) -> None:
     write(expected, path, "png")
 
     np.testing.assert_array_equal(read(path, "png"), expected)
+
+
+def test_tiling_preserves_background_masks_for_each_size(tmp_path: Path) -> None:
+    (tmp_path / "wsi").mkdir()
+    (tmp_path / "metadata").mkdir()
+    image = _write_tiff(tmp_path / "wsi" / "slide.tiff")
+    pd.DataFrame({"image_id": ["slide"], "image_mpp": [1.0]}).to_csv(
+        tmp_path / "metadata" / "image_metadata.csv", index=False
+    )
+    store = cohort_store(tmp_path)
+    store.write("thumbnail", image, image_id="slide")
+    sizes = [0.004, 0.008]
+
+    prep_tiles(datasets=[tmp_path], size_mm=sizes, tile_px=4)
+
+    paths = []
+    for size in sizes:
+        path = store.path("background_mask", size_mm=size, image_id="slide")
+        assert path == tmp_path / "debug" / "background_mask" / f"size_mm={size}" / "slide.png"
+        paths.append(path)
+        flags, expected_mask = detect_background(
+            image, store.read("tile_metadata", size_mm=size, image_id="slide")
+        )
+        np.testing.assert_array_equal(
+            store.read("background_mask", size_mm=size, image_id="slide"), expected_mask * 255
+        )
+        pd.testing.assert_frame_equal(
+            store.read("tile_background", size_mm=size, image_id="slide"), flags
+        )
+    assert len(set(paths)) == len(sizes)
+    assert all(path.is_file() for path in paths)
+    assert not (tmp_path / "debug" / "background_mask" / "slide.png").exists()

@@ -26,9 +26,10 @@ artifacts:
   background_mask:
     title: Background Mask (Debug)
     key:
+    - size_mm
     - image_id
     format: png
-    path: debug/background_mask/{image_id}.png
+    path: debug/background_mask/size_mm={size_mm}/{image_id}.png
     role: preprocessing
   tile_metadata:
     title: Tile Metadata

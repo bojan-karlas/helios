@@ -70,5 +70,5 @@ def prep_tiles(
             thumbnail = store.read("thumbnail", image_id=image_id)
             flags, mask = detect_background(thumbnail, meta)
             store.write("tile_background", flags, size_mm=s, image_id=image_id)
-            store.write("background_mask", mask, image_id=image_id)
+            store.write("background_mask", mask, size_mm=s, image_id=image_id)
             progress.log(f"wrote tiles + background image={image_id} size_mm={s}")
