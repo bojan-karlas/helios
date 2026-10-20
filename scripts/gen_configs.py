@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "configs" / "default.yaml"
 
 HEADER = (
-    "# GENERATED from stage signatures — do not hand-edit.\n"
+    "# GENERATED from stage signatures -- do not hand-edit.\n"
     "# Keyed by verb then noun; entries are that stage's tunable parameters\n"
     "# (1:1 with `helios <verb> <noun> --help`). Change defaults in the stage\n"
     "# functions under src/helios/stages/, then run `make configs`.\n"

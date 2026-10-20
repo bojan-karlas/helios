@@ -1,4 +1,4 @@
-"""Stages — CLI-callable orchestrators that wire components to the store.
+"""Stages -- CLI-callable orchestrators that wire components to the store.
 
 A *stage* is one ``verb noun`` cell (e.g. ``prep tile-features``, ``fit mil``):
 it groups one or more components into a unit of work you can run on its own

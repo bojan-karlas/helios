@@ -1,4 +1,4 @@
-"""Model bundles — provenance-bearing, on-disk model artifacts.
+"""Model bundles -- provenance-bearing, on-disk model artifacts.
 
 A *bundle* is a directory (not a single file) holding a fitted model plus a
 ``manifest.json`` that records, for every file in the bundle, its serialization

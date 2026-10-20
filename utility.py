@@ -143,7 +143,7 @@ def preprocess(reps: np.ndarray, n_pca: int = 256, random_state: int = 42):
 
 
 def plot_scree(pca, save_path: str = "scree_plot.png") -> None:
-    """Cumulative explained variance — use this to pick n_pca."""
+    """Cumulative explained variance -- use this to pick n_pca."""
     cum = pca.explained_variance_ratio_.cumsum()
     fig, ax = plt.subplots(figsize=(8, 4))
     ax.plot(np.arange(1, len(cum) + 1), cum, linewidth=2)
@@ -194,7 +194,7 @@ def faiss_kmeans_overcluster(
     micro_labels = I[:, 0].astype(np.int32)
 
     sizes = np.bincount(micro_labels, minlength=k)
-    print(f"  Micro-cluster sizes — min: {sizes.min()}, median: {int(np.median(sizes))}, "
+    print(f"  Micro-cluster sizes -- min: {sizes.min()}, median: {int(np.median(sizes))}, "
           f"max: {sizes.max()}, empty: {(sizes == 0).sum()}")
     return micro_labels, centroids
 
@@ -457,7 +457,7 @@ def visualize_representative_tiles(
         rand_global_idx = idx[rand_local]
 
         print(f"\n{'='*70}")
-        print(f"[{rank}/{len(top_clusters)}] Cluster {cluster_id} — {len(idx):,} tiles")
+        print(f"[{rank}/{len(top_clusters)}] Cluster {cluster_id} -- {len(idx):,} tiles")
 
         # Figure: 2 panels (representative on top, random below)
         total_rows = nrows_per_panel * 2
@@ -622,7 +622,7 @@ def compute_marginal_contributions(
             continue
         positions = slide_filtered_data[sid]["fg_positions"]
         if len(positions) != len(grp):
-            print(f"  [!] {sid}: {len(positions)} fg_positions vs {len(grp)} meta_df rows — skipping")
+            print(f"  [!] {sid}: {len(positions)} fg_positions vs {len(grp)} meta_df rows -- skipping")
             continue
         fg_pos[grp.index.values] = positions
     df["_fg_position"] = fg_pos
@@ -744,7 +744,7 @@ def compute_marginal_contributions_cv(
             continue
         positions = slide_filtered_data[sid]["fg_positions"]
         if len(positions) != len(grp):
-            print(f"  [!] {sid}: {len(positions)} fg_positions vs {len(grp)} meta_df rows — skipping")
+            print(f"  [!] {sid}: {len(positions)} fg_positions vs {len(grp)} meta_df rows -- skipping")
             continue
         fg_pos[grp.index.values] = positions
     df["_fg_position"] = fg_pos
@@ -760,7 +760,7 @@ def compute_marginal_contributions_cv(
         with torch.no_grad():
             x = torch.from_numpy(feats_fg).unsqueeze(0).to(device)
             out = model(x)
-            # model returns (Y_prob, ...) — first element is the probability
+            # model returns (Y_prob, ...) -- first element is the probability
             return float(out[0].item())
 
     for sid, grp in tqdm(df.groupby(slide_col, sort=False), desc="Marginal inference (CV)"):
@@ -925,13 +925,13 @@ def compute_cosine_weights(
     )
 
     valid_w = weights[valid_tile_idx]
-    print(f"  Cosine weights — min: {valid_w.min():.3f}, "
+    print(f"  Cosine weights -- min: {valid_w.min():.3f}, "
           f"median: {np.median(valid_w):.3f}, "
           f"mean: {valid_w.mean():.3f}, max: {valid_w.max():.3f}")
     n_negative = int((valid_w < 0).sum())
     if n_negative > 0:
         print(f"  ⚠ {n_negative:,} tiles have negative cosine sim to their own centroid "
-              f"({n_negative / len(valid_w):.2%}) — clamping to 0.")
+              f"({n_negative / len(valid_w):.2%}) -- clamping to 0.")
         weights = np.clip(weights, 0.0, None)
     return weights
 
@@ -1176,7 +1176,7 @@ def plot_significant_clusters(
         axes[j].set_visible(False)
 
     plt.suptitle(
-        f"Significant Clusters (BH-corrected p < {p_threshold}) — "
+        f"Significant Clusters (BH-corrected p < {p_threshold}) -- "
         f"Recurrence+ vs Recurrence−\n",
         fontsize=13, fontweight="bold",
     )
@@ -1260,7 +1260,7 @@ def split_by_cohort(
           f"recur+ rate = {y[train_mask].mean():.1%}")
     for c, m in test_masks.items():
         if m.sum() == 0:
-            print(f"  ⚠ Test cohort '{c}' has 0 slides — check cohort labels")
+            print(f"  ⚠ Test cohort '{c}' has 0 slides -- check cohort labels")
         else:
             print(f"Test cohort ({c}): {m.sum()} slides, "
                   f"recur+ rate = {y[m].mean():.1%}")
@@ -1340,7 +1340,7 @@ def fit_and_evaluate(
         "coef":      coefs,
         "abs_coef":  np.abs(coefs),
         "direction": np.where(coefs > 0, "↑recur+",
-                              np.where(coefs < 0, "↑recur−", "—")),
+                              np.where(coefs < 0, "↑recur−", "--")),
     }).sort_values("abs_coef", ascending=False).reset_index(drop=True)
 
     return clf, scaler, results, coef_df

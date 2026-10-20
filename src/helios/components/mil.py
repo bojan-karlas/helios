@@ -1,8 +1,8 @@
 """Components: whole-slide A-MIL (alignment + attention + pooling + classifier).
 
-* :func:`train_mil` — fit one A-MIL model on a set of training slides.
-* :func:`infer_mil` — score ONE slide with a fitted model.
-* :func:`reduce_whole_image_risk` — collapse the K per-fold whole-image scores to
+* :func:`train_mil` -- fit one A-MIL model on a set of training slides.
+* :func:`infer_mil` -- score ONE slide with a fitted model.
+* :func:`reduce_whole_image_risk` -- collapse the K per-fold whole-image scores to
   one shipped value per image (out-of-fold on a CV cohort / ensemble on deploy).
 
 Tile features are large (tens of thousands of tiles per slide), so training and
@@ -28,7 +28,7 @@ saliency: ``forward_tile_level``) and ``generate_penultimate.py`` /
 Here they are folded into one method (:meth:`_MultiBranchGatedAMIL.forward_with_attribution`)
 called from :func:`infer_mil` instead of being a separate stage, because they
 share the exact same GRAIN (one slide, one fold's already-fitted model) and the
-same forward pass :func:`infer_mil` already needs for the risk score — a
+same forward pass :func:`infer_mil` already needs for the risk score -- a
 separate stage would reload the same model bundle and re-stream the same
 tile-feature HDF5s just to redo work already in hand.
 
@@ -40,7 +40,7 @@ scripts, were resolved as follows:
   ``generate_penultimate.py``. ``generate_tcav_files.py``'s ``forward_with_bottleneck``
   captures a *different*, 256-dim intermediate under the same "penultimate"
   name and additionally treats the pre-classifier ``M_fused`` (``L*K``-dim) as
-  a separate "embedding" — ``generate_penultimate.py`` reads as the deliberate
+  a separate "embedding" -- ``generate_penultimate.py`` reads as the deliberate
   fix, and a tighter bottleneck closer to the decision is the more standard
   choice for concept probes.
 * **Attention** = gradient-weighted branch attention (branch contribution
@@ -51,7 +51,7 @@ scripts, were resolved as follows:
   (``classifier[:12]``, i.e. everything except the final ``Sigmoid``).
   ``extract_tile_features_training.py``/``extract_tile_features.py`` instead
   called ``.backward()`` on ``self.classifier(M_fused)``, whose Sequential
-  already ends in ``Sigmoid`` — so their "logit" was already a probability,
+  already ends in ``Sigmoid`` -- so their "logit" was already a probability,
   sigmoided a second time for the reported ``prob``. That double-sigmoid is a
   bug in the source scripts and is not reproduced here;
   ``generate_penultimate.py``/``generate_tcav_files.py`` already avoid it by
@@ -497,7 +497,7 @@ def train_mil(
     tile and appends the augmented one as an extra bag entry instead.
 
     Early stopping monitors AUPRC on an internal ``val_frac`` split carved out
-    of ``slides`` (this fold's CV test slides are never visible here — they are
+    of ``slides`` (this fold's CV test slides are never visible here -- they are
     scored later by :func:`infer_mil`).
 
     Returns the fitted :class:`~helios.models.base.Model` (persisted as a bundle).

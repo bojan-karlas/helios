@@ -1,4 +1,4 @@
-"""``helios predict <noun>`` — run inference (per-cohort, K folds reduced).
+"""``helios predict <noun>`` -- run inference (per-cohort, K folds reduced).
 
 Each ``predict`` command scores one or more ``--dataset`` cohorts with the fitted
 models; the per-fold scores are reduced (out-of-fold on a CV cohort /

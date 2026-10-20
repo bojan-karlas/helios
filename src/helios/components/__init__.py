@@ -1,4 +1,4 @@
-"""Pure, typed pipeline components — the implementer's workspace.
+"""Pure, typed pipeline components -- the implementer's workspace.
 
 A *component* is a pure function of its inputs. It must NOT touch the artifact
 store, the path resolver, or the run config: those are the responsibility of the

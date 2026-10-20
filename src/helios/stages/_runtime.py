@@ -1,17 +1,17 @@
-"""Shared stage orchestration helpers — stores, folds, cohort pooling.
+"""Shared stage orchestration helpers --- stores, folds, cohort pooling.
 
 Stages (unlike pure components) own all artifact-store I/O and the dataset /
 partition / fold loops. These helpers capture the few patterns every stage
 repeats so the orchestration shape stays identical across ``prep``/``fit``/
 ``predict``/``report``:
 
-* :func:`cohort_store` — build an :class:`ArtifactStore` for one cohort, honouring
+* :func:`cohort_store` --- build an :class:`ArtifactStore` for one cohort, honouring
   an optional ``output_root`` redirect (source stays read-only).
-* :func:`single_output_guard` — reject ``output_root`` with >1 dataset, where the
+* :func:`single_output_guard` --- reject ``output_root`` with >1 dataset, where the
   redirect target would be ambiguous (the ``prep``/``predict`` per-cohort shape).
-* :func:`folds_of` / :func:`folds_across` — discover the K cross-validation folds
+* :func:`folds_of` / :func:`folds_across` --- discover the K cross-validation folds
   from the optional ``cv_splits`` artifact (``[None]`` == trained without CV).
-* :func:`train_ids` — the image ids in a fold's *train* split (the rows a
+* :func:`train_ids` --- the image ids in a fold's *train* split (the rows a
   per-fold ``fit`` component learns from).
 
 The fold model: ``cv_splits`` is an OPTIONAL tidy CSV (``image_id, fold, split``).
@@ -189,7 +189,7 @@ def model_folds(store: ArtifactStore, model_id: str) -> list[int | None]:
     fold-free bundle ⇒ ``[None]`` (deploy / no-CV); otherwise every fold whose
     per-fold bundle actually exists on disk. Folds are discovered by scanning
     the model's own directory (``fold=N`` entries) rather than the scoring
-    cohort's ``cv_splits`` — a deploy cohort scored with per-fold models
+    cohort's ``cv_splits`` --- a deploy cohort scored with per-fold models
     trained elsewhere has no ``cv_splits`` of its own, so that would find
     nothing even though the fold bundles are right there. Returns ``[]`` when
     no model has been fit yet.

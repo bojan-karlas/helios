@@ -3,10 +3,10 @@
 Pure, inference-only steps of the cell pipeline, run against pretrained
 external models:
 
-* :func:`segment_cells` — CellViT++ instance segmentation + typing.
-* :func:`cluster_based_filtering` — DBSCAN debris removal over cell centroids.
-* :func:`extract_tumor_patches` — cut patches centred on tumor cells.
-* :func:`classify_mitoses` — OMG-Net mitotic-figure classification.
+* :func:`segment_cells` -- CellViT++ instance segmentation + typing.
+* :func:`cluster_based_filtering` -- DBSCAN debris removal over cell centroids.
+* :func:`extract_tumor_patches` -- cut patches centred on tumor cells.
+* :func:`classify_mitoses` -- OMG-Net mitotic-figure classification.
 
 The owning stage (:mod:`helios.stages.cells`) chains these per slide and writes
 the ``cells``, ``tumor_cell_patches`` and ``mitotic_cells`` artifacts.
@@ -243,7 +243,7 @@ def cluster_based_filtering(
     cross-sections of the *same* tumor. Running DBSCAN over cell centroids
     groups each contiguous section into one cluster. Cells DBSCAN labels as
     noise (``-1``) are discarded, and any cluster holding fewer cells than
-    ``min_cluster_frac`` of the largest cluster is dropped — the assumption
+    ``min_cluster_frac`` of the largest cluster is dropped -- the assumption
     being that genuine sections are cross-sections of one tumor and therefore
     of comparable size, so much-smaller clusters are debris / detached
     fragments rather than real tissue.
@@ -280,7 +280,7 @@ def cluster_based_filtering(
     Notes
     -----
     If DBSCAN finds no dense region at all (every point is noise), the result
-    is empty — there is no reliable tissue to keep.
+    is empty -- there is no reliable tissue to keep.
     """
     # Guard against a percentage (e.g. 10) being passed where a fraction is
     # expected, which would silently discard every cluster but the largest.
@@ -406,7 +406,7 @@ def extract_tumor_patches(
 
 
 # ``Classifier`` is adapted from OMG-Net's ``Models/SAM_Classifier.py``
-# (https://github.com/SZY1234567/OMG-Net) — an adapted ResNet18 that classifies
+# (https://github.com/SZY1234567/OMG-Net) -- an adapted ResNet18 that classifies
 # mitotic figures. See the module-level References for the full citation:
 #   Shen et al. (2024), Communications Biology 7:1674,
 #   doi:10.1038/s42003-024-07398-6 (preprint arXiv:2407.12773).

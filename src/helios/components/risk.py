@@ -4,11 +4,11 @@ All HELIOS risk sub-models are *simple* ML models (logistic regression / random
 forest / linear) over per-slide tabular features, and the final HELIOS model
 fuses the sub-scores the same way. They therefore share one tiny contract:
 
-* :func:`train_risk_model` — fit a simple estimator on a feature table + target.
-* :func:`infer_risk_model` — score a feature table with a fitted model.
-* :func:`reduce_risk` — collapse K per-fold scores to one row per image
+* :func:`train_risk_model` -- fit a simple estimator on a feature table + target.
+* :func:`infer_risk_model` -- score a feature table with a fitted model.
+* :func:`reduce_risk` -- collapse K per-fold scores to one row per image
   (out-of-fold on a CV cohort / ensemble on deploy).
-* :func:`compute_survival_curve` — derive a per-image survival curve from risk.
+* :func:`compute_survival_curve` -- derive a per-image survival curve from risk.
 
 The owning stages (:mod:`helios.stages.risk`) build the right feature table per
 risk kind (cellular features / staging column / clinical columns / joined

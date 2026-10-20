@@ -22,7 +22,7 @@ SPEC = ROOT / "dev" / "notes" / "agent" / "pipeline-spec.yaml"
 ARTIFACTS_OUT = ROOT / "configs" / "artifacts.yaml"
 
 HEADER = (
-    "# GENERATED from dev/notes/agent/pipeline-spec.yaml — do not hand-edit.\n"
+    "# GENERATED from dev/notes/agent/pipeline-spec.yaml -- do not hand-edit.\n"
     "# Regenerate via scripts/gen_registries.py\n"
 )
 

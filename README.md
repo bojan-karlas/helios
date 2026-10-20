@@ -19,8 +19,8 @@ reproducible pipeline so the community can extend each branch, swap in new
 foundation models, validate on new cohorts, and build clinically deployable,
 explainable risk tools on a shared foundation.
 
-> **Status: scaffold.** The runtime seams — config, path resolution, IO, model
-> base classes, stage/component wiring, and the CLI — are implemented and
+> **Status: scaffold.** The runtime seams -- config, path resolution, IO, model
+> base classes, stage/component wiring, and the CLI -- are implemented and
 > runnable on synthetic fixtures. The per-component **domain logic is stubbed**
 > (`raise NotImplementedError`); this is the surface to port existing
 > script/notebook code into. See [CONTRIBUTING.md](CONTRIBUTING.md).
@@ -30,16 +30,16 @@ explainable risk tools on a shared foundation.
 One score, decomposable into the evidence behind it. Each slide is scored by five
 parallel branches, each interpretable on its own:
 
-- **Whole-slide representation** — attention-based multiple-instance learning
+- **Whole-slide representation** -- attention-based multiple-instance learning
   (A-MIL) over foundation-model tile features, with the attention map showing
   *where* the model looked.
-- **Cellular composition** — quantitative cell detection, classification, and
+- **Cellular composition** -- quantitative cell detection, classification, and
   mitosis counting aggregated into per-slide features.
-- **Pathological concepts** — linear probes that decode human-readable concepts
+- **Pathological concepts** -- linear probes that decode human-readable concepts
   (thickness, ulceration, mitoses, growth pattern, …) from the slide embedding.
-- **Patch morphology** — unsupervised clustering of high-attention regions into
+- **Patch morphology** -- unsupervised clustering of high-attention regions into
   recurring morphological phenotypes whose presence carries risk.
-- **Clinical staging** — the structured clinical and AJCC-staging signal.
+- **Clinical staging** -- the structured clinical and AJCC-staging signal.
 
 A small, transparent fusion model (logistic regression / random forest) combines
 the branch scores into the final HELIOS risk, so every prediction can be traced
@@ -62,8 +62,8 @@ touching a slide.
 ### Foundation-model setup and Hugging Face access
 
 The basic installation is sufficient for development and the synthetic test
-suite. To run every tile encoder—particularly CONCH and MUSK, whose official
-Python packages are installed from their source repositories—install the
+suite. To run every tile encoder--particularly CONCH and MUSK, whose official
+Python packages are installed from their source repositories--install the
 foundation-model extra:
 
 ```bash
@@ -151,7 +151,7 @@ my_stain_training_data/
   trainB/    # desired target stain distribution
 ```
 
-Follow the upstream environment instructions, then train there—not inside the
+Follow the upstream environment instructions, then train there--not inside the
 HELIOS environment:
 
 ```bash
@@ -250,13 +250,13 @@ my_cohort/
 
 `image_metadata.csv` needs, at minimum:
 
-- **`image_id`** — matches the WSI filename stem (e.g.
+- **`image_id`** -- matches the WSI filename stem (e.g.
   `DEMO-SKCM-P00001-S01-B1-I1`).
-- **Tiling fields** — `image_mpp`, `image_width`, `image_height`,
+- **Tiling fields** -- `image_mpp`, `image_width`, `image_height`,
   `image_magnification`.
-- **`patient_id`** — the cross-validation grouping key (splits are patient-level
+- **`patient_id`** -- the cross-validation grouping key (splits are patient-level
   to prevent leakage).
-- **Branch labels** — only for the branches you actually train: recurrence
+- **Branch labels** -- only for the branches you actually train: recurrence
   targets (`disease_pfs_recurred*`), pathological concepts (`path_thickness`,
   `path_ulceration_present`, …), staging (`path_stage*`), and clinical
   (`patient_sex`, `disease_age_at_diagnosis`, …).
@@ -266,7 +266,7 @@ You don't hard-code these names. They're **bound** in
 validated against the versioned data dictionary
 [`configs/schema/image_metadata.datadict.yaml`](configs/schema/image_metadata.datadict.yaml),
 which is the full column reference. A cohort whose columns are named differently
-just needs a remapped YAML — no code changes. For a minimal, runnable example,
+just needs a remapped YAML -- no code changes. For a minimal, runnable example,
 see [`tests/fixtures.py`](tests/fixtures.py) (`make_cohort`).
 
 ## The pipeline at a glance
@@ -282,16 +282,16 @@ browsable live with `helios --help` (and `helios <verb> --help`,
 | `predict` | `mil`, `concept`, `morphology`, `risk` |
 | `report` | *(single command)* |
 
-Bare `helios prep --dataset ...` runs every prep noun in order — handy for
+Bare `helios prep --dataset ...` runs every prep noun in order -- handy for
 prepping a fresh cohort end-to-end.
 
 Under the hood the package is organized in three layers:
 
-- **`helios.components`** — pure functions, one per unit of domain logic (the
+- **`helios.components`** -- pure functions, one per unit of domain logic (the
   code you fill in).
-- **`helios.stages`** — CLI-callable orchestrators that own all store IO and the
+- **`helios.stages`** -- CLI-callable orchestrators that own all store IO and the
   dataset / partition / fold loops (one `verb noun` cell each).
-- **`helios.cli`** — thin Typer wrappers that resolve config and wire progress.
+- **`helios.cli`** -- thin Typer wrappers that resolve config and wire progress.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the full module tour and how the
 artifact spec drives the graph.
@@ -315,7 +315,7 @@ root instead. (`--output-root` targets a single `--dataset` at a time.)
 ### Named, versioned cohorts
 
 Every command accepts one or more `--dataset` values. A value can be a plain
-cohort root, or a **cohort-definition file** — a small, version-controllable YAML
+cohort root, or a **cohort-definition file** -- a small, version-controllable YAML
 that names a union of roots plus an optional row filter:
 
 ```yaml
@@ -334,11 +334,11 @@ helios fit mil --dataset cohorts/train.yaml
 This makes training and evaluation populations reproducible and reviewable. You
 can also:
 
-- **Union on the fly** — repeat `--dataset` (or comma-separate) to pool several
+- **Union on the fly** -- repeat `--dataset` (or comma-separate) to pool several
   cohorts: `--dataset /data/MGB --dataset /data/MRV`.
-- **Filter ad hoc** — add `--filter "patient_age_at_diagnosis > 60"` on `fit` /
+- **Filter ad hoc** -- add `--filter "patient_age_at_diagnosis > 60"` on `fit` /
   `predict`; it's AND-combined with any cohort-file filter.
-- **Trace provenance** — result tables carry a `dataset` column recording which
+- **Trace provenance** -- result tables carry a `dataset` column recording which
   physical cohort each row came from, so pooled outputs stay lossless.
 
 ### Cross-validation folds
@@ -348,7 +348,7 @@ Cross-validation is optional and driven by a `cv_splits` table (produced by
 split. With splits present, `fit` trains **one model per fold** in a single
 invocation, and `predict` reduces the per-fold scores out-of-fold on the CV
 cohort. With no `cv_splits`, the same code path trains a single fold-free model
-and ensembles at inference — exactly what you want when deploying to a fresh
+and ensembles at inference -- exactly what you want when deploying to a fresh
 cohort. Splits are grouped by `patient_id` so a patient's slides never straddle
 the train/test boundary.
 
@@ -400,7 +400,7 @@ signature defaults  <  --config file  <  explicit CLI flags
 ```
 
 Pass a partial override file with `--config my_run.yaml` to change a handful of
-parameters without restating the rest. Configs hold parameters only — never data
+parameters without restating the rest. Configs hold parameters only -- never data
 paths or PHI.
 
 ## Contributing

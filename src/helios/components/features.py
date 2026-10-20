@@ -10,7 +10,7 @@ IMPLEMENTER NOTES
 * Add a new encoder by (1) extending :data:`FeatureModel` with its name and
   (2) adding a branch in :func:`_load_encoder` that loads its weights and
   returns a callable ``batch[uint8, (N, H, W, 3)] -> float32[(N, D)]``.
-* Foundation-model weights are loaded HERE, inside the component — never in the
+* Foundation-model weights are loaded HERE, inside the component -- never in the
   stage. The stage only decides *which* model(s) to run.
 """
 from __future__ import annotations

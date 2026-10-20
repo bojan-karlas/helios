@@ -1,6 +1,6 @@
 """HELIOS command-line interface.
 
-``helios`` exposes four verbs — ``prep`` (derive data artifacts), ``fit`` (train
+``helios`` exposes four verbs -- ``prep`` (derive data artifacts), ``fit`` (train
 models), ``predict`` (run inference), and ``report`` (build the output package).
 ``prep``/``fit``/``predict`` are Typer sub-apps whose commands are *nouns* that map
 1:1 to importable stage functions under :mod:`helios.stages`; ``report`` is a

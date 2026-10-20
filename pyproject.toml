@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "helios"
 version = "0.1.0"
-description = "HELIOS — computational-pathology pipeline for melanoma recurrence-risk prediction from H&E whole-slide images."
+description = "HELIOS -- computational-pathology pipeline for melanoma recurrence-risk prediction from H&E whole-slide images."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Proprietary" }

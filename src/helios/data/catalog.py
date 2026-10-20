@@ -6,7 +6,7 @@ An :class:`ArtifactSpec` records an artifact's ``key`` (identifying fields),
 to map an artifact id + key to an on-disk location.
 
 ``configs/artifacts.yaml`` is GENERATED from
-``dev/notes/agent/pipeline-spec.yaml`` by ``scripts/gen_registries.py`` — treat
+``dev/notes/agent/pipeline-spec.yaml`` by ``scripts/gen_registries.py`` -- treat
 the spec as the source of truth.
 """
 from __future__ import annotations

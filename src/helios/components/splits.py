@@ -8,14 +8,14 @@ the resulting ``cv_splits`` table; this function only computes the assignment.
 Ported from ``fold_assignment.ipynb``: ``StratifiedKFold(n_splits=5,
 shuffle=True, random_state=seed)`` on the recurrence outcome column, assigning
 each image a single test fold, run once per cohort (the notebook loops over
-cohorts and concatenates — this component takes one cohort's
+cohorts and concatenates -- this component takes one cohort's
 ``image_metadata`` per call, matching its GRAIN, so running it once per
 ``--dataset`` reproduces the notebook's per-cohort independence). Two
 capabilities are added beyond the notebook's single call, both off by default
 so ``stratify_by=["disease_pfs_recurred"], group_by=None`` reproduces it
 exactly:
 
-* ``stratify_by`` accepts more than one column — jointly stratifies on a
+* ``stratify_by`` accepts more than one column -- jointly stratifies on a
   composite key (``"_"``-joined) instead of one label. The notebook's own
   comment claimed to stratify by outcome *and* substage but its code only
   passed the outcome column to ``StratifiedKFold``; this makes joint

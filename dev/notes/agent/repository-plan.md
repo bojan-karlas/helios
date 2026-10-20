@@ -1,4 +1,4 @@
-# HELIOS Repository — Planning (workshopping, no code yet)
+# HELIOS Repository -- Planning (workshopping, no code yet)
 
 ## Goal
 Build a repo that: (1) trains all HELIOS pipeline models from datasets placed in folders,
@@ -26,8 +26,8 @@ Build a repo that: (1) trains all HELIOS pipeline models from datasets placed in
 
 ## Dataset contract (from WASHU/MRV samples + data dictionary)
 - USER PROVIDES (input):
-  - `wsi/**/*.svs` — FLAT set (subfolders like Cases/Controls are cosmetic, ignored).
-  - `metadata/image_metadata.csv` — authoritative per-image table
+  - `wsi/**/*.svs` -- FLAT set (subfolders like Cases/Controls are cosmetic, ignored).
+  - `metadata/image_metadata.csv` -- authoritative per-image table
     (join of sample_metadata [labels+patient] + image_file_metadata [tech]).
   - Ignore `bag_metadata.csv`. `sensitive/` PHI variant never required/committed.
 - PIPELINE PRODUCES (Hive-partitioned `key=value` dirs):
@@ -76,7 +76,7 @@ Build a repo that: (1) trains all HELIOS pipeline models from datasets placed in
 ## Per-training-stage dataset binding + precondition resolution (CONFIRMED)
 - WHY: a training stage may fit on a DIFFERENT dataset than the rest of the pipeline (e.g. concept models
     trained on a separate concept-annotated cohort; OMG-Net is already fully external). So "the training
-    dataset" is NOT global — it is PER FIT STAGE.
+    dataset" is NOT global -- it is PER FIT STAGE.
 - CONFIG: each fit stage (cell*, mil, concepts, cellular, morphology, fusion, ...) declares its OWN
     `dataset` binding in the config files (configs/train/<stage>.yaml). A binding = the set of roots
     (source/work/features) for that stage. Stages default to the GLOBAL/primary dataset when unset, so the
@@ -99,9 +99,9 @@ Build a repo that: (1) trains all HELIOS pipeline models from datasets placed in
 
 ## Cross-validation & folds (CONFIRMED)
 - WHAT: K-fold CV (K=5 typically) on the training cohort. Produces K of everything model-shaped (K A-MIL models,
-    K sets of embeddings/attention, K of each downstream risk model). We ALWAYS ensemble the K models at deploy —
+    K sets of embeddings/attention, K of each downstream risk model). We ALWAYS ensemble the K models at deploy --
     there is NEVER a final "train on all data" model. So the K models ARE the shipped deliverable.
-- DRIVER: `cv_splits` artifact — OPTIONAL tidy long CSV `metadata/cv_splits.csv`, columns `image_id, fold,
+- DRIVER: `cv_splits` artifact -- OPTIONAL tidy long CSV `metadata/cv_splits.csv`, columns `image_id, fold,
     split in {train, val?, test}` (val optional), one row per (image_id, fold). It is a new optional INPUT ROOT.
     On the training cohort each image is in exactly one fold's `test` split (its OOF / provenance fold).
 - FOLD CARDINALITY is context-dependent (do NOT conflate):
@@ -112,7 +112,7 @@ Build a repo that: (1) trains all HELIOS pipeline models from datasets placed in
     - This is why `mil_inference` does NOT consume cv_splits (it enumerates folds from model_mil), while every
         `fold: reduce` step DOES (to choose OOF-on-CV-cohort vs ensemble-on-deploy).
 - `fold` IS AN OPTIONAL KEY DIMENSION (decided after workshopping K-vs-R-vs-hybrid). When present it is ALWAYS
-    the OUTERMOST coordinate and materializes as a `fold={fold}/` PATH SEGMENT — never a column. The
+    the OUTERMOST coordinate and materializes as a `fold={fold}/` PATH SEGMENT -- never a column. The
     "empty optional key segment drops its path segment" rule gives us ONE artifact identity at two arities.
 - THREE artifact shapes:
     - per-fold  : `fold` in key + `fold={fold}/` in path => K physical instances. These are the K models and the
@@ -120,7 +120,7 @@ Build a repo that: (1) trains all HELIOS pipeline models from datasets placed in
         clinical), `aligned_slide_embedding`, `aligned_patch_embeddings`, `patch_attention`, and the per-fold
         `whole_image_risk_score` (one CSV per fold, one row per image).
     - reduced   : NO fold in key/path; one instance per image, produced by a fold-aware REDUCE component that
-        collapses the K inputs — OUT-OF-FOLD (each image scored by its TEST-fold model) on the CV cohort /
+        collapses the K inputs -- OUT-OF-FOLD (each image scored by its TEST-fold model) on the CV cohort /
         ENSEMBLE-average on deploy. All shipped result CSVs (the 5 sub-scores, helios_risk_score,
         whole_image_risk_score_ensemble, patch_morphology_presence, tile_clusters, survival_curve).
     - fold-free : computed before/independently of CV (preprocessing, cells, cellular_features). No fold at all.
@@ -141,15 +141,15 @@ Build a repo that: (1) trains all HELIOS pipeline models from datasets placed in
         `*_infer`, `fusion_infer`, `whole_image_risk_reduce`, and `assets_render` (OOF-selects test-fold
         attention for the heatmap).
     - none   = pre-CV / fold-agnostic (preprocessing incl. pretrained CycleGAN stain augmentation, cell pipeline,
-        cellular_features_compute, case_report_build, markdown_render, cohort_summarize — all consume only
+        cellular_features_compute, case_report_build, markdown_render, cohort_summarize -- all consume only
         reduced/fold-free inputs).
-- PARALLELISM: fold is embarrassingly parallel — each `fold: map` run is an independent job writing its own
+- PARALLELISM: fold is embarrassingly parallel -- each `fold: map` run is an independent job writing its own
     `fold={fold}` files (no shared-writer hazard). The per-fold whole-image score is a per-fold CSV
     (`mil/fold={fold}/whole_image_risk_score.csv`) for the same reason (avoids one process holding all K MIL
     models to write a single file).
 - CV SPLITS GENERATION: `cv_splits_generation` (helios.data.cv_splits, train-only) builds cv_splits.csv from a
     cohort's image_metadata. Params: n_folds (5), val_fraction (0 => no val rows), stratify_by (label cols),
-    group_by (e.g. patient_id, to keep a patient's images in one fold — leakage guard), seed. Run once per
+    group_by (e.g. patient_id, to keep a patient's images in one fold -- leakage guard), seed. Run once per
     training cohort; a separate concept cohort gets its own run if it needs folds.
 - VAL SPLIT is OPTIONAL: cv_splits.split may include `val`, but if a model needs validation and no `val` rows
     exist, it carves a random train/val split out of that fold's `train` rows. So `val` is provisioned but never
@@ -158,14 +158,14 @@ Build a repo that: (1) trains all HELIOS pipeline models from datasets placed in
     concept-training set (n_bootstrap, default ~100; n_bootstrap=1 disables). This yields a concept-prediction
     DISTRIBUTION / uncertainty rather than a point estimate. model_concepts (per fold) therefore holds
     n_bootstrap x n_concepts probes + the concept risk + residual error-correction models. Bootstrap is an
-    INTERNAL replication inside the per-fold bundle (NOT a key/path dimension) — folds stay the only fold axis.
+    INTERNAL replication inside the per-fold bundle (NOT a key/path dimension) -- folds stay the only fold axis.
 - HIVE / PARTITIONS-AS-COLUMNS (future convenience, not a dependency): the `field={field}/` path convention is
     Hive-compatible by design, so a future `helios.data.dataset` reader can present a partitioned tree as ONE
-    logical table with fold/size_mm/model/target surfaced as COLUMNS, with predicate pushdown — via PyArrow
+    logical table with fold/size_mm/model/target surfaced as COLUMNS, with predicate pushdown -- via PyArrow
     Datasets (`partitioning="hive"`), DuckDB (`hive_partitioning=true`), or Polars (`hive_partitioning=True`).
     Applies to the columnar/csv artifacts (scores, metadata, attention, clusters); hdf5/npy blobs stay file-addressed.
 
-## Output/report contract (web-app boundary) — workshopped
+## Output/report contract (web-app boundary) -- workshopped
 PRINCIPLE: output is a DATA PACKAGE, not a rendered report. Structured arrays
 (parquet/hdf5/npy/json) are authoritative; web app can self-render overlays/heatmaps/
 cell-maps at any zoom. Pre-rendered PNGs optional. Schemas LIGHT + versioned
@@ -270,9 +270,9 @@ GRANULARITY: per-image primary (image_id). Patient/sample aggregation = OPTIONAL
 - [RESOLVED] Final repository skeleton / directory layout (see below).
 
 ## Repository skeleton (CONFIRMED: src-layout)
-LAYOUT DECISION: src/helios/ (src-layout) — guarantees tests exercise the INSTALLED artifact
+LAYOUT DECISION: src/helios/ (src-layout) -- guarantees tests exercise the INSTALLED artifact
 (same as users/Docker get), catches packaging errors early, no import shadowing, clean root.
-Requires install-first (uv sync / make install) — already step one.
+Requires install-first (uv sync / make install) -- already step one.
 
 helios/
   Makefile, pyproject.toml (hatchling), uv.lock, README.md, .gitignore,
@@ -322,7 +322,7 @@ helios/
   scripts/                     thin CLI-mirroring scripts (fit, predict, summarize)
   tests/                       fixtures/ = SYNTHETIC generators (no real datasets)
 
-## Remote sync (ops layer) — CONFIRMED: scripts/sync.sh (smart) + Make shortcuts + rclone + .env (NOT library code)
+## Remote sync (ops layer) -- CONFIRMED: scripts/sync.sh (smart) + Make shortcuts + rclone + .env (NOT library code)
 - Sync is OPS/plumbing, not domain logic -> lives in scripts/sync.sh + Make, not helios.*.
 - NO hardcoded paths anywhere in code OR Makefile. All locations from .env (gitignored).
 - .env (gitignored, user-created from committed .env.example):
@@ -356,7 +356,7 @@ helios/
   -> single uncommitted config point, consistent pattern.
 - SUPERSEDES earlier src/helios/sync/ module idea (package stays pure, no rclone dep).
 
-## Docs split — CONFIRMED
+## Docs split -- CONFIRMED
 - README.md = LIGHT public overview (ships with paper): what HELIOS does, workflow, how to cite.
 - CONTRIBUTING.md = DETAILED contributor guide: directory structure, what each file/module is for,
   where to place new code, conventions (CLI-first, library-first, data-agnostic rule, sync ops layer),

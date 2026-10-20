@@ -6,9 +6,9 @@ so components read/write artifacts by id + key without knowing on-disk layout.
 
 Two access modes:
 
-* :meth:`ArtifactStore.read` — eager: materialize the whole artifact (small
+* :meth:`ArtifactStore.read` -- eager: materialize the whole artifact (small
   tables, embeddings, configs).
-* :meth:`ArtifactStore.path` — lazy: resolve to a path the consumer opens
+* :meth:`ArtifactStore.path` -- lazy: resolve to a path the consumer opens
   itself, for random-access streaming (e.g. sampling 1k of 50k tiles from an
   HDF5 stack in a DataLoader) without loading everything into memory.
 
@@ -135,7 +135,7 @@ class ArtifactStore:
         """Resolve an artifact to its on-disk path WITHOUT reading it.
 
         This is the streaming seam: large random-access artifacts (e.g. an HDF5
-        tile stack of 50k tiles) should be opened lazily by the consumer — a
+        tile stack of 50k tiles) should be opened lazily by the consumer -- a
         torch/tf ``Dataset`` opens this path per worker and slices only the tiles
         a batch needs, rather than having :meth:`read` load the whole array into
         memory. :meth:`read` stays the convenient eager path for small artifacts.

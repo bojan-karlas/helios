@@ -2,7 +2,7 @@
 
 Builds the web-app data package per cohort: one ``report.json`` per image
 (source of truth), optional rendered PNG assets, the rendered ``report.md``, and
-the wide ``cohort_summary.csv``. ``report`` has no subcommands — it runs the full
+the wide ``cohort_summary.csv``. ``report`` has no subcommands -- it runs the full
 report build; ``--no-assets`` / ``--no-summarize`` trim optional outputs.
 """
 from __future__ import annotations

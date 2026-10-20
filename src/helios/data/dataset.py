@@ -1,4 +1,4 @@
-"""The HELIOS cohort dataset — locates and lazily materializes a cohort.
+"""The HELIOS cohort dataset -- locates and lazily materializes a cohort.
 
 A HELIOS dataset is, at minimum:
 
@@ -9,7 +9,7 @@ A HELIOS dataset is, at minimum:
 :class:`Dataset` binds to a cohort root and exposes its contents *on demand*:
 the metadata table, the slide index (``image_id -> wsi path``), and the joined
 view are all :func:`functools.cached_property` values, so constructing a
-``Dataset`` touches no disk — work happens the first time you ask for it, then
+``Dataset`` touches no disk -- work happens the first time you ask for it, then
 is cached. Light structural checks live in :meth:`Dataset.check`; heavy column
 validation belongs to the config/datadict layer.
 """

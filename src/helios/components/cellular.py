@@ -1,8 +1,8 @@
 """Components: cellular composition analysis.
 
-* :func:`aggregate_tile_cells` — bin detected cells into tiles and count per
+* :func:`aggregate_tile_cells` -- bin detected cells into tiles and count per
   type (optional ``slice_id`` debris removal), one row per tile.
-* :func:`compute_cellular_features` — reduce per-tile counts to per-slide
+* :func:`compute_cellular_features` -- reduce per-tile counts to per-slide
   cellular features (eTIL, mitosis-to-tumor ratio, TIL/mitotic coverage).
 
 The owning stage (:mod:`helios.stages.cell_features`) writes the

@@ -1,4 +1,4 @@
-# GENERATED from stage signatures — do not hand-edit.
+# GENERATED from stage signatures -- do not hand-edit.
 # Keyed by verb then noun; entries are that stage's tunable parameters
 # (1:1 with `helios <verb> <noun> --help`). Change defaults in the stage
 # functions under src/helios/stages/, then run `make configs`.

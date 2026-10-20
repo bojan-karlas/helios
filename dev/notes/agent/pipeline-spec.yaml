@@ -5,7 +5,7 @@
 #          (data processing, model training, inference, analysis, reporting), with explicit inputs/outputs.
 #
 # How the DAG works (IMPORTANT):
-#   - The pipeline graph is BIPARTITE — it always has exactly two kinds of nodes:
+#   - The pipeline graph is BIPARTITE -- it always has exactly two kinds of nodes:
 #       (1) ARTIFACTS  (data nodes)     = every file/table the pipeline reads or writes (see `artifacts:`).
 #       (2) COMPONENTS (operator nodes) = functional units that consume artifacts and produce artifacts.
 #   - Each component declares `consumes:` and `produces:` lists of ARTIFACT ids.
@@ -101,7 +101,7 @@ artifacts:
     path: metadata/cv_splits.csv
     description: |
       OPTIONAL tidy long table assigning each image to CV folds. Columns: image_id, fold, split in {train,val?,test}
-      (val optional — if absent and a model needs validation, it does a random train/val split of the train rows).
+      (val optional -- if absent and a model needs validation, it does a random train/val split of the train rows).
       One row per (image_id, fold). Cohort-level single file (like image_metadata.csv). On the training cohort each
       image appears in exactly one fold's test split (its OOF/provenance fold). Fold cardinality is driven by
       cv_splits ONLY on the training cohort (absent => K=1, trained without CV); at inference folds come from the
@@ -142,7 +142,7 @@ artifacts:
     format: parquet
     path: preprocessing/tile_background/size_mm={size_mm}/{image_id}.parquet
     description: |
-      Per-tile binary background flag — 1 if the tile maps onto background_mask pixels. Consumed downstream to drop
+      Per-tile binary background flag -- 1 if the tile maps onto background_mask pixels. Consumed downstream to drop
       non-tissue tiles (NOT used to gate feature extraction).
 
   - id: tile_features
@@ -246,7 +246,7 @@ artifacts:
     format: npy
     path: mil/slide_embedding_grad/fold={fold}/{image_id}.npy
     description: |
-      Gradient of the pre-sigmoid A-MIL logit w.r.t. aligned_slide_embedding — a TCAV-style sensitivity signal for
+      Gradient of the pre-sigmoid A-MIL logit w.r.t. aligned_slide_embedding -- a TCAV-style sensitivity signal for
       concept-direction analysis. Per-fold; not consumed by concept training/inference itself, only by ad hoc
       concept-sensitivity analysis (notebooks).
 
@@ -534,7 +534,7 @@ components:
     description: |
       Apply stain augmentation to reduce staining variability, using a pretrained CycleGAN stain
       generator. The generator is TRAINED IN A SEPARATE REPO and loaded internally (per target),
-      mirroring how CellViT++/OMG-Net weights are loaded — this repo runs inference only.
+      mirroring how CellViT++/OMG-Net weights are loaded -- this repo runs inference only.
 
   - id: feature_extraction
     title: Foundation Feature Extraction
@@ -597,7 +597,7 @@ components:
     produces: [mitotic_cells]
     description: |
       Pass tumor-cell patches through OMG-Net (vendored ResNet-18 model code with pretrained weights) to flag
-      mitotic figures. Inference only — OMG-Net is trained in a separate repo.
+      mitotic figures. Inference only -- OMG-Net is trained in a separate repo.
 
   - id: tile_cell_aggregation
     title: Per-Tile Cell Aggregation
@@ -718,7 +718,7 @@ components:
     params:
       n_bootstrap: 100   # bootstrap replicas per concept (set n_bootstrap=1 to disable)
     description: |
-      Per-concept linear probes on aligned slide embeddings — LogReg (categorical) / Ridge (numerical). Concept
+      Per-concept linear probes on aligned slide embeddings -- LogReg (categorical) / Ridge (numerical). Concept
       ground-truth from path_* columns. Each concept probe is BOOTSTRAPPED over the training set (n_bootstrap
       replicas) to yield a prediction distribution / uncertainty. Includes concept risk + residual error-correction
       models (the residual regressor is fit per fold against the per-fold whole_image_risk_score). One bundle per

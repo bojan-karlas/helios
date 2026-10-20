@@ -31,7 +31,7 @@ helios report           # assemble per-case + cohort reports
 
 ## Setting up the repo
 
-You need [`uv`](https://docs.astral.sh/uv/) (the only required tool — it manages
+You need [`uv`](https://docs.astral.sh/uv/) (the only required tool -- it manages
 the Python toolchain and the virtualenv). Then:
 
 ```bash
@@ -44,7 +44,7 @@ helios --help       # explore the CLI
 ```
 
 Everything routes through the [`Makefile`](Makefile); run `make help` to list
-targets. There is no need to `pip install` anything by hand — `uv` resolves and
+targets. There is no need to `pip install` anything by hand -- `uv` resolves and
 installs from `pyproject.toml` into `.venv`. Because the package uses a
 `src/` layout, it must be installed (editable) before `import helios` works;
 `make install` does this for you.
@@ -56,18 +56,18 @@ Before opening a PR, make sure `make lint` and `make test` are green.
 The package lives under `src/helios/`. Three packages carry the contributor-facing
 design; the rest are supporting infrastructure you mostly consume, not edit.
 
-### `helios.components` — the pure logic (your workspace)
+### `helios.components` -- the pure logic (your workspace)
 
 A **component** is a *pure function of its inputs*. It must **not** touch the
 artifact store, the path resolver, or the run config. It takes typed arguments
-(arrays, dataframes, or — for very large random-access artifacts — a resolved
+(arrays, dataframes, or -- for very large random-access artifacts -- a resolved
 `Path` to stream from) and returns typed outputs. Each component carries a
 `GRAIN` note stating its unit of work (one image, a batch, a fold, an aggregate).
 This is where almost all real domain code goes. One module per *noun* (domain
 area): `thumbnails.py`, `tiling.py`, `features.py`, `cells.py`, `mil.py`,
 `risk.py`, ...
 
-### `helios.stages` — the orchestration (CLI-callable)
+### `helios.stages` -- the orchestration (CLI-callable)
 
 A **stage** is one `verb noun` cell (e.g. `prep thumbnails`, `fit mil`). Unlike
 components, stages are **not** pure: they own all artifact-store I/O, the
@@ -85,9 +85,9 @@ its component(s) once per work unit, and writes the outputs back.
   registry (`verb -> noun -> function`). A stage becomes reachable (CLI) and
   configurable (config introspection) the moment it is registered here.
 - A stage's **keyword parameters with defaults are the single source of truth
-  for its configuration** — see `helios.config` below.
+  for its configuration** -- see `helios.config` below.
 
-### `helios.cli` — the command-line surface
+### `helios.cli` -- the command-line surface
 
 Thin [Typer](https://typer.tiangolo.com/) wrappers, one module per verb
 (`prep.py`, `fit.py`, `predict.py`, `main.py`). A CLI command resolves effective
@@ -97,35 +97,35 @@ calls the importable stage function. Shared flag parsing lives in
 
 ### Supporting infrastructure
 
-- **`helios.config`** — `code is the source of truth` for configuration.
+- **`helios.config`** -- `code is the source of truth` for configuration.
   `introspect.py` reads each stage's signature to build the nested
   `{verb: {noun: {param: default}}}` mapping; `scripts/gen_configs.py`
   (`make configs`) serializes it to `configs/default.yaml`. `stage_config.py`
   resolves effective params with precedence *signature defaults < `--config` file
   < explicit CLI flags*. `column_mapping/` decouples a stage's logical column
   names from a cohort's physical CSV columns.
-- **`helios.data`** — the storage layer. `dataset.py` (`Dataset`: lazily
+- **`helios.data`** -- the storage layer. `dataset.py` (`Dataset`: lazily
   materializes a cohort root), `catalog.py` (loads `configs/artifacts.yaml`,
   the spec-derived artifact registry), `resolver.py` (artifact id + key →
-  on-disk path), `io.py` (`ArtifactStore.read/write/exists/path` — the API stages
+  on-disk path), `io.py` (`ArtifactStore.read/write/exists/path` -- the API stages
   use), `cohort.py` (the `--dataset` resolution layer, see below), and
   `bundle.py` (provenance-bearing model bundles).
-- **`helios.models`** — `base.py` defines the tiny `fit`/`predict`/`save`/`load`
+- **`helios.models`** -- `base.py` defines the tiny `fit`/`predict`/`save`/`load`
   `Model` contract plus a name registry (`@register_model`).
-- **`helios.progress`** — the `Progress` object stages take (console output +
+- **`helios.progress`** -- the `Progress` object stages take (console output +
   `status.json` / `events.jsonl` reporting).
-- **`helios.utils`** — small pure helpers (`partition.py` grid/fold expansion,
+- **`helios.utils`** -- small pure helpers (`partition.py` grid/fold expansion,
   `digests.py` content hashing). No domain logic.
 
 ## Implementing a component
 
 The common task is bringing a **stubbed component to life**. Take thumbnail
-extraction as a worked example — its component and stage already exist as stubs.
+extraction as a worked example -- its component and stage already exist as stubs.
 
 ### 1. Fill in the component body
 
 Open [`src/helios/components/thumbnails.py`](src/helios/components/thumbnails.py).
-The stub already declares the exact contract — keep the signature and `GRAIN`
+The stub already declares the exact contract -- keep the signature and `GRAIN`
 note, replace only the `raise NotImplementedError` with real logic:
 
 ```python
@@ -162,7 +162,7 @@ Reads use `store.read(<artifact_id>, **keys)`, writes use
 artifact's `key` tuple in [`configs/artifacts.yaml`](configs/artifacts.yaml). For
 very large random-access artifacts, pass `store.path(<id>, **keys)` to the
 component so it can stream (see `fit_mil` for the pattern). A stage's tunable
-parameters are plain keyword arguments with defaults — those defaults *are* the
+parameters are plain keyword arguments with defaults -- those defaults *are* the
 config.
 
 ### 3. Test it
@@ -180,7 +180,7 @@ If you are not filling a stub but adding a new component/stage from scratch:
    [`dev/notes/agent/pipeline-spec.yaml`](dev/notes/agent/pipeline-spec.yaml)
    (id, `key`, `format`, `path`), then regenerate the registry:
    `uv run python scripts/gen_registries.py` (rewrites `configs/artifacts.yaml`
-   and any diagrams). The spec is the source of truth — do not hand-edit the
+   and any diagrams). The spec is the source of truth -- do not hand-edit the
    generated `artifacts.yaml`.
 2. **Write the pure component** in `src/helios/components/<noun>.py`.
 3. **Write the stage** in `src/helios/stages/<noun>.py` (`verb_noun` function),
@@ -198,8 +198,8 @@ comma-separated). The [`helios.data.cohort`](src/helios/data/cohort.py) layer
 resolves each value into a list of `ResolvedDataset` (one physical root + an
 optional pandas-`query` row filter). A `--dataset` value may be:
 
-- a **plain root** (`--dataset /data/MGB`) — a single unfiltered cohort;
-- a **cohort-definition file** (`--dataset cohorts/train.yaml`) — a named,
+- a **plain root** (`--dataset /data/MGB`) -- a single unfiltered cohort;
+- a **cohort-definition file** (`--dataset cohorts/train.yaml`) -- a named,
   version-controllable union of roots plus an optional filter:
 
   ```yaml
@@ -216,7 +216,7 @@ Repeated `--dataset` flags union; the ad-hoc `--filter` flag (on `fit` /
 their `datasets` argument through `resolve_datasets()` (idempotent), then loop
 `for ds in resolved:` using `ds.root`, `ds.where`, `ds.name`, and `ds.dataset()`.
 Result tables carry a `dataset` provenance column (`ds.name`) so cross-cohort
-concatenations stay lossless — strip it with `drop_provenance()` before feeding a
+concatenations stay lossless -- strip it with `drop_provenance()` before feeding a
 table back in as model features. When writing a new stage, take
 `datasets: DatasetArgs` and follow this pattern (see `stages/_runtime.py`'s
 `select_image_ids` / `train_ids(where=...)`).

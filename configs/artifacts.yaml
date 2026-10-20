@@ -1,4 +1,4 @@
-# GENERATED from dev/notes/agent/pipeline-spec.yaml — do not hand-edit.
+# GENERATED from dev/notes/agent/pipeline-spec.yaml -- do not hand-edit.
 # Regenerate via scripts/gen_registries.py
 artifacts:
   wsi:

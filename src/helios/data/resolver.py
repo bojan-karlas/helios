@@ -1,4 +1,4 @@
-"""Path resolution — the dataset-agnostic seam.
+"""Path resolution -- the dataset-agnostic seam.
 
 The resolver is the ONLY place that knows how an artifact maps onto disk. Given
 an artifact id and a set of key values, it renders the artifact's relative
@@ -9,7 +9,7 @@ root); when only a base root is configured every role falls back to it, so the
 common single-tree case needs no extra configuration.
 
 Optional-key rule: ``fold`` is an OPTIONAL key dimension. When its value is
-absent (``None``), its ``fold={fold}/`` path segment is DROPPED — this is how a
+absent (``None``), its ``fold={fold}/`` path segment is DROPPED -- this is how a
 single artifact id addresses both per-fold instances and the reduced
 (fold-free) instance.
 """

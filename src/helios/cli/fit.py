@@ -1,4 +1,4 @@
-"""``helios fit <noun>`` — train models (one bundle per CV fold).
+"""``helios fit <noun>`` -- train models (one bundle per CV fold).
 
 Each ``fit`` command pools one or more ``--dataset`` training cohorts and writes
 per-fold model bundles. There is no run-all ``fit``: training order (mil →

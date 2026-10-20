@@ -1,4 +1,4 @@
-# HELIOS Workflow — Detailed Description
+# HELIOS Workflow -- Detailed Description
 
 HELIOS is an end-to-end computational pathology system that takes an H&E-stained Whole Slide Image (WSI) as input and produces an individualized recurrence risk score for melanoma patients, along with an interpretable tumor synoptic report.
 
@@ -133,7 +133,7 @@ HELIOS is an end-to-end computational pathology system that takes an H&E-stained
    - **TIL Coverage**: `N_lymph / N_tumor` in TIL-dominant patches → e.g., 66.2%
    - **Mitotic Coverage**: `N_mitosis / N_tumor` in mitosis-dominant patches → e.g., 18%
 
-**Output (Cell Ratio and Coverage Results):** 4 scalar features — eTIL, Mitosis-to-Tumor Ratio, TIL Coverage, Mitotic Coverage
+**Output (Cell Ratio and Coverage Results):** 4 scalar features -- eTIL, Mitosis-to-Tumor Ratio, TIL Coverage, Mitotic Coverage
 
 4. **Risk Model** (trained on HELIOS-2K)
    - Simple ML classifier (e.g., Logistic Regression or Random Forest)
@@ -200,11 +200,11 @@ This module implements a **Post-hoc Concept Bottleneck Model** approach. It has 
    - Output: residual correction term
 
 5. Three output variants:
-   - **Concept Based Risk Score** — interpretable only
+   - **Concept Based Risk Score** -- interpretable only
    - **Concept Based Risk Score w/ Residual Error Correction** = concept score + residual correction
-   - **Concept Based Risk Score w/ Pathologist Corrections** — human-in-the-loop override
+   - **Concept Based Risk Score w/ Pathologist Corrections** -- human-in-the-loop override
 
-**Output used downstream:** **Pathological Concept Risk Score** (e.g., 0.405) — which variant is used is configurable
+**Output used downstream:** **Pathological Concept Risk Score** (e.g., 0.405) -- which variant is used is configurable
 
 ---
 
@@ -277,8 +277,8 @@ This module implements a **Post-hoc Concept Bottleneck Model** approach. It has 
 **Model:** Simple weighted linear fusion (Logistic Regression or similar simple ML model)
 
 **Outputs:**
-- **HELIOS Risk Score** — image-based fusion (e.g., 0.265)
-- **HELIOS-S Risk Score** — adds pathologist staging to fusion (e.g., 0.265)
+- **HELIOS Risk Score** -- image-based fusion (e.g., 0.265)
+- **HELIOS-S Risk Score** -- adds pathologist staging to fusion (e.g., 0.265)
 - **HELIOS Risk Groups:** Low / Intermediate / High (thresholded from score distribution)
 - **Individualized Risk Profile:** Recurrence probability over time (survival curve, 0–5 years)
 - **HELIOS Tumor Synoptic Report:** structured report with all interpretable risk factors and scores

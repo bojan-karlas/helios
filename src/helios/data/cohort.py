@@ -18,7 +18,7 @@ reused, and version-controlled. It is accepted anywhere ``--dataset`` is::
 A bare path (``--dataset /data/MGB``) is just a single-root cohort with no
 filter, so cohort files and plain roots are interchangeable and composable
 (repeated ``--dataset`` flags still union). Resolution flattens every input into
-a list of :class:`ResolvedDataset` — one physical root plus the effective row
+a list of :class:`ResolvedDataset` -- one physical root plus the effective row
 filter selecting its population. Filters compose with logical *and* (a cohort
 file's ``filter`` and an ad-hoc ``--filter`` both apply).
 """

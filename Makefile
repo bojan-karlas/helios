@@ -1,4 +1,4 @@
-# HELIOS — main Makefile (development entrypoint).
+# HELIOS -- main Makefile (development entrypoint).
 
 MAKEFLAGS += --no-print-directory
 

@@ -1,9 +1,9 @@
 """Components: patch morphology analysis.
 
-* :func:`train_morphology` — attention-cutoff filter → PCA → FAISS k-means
+* :func:`train_morphology` -- attention-cutoff filter → PCA → FAISS k-means
   over-clustering → Leiden clustering → cluster exclusion (significance test)
   → cluster-presence risk model.
-* :func:`infer_morphology` — assign tiles to clusters, score cluster presence,
+* :func:`infer_morphology` -- assign tiles to clusters, score cluster presence,
   and produce the patch-morphology risk score.
 
 Patch embeddings are per-tile (large), so they are passed as resolved paths and
@@ -16,7 +16,7 @@ Ported from ``utility.py`` (the shared module behind
 the HELIOS per-fold contract:
 
 * **Attention filter**: the *cumulative attention mass* cutoff
-  (``cumulative_attention_mask`` — keep the smallest set of tiles whose
+  (``cumulative_attention_mask`` -- keep the smallest set of tiles whose
   attention mass reaches ``attention_cutoff``), not a percentile-by-count
   filter.
 * **Resolution**: the source notebooks sweep six Leiden resolutions and
@@ -25,14 +25,14 @@ the HELIOS per-fold contract:
   hyperparameter).
 * **No multi-model concatenation**: the notebooks concatenate embeddings across
   5 *independently trained* models (12800-dim) because that was an
-  ensemble-of-separate-runs setup. HELIOS's fold structure is different — each
-  fold already has its own single embedding space — so PCA runs directly on
+  ensemble-of-separate-runs setup. HELIOS's fold structure is different -- each
+  fold already has its own single embedding space -- so PCA runs directly on
   that fold's ``aligned_patch_embeddings`` (no concatenation).
 * **PCA backend**: the notebooks used GPU cuML PCA for the (much larger,
   concatenated) embeddings; this uses ``sklearn.decomposition.PCA`` (CPU),
   matching ``utility.preprocess``'s portable fallback.
 * **Cluster-presence feature**: only the plain cosine-weighted, per-slide
-  L1-normalized ``presence`` (not the ``_abovemed``/``_abovep25`` variants) —
+  L1-normalized ``presence`` (not the ``_abovemed``/``_abovep25`` variants) --
   this is the one ``tile_analysis_external.ipynb``'s own final model comparison
   actually used.
 * **Risk estimator**: configurable (``estimator``), defaulting to
@@ -104,7 +104,7 @@ def train_morphology(
     patch_embedding_paths:
         ``image_id -> aligned_patch_embeddings path`` (streamed lazily).
     attention:
-        Per-tile attention scores, one row per (image_id, tile_id) — used for
+        Per-tile attention scores, one row per (image_id, tile_id) -- used for
         the cumulative-attention-mass filter before clustering.
     labels:
         Per-slide metadata (one row per image_id); ``target`` selects the
@@ -202,11 +202,11 @@ def infer_morphology(
     embedding space (fold A's cluster 5 is not fold B's cluster 5) while a risk
     score is a comparable scalar across folds:
 
-    * ``tile_clusters`` / ``patch_morphology_presence`` — OOF-select the
+    * ``tile_clusters`` / ``patch_morphology_presence`` -- OOF-select the
       image's test-fold assignment on a CV cohort; on deploy (``cv_splits`` is
       ``None``, no test-fold concept) fall back to the first fold's model as
       the single canonical clustering.
-    * ``patch_morphology_risk_score`` — OOF-select the test-fold score on a CV
+    * ``patch_morphology_risk_score`` -- OOF-select the test-fold score on a CV
       cohort / ensemble-average across folds on deploy, carrying a ``fold``
       provenance column (matching every other HELIOS risk reduction).
 
@@ -373,7 +373,7 @@ def _l2_normalize(x: NDArray[np.float32], eps: float = 1e-12) -> NDArray[np.floa
 #: source notebook's GPU cuML cell (``fit_idx = rng.choice(n_samples, size=
 #: min(200_000, n_samples), ...)``). Fitting `sklearn.PCA` on the FULL pooled
 #: tile matrix (unbounded, one training cohort can retain 10M+ tiles after the
-#: attention-cutoff filter — ~100+GB at float32 2560-dim) is what OOM-killed an
+#: attention-cutoff filter -- ~100+GB at float32 2560-dim) is what OOM-killed an
 #: earlier run; the notebook avoided this by fitting on a bounded subsample and
 #: keeping the full array memory-mapped on disk rather than resident in RAM.
 DEFAULT_MAX_PCA_FIT_SAMPLE: int = 200_000
@@ -384,7 +384,7 @@ def _keep_mask_and_tile_ids(
 ) -> tuple[NDArray[np.bool_], NDArray[np.int64]]:
     """Cumulative-attention keep mask + matching tile_ids for one slide's rows.
 
-    ``image_attention`` must already be sorted by ``tile_id`` — the same order
+    ``image_attention`` must already be sorted by ``tile_id`` -- the same order
     the raw per-slide feature array is written in (tile_id 0..N-1), so the
     returned mask indexes directly into that array.
     """
@@ -406,18 +406,18 @@ def _fit_pca_streaming(
 
     Three passes, each memory-bounded regardless of cohort size:
 
-    1. Attention only (already in memory, no HDF5 reads) — compute each slide's
+    1. Attention only (already in memory, no HDF5 reads) -- compute each slide's
        cumulative-attention keep mask/tile_ids.
     2. Read the (small) subset of slides needed to assemble a random
        ``max_fit_sample``-tile subsample across the whole pool, and fit PCA on
        just that.
     3. Re-read each slide's kept tiles once more, in isolation, and project them
-       through the now-fitted PCA immediately — only the tiny ``n_pca``-dim
+       through the now-fitted PCA immediately -- only the tiny ``n_pca``-dim
        result is retained, not the raw high-dim features.
 
     The full pooled raw tile matrix (which can be 100+GB across a large
     training cohort) is never materialized; each slide's transient raw array is
-    read from its own on-disk HDF5 (cheap — no need to hold it, or any other
+    read from its own on-disk HDF5 (cheap -- no need to hold it, or any other
     slide's, in RAM once its rows are extracted/projected).
     """
     keep_info: dict[str, tuple[NDArray[np.bool_], NDArray[np.int64]]] = {}

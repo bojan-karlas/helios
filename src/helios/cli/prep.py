@@ -1,4 +1,4 @@
-"""``helios prep <noun>`` — derive data artifacts (no model fitting).
+"""``helios prep <noun>`` -- derive data artifacts (no model fitting).
 
 Bare ``helios prep`` runs every prep noun in order (splits → thumbnails → tiles →
 augment → tile-features → cells → cell-features) using config/default parameters;
@@ -67,7 +67,7 @@ def splits(
         None,
         "--group-by",
         help="Column kept within one fold (e.g. patient_id). To disable grouping (no CLI"
-        " override for 'None' — flags can't distinguish unset from explicit-None), use a"
+        " override for 'None' -- flags can't distinguish unset from explicit-None), use a"
         " --config YAML with 'group_by: null' instead.",
     ),
     seed: int | None = typer.Option(None, "--seed", help="RNG seed."),

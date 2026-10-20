@@ -1,11 +1,11 @@
 """Components: reporting / web-app data package.
 
-* :func:`build_case_report` — assemble one case's ``report.json`` (headline, risk
+* :func:`build_case_report` -- assemble one case's ``report.json`` (headline, risk
   factors, concepts, refs) by reading from the batch result tables.
-* :func:`render_assets` — optional pre-rendered PNG overlays (attention heatmap,
+* :func:`render_assets` -- optional pre-rendered PNG overlays (attention heatmap,
   cluster map, TIL density, mitosis overlay).
-* :func:`render_markdown` — render ``report.md`` from ``report.json`` (+ assets).
-* :func:`summarize_cohort` — build the wide ``cohort_summary.csv`` by joining the
+* :func:`render_markdown` -- render ``report.md`` from ``report.json`` (+ assets).
+* :func:`summarize_cohort` -- build the wide ``cohort_summary.csv`` by joining the
   per-component result tables on ``image_id``.
 
 The owning stage (:mod:`helios.stages.report`) reads/writes the artifacts; these
