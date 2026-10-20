@@ -4,9 +4,9 @@ The resolver is the ONLY place that knows how an artifact maps onto disk. Given
 an artifact id and a set of key values, it renders the artifact's relative
 ``path`` template and joins it under the correct root.
 
-Roots are split by role (the pipeline never writes into the read-only source
-root); when only a base root is configured every role falls back to it, so the
-common single-tree case needs no extra configuration.
+Artifacts declare a storage role. Unset derived roots fall back to the dataset
+directory, allowing generated files to live alongside fixed source artifacts.
+Separate roots allow the source directory to be mounted read-only.
 
 Optional-key rule: ``fold`` is an OPTIONAL key dimension. When its value is
 absent (``None``), its ``fold={fold}/`` path segment is DROPPED -- this is how a
@@ -19,53 +19,37 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from helios.data.catalog import ArtifactSpec, get_artifact
+from helios.data.catalog import StorageRole, get_artifact
 
 OPTIONAL_KEYS = ("fold",)
 
 
 @dataclass(frozen=True)
+class StorageRoots:
+    """Run overrides; dataset-local preprocessing and features stay independent."""
+
+    preprocessing_root: Path | None = None
+    features_root: Path | None = None
+    models_root: Path | None = None
+    results_root: Path | None = None
+
+
+@dataclass(frozen=True)
 class Roots:
-    """Filesystem roots by role. ``base`` is the fallback for any unset role."""
+    """Resolved role roots for one physical dataset."""
 
-    base: Path
-    source: Path | None = None
-    work: Path | None = None
-    features: Path | None = None
-    output: Path | None = None
-    models: Path | None = None
+    source_root: Path
+    preprocessing_root: Path | None = None
+    features_root: Path | None = None
+    models_root: Path | None = None
+    results_root: Path | None = None
 
-    def _role(self, role: str) -> Path:
-        return getattr(self, role, None) or self.base
+    def for_role(self, role: StorageRole) -> Path:
+        return getattr(self, f"{role}_root") or self.source_root
 
     @classmethod
     def single(cls, root: str | Path) -> Roots:
-        return cls(base=Path(root))
-
-    @classmethod
-    def for_run(cls, source: str | Path, output: str | Path | None = None) -> Roots:
-        """Read inputs from ``source``; write all derived artifacts under ``output``.
-
-        ``source`` holds the read-only cohort (``wsi/``, ``metadata/``). When
-        ``output`` is given, every *derived* role (work/features/output/models)
-        falls back to it, so intermediate and result artifacts land in a separate
-        tree while the source cohort is never written to. When ``output`` is
-        ``None`` everything resolves in place under ``source`` (the common case).
-        """
-        src = Path(source)
-        return cls(base=Path(output) if output is not None else src, source=src)
-
-
-def _role_for(artifact: ArtifactSpec) -> str:
-    """Classify an artifact's storage role from its path prefix."""
-    path = artifact.path or ""
-    if path.startswith("wsi/") or path in {"metadata/image_metadata.csv", "metadata/cv_splits.csv"}:
-        return "source"
-    if path.startswith("models/"):
-        return "models"
-    if path.startswith(("results/", "reports/")):
-        return "output"
-    return "work"
+        return cls(source_root=Path(root))
 
 
 def render_path(template: str, keys: dict) -> str:
@@ -99,11 +83,11 @@ class Resolver:
         if artifact.path is None:
             raise ValueError(f"Artifact {artifact_id!r} has no path template (non-file artifact).")
         rel = render_path(artifact.path, keys)
-        root = self.roots._role(_role_for(artifact))
+        root = self.roots.for_role(artifact.role)
         return root / rel
 
     def exists(self, artifact_id: str, **keys) -> bool:
         return self.path(artifact_id, **keys).exists()
 
-    def role(self, artifact_id: str) -> str:
-        return _role_for(get_artifact(artifact_id))
+    def role(self, artifact_id: str) -> StorageRole:
+        return get_artifact(artifact_id).role

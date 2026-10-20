@@ -37,8 +37,19 @@
 #                  (the entity grain). e.g. tiles -> [size_mm, image_id, tile_id]; image_metadata -> [image_id].
 #                  An empty key ([]) means a singleton artifact (e.g. a model bundle).
 #   - path:        a RELATIVE filepath TEMPLATE (str) with `{field}` placeholders drawn from `key`.
-#                  It is relative to a dataset root that is resolved at RUNTIME and may differ by role
-#                  (input vs. intermediate vs. output, possibly scoped by job_id) -- TBD.
+#                  It is relative to the artifact's role root, resolved at runtime.
+#   - role:        source, preprocessing, features, models, or results.
+#                  source: fixed WSIs and image metadata.
+#                  preprocessing: reusable generated image/data preparation, including cv_splits.
+#                  features: reusable foundation embeddings (original and augmented).
+#                  models: fitted bundles, shared across a pooled training run.
+#                  results: analysis products, including cellular_features, MIL outputs, scores and reports.
+#                  Roles group storage; they do not impose execution order. Results may feed model training.
+#                  Source/preprocessing/features are constituent-local in cohort unions. Omitted derived
+#                  roots default to each dataset directory. An explicit models_root is run-wide.
+#                  An explicit results_root uses <results_root>/<dataset-directory-name>/<path>, even
+#                  for single-dataset calls, so downstream reads do not depend on union membership.
+#                  Without a results override, result paths are relative to each dataset directory.
 #                  Placeholders that appear in `path` determine the file granularity (one file per distinct
 #                  combination of those fields); key fields NOT in `path` become the ROWS within each file.
 #                  Hive-style `field={field}/` segments are used for partition-like dirs; the final segment
@@ -78,6 +89,7 @@ artifacts:
   # --- user-provided input ---
 
   - id: wsi
+    role: source
     title: Whole Slide Image
     key: [image_id]
     format: svs/tiff/ndpi
@@ -86,6 +98,7 @@ artifacts:
       H&E-stained whole slide image. Flat set under wsi/ (subfolders cosmetic, ignored).
 
   - id: image_metadata
+    role: source
     title: Image Metadata Table
     key: [image_id]
     format: csv
@@ -95,6 +108,7 @@ artifacts:
       image_metadata.datadict.yaml. Authoritative source of labels, pathology concepts, staging.
 
   - id: cv_splits
+    role: preprocessing
     title: Cross-Validation Splits
     key: [image_id, fold]
     format: csv
@@ -111,6 +125,7 @@ artifacts:
   # --- preprocessing artifacts (produced) ---
 
   - id: background_mask
+    role: preprocessing
     title: Background Mask (Debug)
     key: [image_id]
     format: png
@@ -120,6 +135,7 @@ artifacts:
       per-tile background flags; saved mainly for debugging/QC.
 
   - id: tile_metadata
+    role: preprocessing
     title: Tile Metadata
     key: [size_mm, image_id, tile_id]
     format: parquet
@@ -129,6 +145,7 @@ artifacts:
       Columns: tile_row, tile_col, tile_x, tile_y, tile_width, tile_height.
 
   - id: tiles
+    role: preprocessing
     title: Tile Images
     key: [size_mm, image_id, tile_id]
     format: hdf5
@@ -137,6 +154,7 @@ artifacts:
       Extracted tile image ndarrays (every tile in the grid, background not yet removed).
 
   - id: tile_background
+    role: preprocessing
     title: Tile Background Flags
     key: [size_mm, image_id, tile_id]
     format: parquet
@@ -146,6 +164,7 @@ artifacts:
       non-tissue tiles (NOT used to gate feature extraction).
 
   - id: tile_features
+    role: features
     title: Tile (Patch) Embeddings
     key: [size_mm, model, image_id, tile_id]
     format: hdf5
@@ -155,6 +174,7 @@ artifacts:
       ctranspath,dino,gigapath,musk,phikon2,resnet-50}.
 
   - id: tile_augmentation
+    role: preprocessing
     title: Stain-Augmented Tiles
     key: [target, size_mm, image_id, tile_id]
     format: hdf5
@@ -162,6 +182,7 @@ artifacts:
     description: Stain-augmented tiles. target is the dataset used to train a stain augmenter.
 
   - id: tile_augmentation_features
+    role: features
     title: Stain-Augmented Tile Embeddings
     key: [target, size_mm, model, image_id, tile_id]
     format: hdf5
@@ -169,6 +190,7 @@ artifacts:
     description: Foundation embeddings computed on stain-augmented tiles.
 
   - id: thumbnail
+    role: preprocessing
     title: Slide Thumbnail
     key: [image_id]
     format: png
@@ -180,6 +202,7 @@ artifacts:
   # --- cell pipeline artifacts ---
 
   - id: cells
+    role: preprocessing
     title: Classified Cell Coordinates
     key: [image_id, cell_id]
     format: parquet
@@ -188,6 +211,7 @@ artifacts:
       All CellViT++ detected cells with location and type (tumor/immune/connective/epithelial/other).
 
   - id: tumor_cell_patches
+    role: preprocessing
     title: Tumor Cell Patches
     key: [image_id, cell_id]
     format: hdf5
@@ -196,6 +220,7 @@ artifacts:
       Square image patches centered on detected tumor cells (input to OMG-Net mitotic classifier).
 
   - id: mitotic_cells
+    role: preprocessing
     title: Mitotic Figure Labels
     key: [image_id, cell_id]
     format: parquet
@@ -203,6 +228,7 @@ artifacts:
     description: Per tumor-cell binary mitotic-figure prediction (OMG-Net).
 
   - id: tile_cell_counts
+    role: preprocessing
     title: Per-Tile Cell Counts
     key: [size_mm, image_id, tile_id]
     format: parquet
@@ -212,6 +238,7 @@ artifacts:
   # --- MIL artifacts ---
 
   - id: aligned_patch_embeddings
+    role: results
     title: Aligned Patch Embeddings
     key: [fold, image_id, tile_id]
     format: hdf5
@@ -221,6 +248,7 @@ artifacts:
       (consumed by per-fold morphology training).
 
   - id: patch_attention
+    role: results
     title: Patch Attention Scores
     key: [fold, image_id, tile_id]
     format: parquet
@@ -231,6 +259,7 @@ artifacts:
       per patch. Per-fold (one per fold MIL model); reporting OOF-selects the image's test-fold attention.
 
   - id: aligned_slide_embedding
+    role: results
     title: Aligned Slide Embedding
     key: [fold, image_id]
     format: npy
@@ -241,6 +270,7 @@ artifacts:
       training/inference.
 
   - id: aligned_slide_embedding_grad
+    role: results
     title: Aligned Slide Embedding Gradient
     key: [fold, image_id]
     format: npy
@@ -251,6 +281,7 @@ artifacts:
       concept-sensitivity analysis (notebooks).
 
   - id: whole_image_risk_score
+    role: results
     title: Whole-Image Risk Score (Per-Fold)
     key: [fold, image_id]
     format: csv
@@ -261,6 +292,7 @@ artifacts:
       Reduced to whole_image_risk_score_ensemble for shipping.
 
   - id: whole_image_risk_score_ensemble
+    role: results
     title: Whole-Image Risk Score (Ensemble)
     key: [image_id]
     format: csv
@@ -272,6 +304,7 @@ artifacts:
   # --- analysis artifacts (per-module sub-scores + features) ---
 
   - id: cellular_features
+    role: results
     title: Cellular Composition Features
     key: [image_id]
     format: csv
@@ -279,6 +312,7 @@ artifacts:
     description: eTIL, mitosis-to-tumor ratio, TIL coverage, mitotic coverage.
 
   - id: cellular_risk_score
+    role: results
     title: Cellular Composition Risk Score
     key: [image_id]
     format: csv
@@ -288,6 +322,7 @@ artifacts:
       provenance column (test fold; null on deploy).
 
   - id: path_concept_predictions
+    role: results
     title: Concept Predictions
     key: [image_id]
     format: csv
@@ -296,6 +331,7 @@ artifacts:
       Predicted pathological concepts (ulceration, breslow, mitotic rate, radial growth, ...).
 
   - id: path_concept_risk_score
+    role: results
     title: Concept-Based Risk Score
     key: [image_id]
     format: csv
@@ -305,6 +341,7 @@ artifacts:
       (OOF/ensemble) + `fold` provenance column (test fold; null on deploy).
 
   - id: tile_clusters
+    role: results
     title: Per-Tile Cluster Assignments
     key: [image_id, tile_id]
     format: parquet
@@ -314,6 +351,7 @@ artifacts:
       morphology model / ensemble on deploy); one assignment per image.
 
   - id: patch_morphology_presence
+    role: results
     title: Cluster Presence Scores
     key: [image_id]
     format: csv
@@ -322,6 +360,7 @@ artifacts:
       Per-slide presence/proportion of each morphology cluster (feature for the morphology risk model).
 
   - id: patch_morphology_risk_score
+    role: results
     title: Patch Morphology Risk Score
     key: [image_id]
     format: csv
@@ -331,6 +370,7 @@ artifacts:
       `fold` provenance column (test fold; null on deploy).
 
   - id: staging_risk_score
+    role: results
     title: Staging Risk Score
     key: [image_id]
     format: csv
@@ -340,6 +380,7 @@ artifacts:
       image (OOF/ensemble) + `fold` provenance column (test fold; null on deploy).
 
   - id: clinical_risk_score
+    role: results
     title: Clinical Risk Score
     key: [image_id]
     format: csv
@@ -352,6 +393,7 @@ artifacts:
   # --- fusion + outputs ---
 
   - id: helios_risk_score
+    role: results
     title: HELIOS Risk Score
     key: [image_id]
     format: csv
@@ -362,6 +404,7 @@ artifacts:
       null on deploy).
 
   - id: survival_curve
+    role: results
     title: Survival Curve
     key: [image_id, time]
     format: csv
@@ -370,6 +413,7 @@ artifacts:
       Predicted recurrence-free probability over time, one CSV per image_id (rows = timepoints; columns time, recurrence_free_prob).
 
   - id: case_report
+    role: results
     title: Case Report (JSON)
     key: [image_id]
     format: json
@@ -378,6 +422,7 @@ artifacts:
       Authoritative structured per-image report (headline risk, sub-scores, concepts, refs).
 
   - id: case_report_md
+    role: results
     title: Case Report (Markdown)
     key: [image_id]
     format: md
@@ -386,6 +431,7 @@ artifacts:
       Human-readable report rendered from case_report.json (Jinja2); embeds assets; PDF source.
 
   - id: case_assets
+    role: results
     title: Rendered Report Assets
     key: [image_id, asset_id]
     format: png
@@ -394,6 +440,7 @@ artifacts:
       Pre-rendered figures referenced by the report (attention/cluster/TIL/mitosis overlays).
 
   - id: cohort_summary
+    role: results
     title: Cohort Summary Table
     key: [image_id]
     format: csv
@@ -404,6 +451,7 @@ artifacts:
   # --- trained model bundles (consumed by inference) ---
 
   - id: model_mil
+    role: models
     title: A-MIL Model Bundle
     key: [fold]
     path: models/mil/fold={fold}
@@ -412,6 +460,7 @@ artifacts:
       models; ensembled at deploy, never a single all-data model).
 
   - id: model_concepts
+    role: models
     title: Concept Models Bundle
     key: [fold]
     path: models/concepts/fold={fold}
@@ -422,30 +471,35 @@ artifacts:
       error-correction model. One bundle per fold (each internally holds n_bootstrap x n_concepts probes).
 
   - id: model_cellular
+    role: models
     title: Cellular Composition Risk Model
     key: [fold]
     path: models/cellular/fold={fold}
     description: Simple ML risk model (LogReg/RandomForest) over cellular composition features. One per fold.
 
   - id: model_morphology
+    role: models
     title: Morphology Model Bundle
     key: [fold]
     path: models/morphology/fold={fold}
     description: PCA + Leiden clustering + cluster-presence risk model. One per fold.
 
   - id: model_fusion
+    role: models
     title: HELIOS Risk Model
     key: [fold]
     path: models/fusion/fold={fold}
     description: Simple model combining sub-scores into the final HELIOS / HELIOS-S risk. One per fold.
 
   - id: model_staging
+    role: models
     title: Staging Risk Model
     key: [fold]
     path: models/staging/fold={fold}
     description: sklearn linear model mapping AJCC stage feature to recurrence risk. One per fold.
 
   - id: model_clinical
+    role: models
     title: Clinical Risk Model
     key: [fold]
     path: models/clinical/fold={fold}

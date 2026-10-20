@@ -7,7 +7,6 @@ whole-image scores to a single shipped value per image.
 """
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Literal
 
 import pandas as pd
@@ -17,13 +16,13 @@ from helios.components.mil import SlideFeatureRef, infer_mil, reduce_whole_image
 from helios.progress import DEFAULT_PROGRESS, Progress
 from helios.stages._runtime import (
     DatasetArgs,
+    StorageRoots,
     cohort_store,
     folds_across,
     model_folds,
     read_cv_splits,
     resolve_datasets,
     select_image_ids,
-    single_output_guard,
     tag_dataset,
     train_ids,
 )
@@ -51,7 +50,7 @@ DEFAULT_DEVICE: str = "cuda"
 def fit_mil(
     *,
     datasets: DatasetArgs,
-    output_root: str | Path | None = None,
+    roots: StorageRoots | None = None,
     size_mm: float = DEFAULT_SIZE_MM,
     model: str = DEFAULT_MODEL,
     target: str = DEFAULT_TARGET,
@@ -82,8 +81,8 @@ def fit_mil(
     if model not in FEATURE_MODELS:
         raise ValueError(f"Unknown feature model {model!r}. Available: {list(FEATURE_MODELS)}.")
 
-    resolved = resolve_datasets(datasets)
-    stores = [cohort_store(ds.root, output_root) for ds in resolved]
+    resolved = resolve_datasets(datasets, roots=roots, require_models=True)
+    stores = [cohort_store(ds, roots) for ds in resolved]
     out = stores[0]
     folds = folds_across(stores)
 
@@ -141,7 +140,7 @@ def fit_mil(
 def predict_mil(
     *,
     datasets: DatasetArgs,
-    output_root: str | Path | None = None,
+    roots: StorageRoots | None = None,
     size_mm: float = DEFAULT_SIZE_MM,
     model: str = DEFAULT_MODEL,
     device: str = DEFAULT_DEVICE,
@@ -155,11 +154,10 @@ def predict_mil(
     reduce of the K whole-image scores to ``whole_image_risk_score_ensemble``.
     Folds are enumerated from the saved ``model_mil`` bundles.
     """
-    resolved = resolve_datasets(datasets)
-    single_output_guard(resolved, output_root)
+    resolved = resolve_datasets(datasets, roots=roots)
 
     for ds in resolved:
-        store = cohort_store(ds.root, output_root)
+        store = cohort_store(ds, roots)
         ids = select_image_ids(ds, store, image_ids)
         folds = model_folds(store, "model_mil")
         if not folds:

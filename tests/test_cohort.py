@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 import yaml
 
 from helios.data.cohort import (
@@ -69,8 +70,8 @@ def test_load_cohort_spec_resolves_relative_roots(tmp_path: Path) -> None:
     path.write_text(yaml.safe_dump({"datasets": ["../peer", "/abs"]}))
 
     spec = load_cohort_spec(path)
-    assert Path(spec.datasets[0]).resolve() == (tmp_path.parent / "peer").resolve()
-    assert spec.datasets[1] == "/abs"
+    assert spec.datasets[0].root.resolve() == (tmp_path.parent / "peer").resolve()
+    assert spec.datasets[1].root == Path("/abs")
 
 
 def test_is_cohort_file_distinguishes_yaml_from_root(tmp_path: Path) -> None:
@@ -86,3 +87,97 @@ def test_combine_filters_identity_and_and() -> None:
     assert combine_filters("a", None) == "a"
     assert combine_filters(None, "b") == "b"
     assert combine_filters("a", "b") == "(a) and (b)"
+
+
+def test_extended_entries_preserve_constituent_storage_and_filters(tmp_path: Path) -> None:
+    path = tmp_path / "union.yaml"
+    path.write_text(yaml.safe_dump({
+        "name": "union",
+        "filter": "a == 1",
+        "datasets": [
+            {"source_root": "A", "preprocessing_root": "pre/A", "features_root": "/features/A"},
+            "B",
+        ],
+    }))
+    a, b = resolve_datasets([path], where="b == 2")
+    assert a.root == tmp_path / "A"
+    assert a.preprocessing_root == tmp_path / "pre/A"
+    assert a.features_root == Path("/features/A")
+    assert b.root == tmp_path / "B"
+    assert b.preprocessing_root is None and b.features_root is None
+    assert a.where == b.where == "(a == 1) and (b == 2)"
+    assert resolve_datasets([a, b]) == [a, b]
+
+
+@pytest.mark.parametrize("contents", [
+    "datasets: /data/A",
+    "datasets: []",
+    "datasets: [{features_root: /features}]",
+    "datasets: [{source_root: /data/A, feature_root: /features}]",
+    "datasets: [42]",
+    "datasets: [/data/A]\nfilter: 42",
+])
+def test_invalid_manifests_report_errors(tmp_path: Path, contents: str) -> None:
+    path = tmp_path / "invalid.yaml"
+    path.write_text(contents)
+    with pytest.raises(ValueError):
+        load_cohort_spec(path)
+
+
+def test_roots_alias_remains_supported(tmp_path: Path) -> None:
+    path = tmp_path / "old.yaml"
+    path.write_text("roots: [/data/A]\n")
+    assert resolve_datasets([path]) == [ResolvedDataset(Path("/data/A"))]
+
+
+def test_cli_forwards_storage_roots_to_every_stage(monkeypatch, tmp_path: Path) -> None:
+    from importlib import import_module
+
+    from typer.testing import CliRunner
+
+    from helios.cli.main import app
+    from helios.data.resolver import StorageRoots
+    from helios.stages import STAGES
+
+    roots = StorageRoots(
+        preprocessing_root=tmp_path / "pre",
+        features_root=tmp_path / "features",
+        models_root=tmp_path / "models",
+        results_root=tmp_path / "results",
+    )
+    options = [
+        "--dataset", str(tmp_path / "source"),
+        "--preprocessing-root", str(roots.preprocessing_root),
+        "--features-root", str(roots.features_root),
+        "--models-root", str(roots.models_root),
+        "--results-root", str(roots.results_root),
+    ]
+    monkeypatch.setattr("helios.config.stage_config.load_stage_params", lambda *args, **kwargs: {})
+    runner = CliRunner()
+    for verb, stages in STAGES.items():
+        for noun, stage in stages.items():
+            seen = []
+            with monkeypatch.context() as patch:
+                patch.setattr(f"{stage.__module__}.{stage.__name__}", lambda _seen=seen, **kwargs: _seen.append(kwargs))
+                module = import_module(f"helios.cli.{'main' if verb == 'report' else verb}")
+                patch.setattr(module, "console_progress", lambda path: None)
+                command = [verb] if verb == "report" else [verb, noun]
+                result = runner.invoke(app, command + options)
+            assert result.exit_code == 0, (command, result.output, result.exception)
+            assert len(seen) == 1
+            assert seen[0]["roots"] == roots
+            assert seen[0]["datasets"] == [ResolvedDataset(tmp_path / "source")]
+
+
+def test_cli_rejects_old_output_root_with_migration_guidance(tmp_path: Path) -> None:
+    from typer.testing import CliRunner
+
+    from helios.cli.main import app
+
+    result = CliRunner().invoke(
+        app, ["fit", "mil", "--dataset", str(tmp_path), "--output-root", str(tmp_path / "out")]
+    )
+    assert result.exit_code == 2
+    assert "--output-root has been removed" in result.output
+    assert "--models-root" in result.output
+    assert not (tmp_path / "out").exists()

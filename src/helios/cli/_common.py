@@ -10,8 +10,25 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import typer
+
 from helios.progress import Progress, configure_logging
 from helios.progress.reporter import ProgressReporter
+
+
+def reject_output_root(value: Path | None) -> None:
+    if value is not None:
+        raise typer.BadParameter(
+            "--output-root has been removed. Use --preprocessing-root, --features-root, "
+            "--models-root, and/or --results-root to select artifact destinations."
+        )
+
+
+PREPROCESSING_ROOT = typer.Option(None, "--preprocessing-root", help="Preprocessing base; single dataset only.")
+FEATURES_ROOT = typer.Option(None, "--features-root", help="Feature-store base; single dataset only.")
+MODELS_ROOT = typer.Option(None, "--models-root", help="Shared model base; required for pooled training.")
+RESULTS_ROOT = typer.Option(None, "--results-root", help="Results base; artifacts are grouped by dataset name.")
+REMOVED_OUTPUT_ROOT = typer.Option(None, "--output-root", hidden=True, callback=reject_output_root)
 
 
 def csv(value: str | None) -> list[str] | None:

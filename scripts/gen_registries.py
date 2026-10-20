@@ -6,7 +6,7 @@ truth for the artifact model. The package, however, must not depend on
 non-shipped dev/ notes at runtime, so we derive a trimmed registry into
 configs/ that the package loads:
 
-    configs/artifacts.yaml   id -> {title, key, format, path}
+    configs/artifacts.yaml   id -> {title, key, format, path, role}
 
 The resolver + IO layer read it to map an artifact id + key to an on-disk path.
 Run this whenever the spec's artifacts change:  python scripts/gen_registries.py
@@ -36,6 +36,7 @@ def main() -> None:
             "key": a.get("key", []) or [],
             "format": a.get("format", "bundle"),
             "path": a.get("path"),
+            "role": a["role"],
         }
         for a in spec["artifacts"]
     }

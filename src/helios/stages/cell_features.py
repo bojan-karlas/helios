@@ -9,18 +9,16 @@ drives them per slide and writes artifacts.
 """
 from __future__ import annotations
 
-from pathlib import Path
-
 import pandas as pd
 
 from helios.components.cellular import aggregate_tile_cells, compute_cellular_features
 from helios.progress import DEFAULT_PROGRESS, Progress
 from helios.stages._runtime import (
     DatasetArgs,
+    StorageRoots,
     cohort_store,
     resolve_datasets,
     select_image_ids,
-    single_output_guard,
     tag_dataset,
 )
 
@@ -30,7 +28,7 @@ DEFAULT_SIZE_MM: list[float] = [0.25]
 def prep_cell_features(
     *,
     datasets: DatasetArgs,
-    output_root: str | Path | None = None,
+    roots: StorageRoots | None = None,
     size_mm: list[float] = DEFAULT_SIZE_MM,
     image_ids: list[str] | None = None,
     force: bool = False,
@@ -42,11 +40,10 @@ def prep_cell_features(
     per-slide feature row pools the size_mm grids for that image. Requires the
     cell pipeline (``prep cells``) and tile metadata (``prep tiles``).
     """
-    resolved = resolve_datasets(datasets)
-    single_output_guard(resolved, output_root)
+    resolved = resolve_datasets(datasets, roots=roots)
 
     for ds in resolved:
-        store = cohort_store(ds.root, output_root)
+        store = cohort_store(ds, roots)
         ids = select_image_ids(ds, store, image_ids)
 
         feature_rows: list[pd.DataFrame] = []

@@ -14,8 +14,11 @@ import pytest
 from helios.components.mil import MilSlideOutputs
 from helios.data.cohort import ResolvedDataset
 from helios.data.io import ArtifactStore
-from helios.data.resolver import Resolver, Roots
+from helios.data.resolver import Resolver, Roots, StorageRoots
+from helios.stages import concept as concept_stage
 from helios.stages import mil
+from helios.stages._runtime import cohort_store, resolve_datasets
+from helios.stages.tile_features import prep_tile_features
 from tests.fixtures import make_cohort
 
 IMAGE_IDS = [f"FAKE-SKCM-P{i:05d}-S01-B1-I1" for i in range(4)]
@@ -104,3 +107,75 @@ def test_predict_scores_each_fold_then_reduces(monkeypatch, cohort: Path) -> Non
     ensemble = store.read("whole_image_risk_score_ensemble")
     assert sorted(ensemble["image_id"]) == sorted(IMAGE_IDS)
     assert (ensemble["dataset"] == Path(cohort).name).all(), "ensemble must carry dataset provenance"
+
+
+def test_union_extract_fit_predict_and_downstream_fit_use_split_roots(monkeypatch, tmp_path: Path) -> None:
+    datasets = []
+    originals = {}
+    for name in ("A", "B"):
+        source = make_cohort(tmp_path / name, n_images=2, n_patients=2)
+        originals.update({p: p.read_bytes() for p in source.rglob("*") if p.is_file()})
+        ds = ResolvedDataset(
+            source, preprocessing_root=tmp_path / "pre" / name, features_root=tmp_path / "features" / name
+        )
+        datasets.append(ds)
+        store = cohort_store(ds)
+        for image_id in ds.dataset().image_ids:
+            store.write("tiles", {"tiles": np.zeros((3, 4, 4, 3), np.uint8)}, size_mm=0.25, image_id=image_id)
+    roots = StorageRoots(models_root=tmp_path / "experiment", results_root=tmp_path / "experiment")
+
+    monkeypatch.setattr(
+        "helios.stages.tile_features.extract_features",
+        lambda tiles, **kwargs: np.ones((len(tiles), 4), np.float32),
+    )
+    prep_tile_features(datasets=datasets, roots=roots)
+
+    def fake_train(slides, **kwargs):
+        assert len(slides) == 4
+        for slide in slides:
+            assert slide.features_path.is_relative_to(tmp_path / "features")
+            assert slide.features_path.exists()
+            assert slide.background_path.is_relative_to(tmp_path / "pre")
+        return {"trained": True}
+
+    monkeypatch.setattr(mil, "train_mil", fake_train)
+    mil.fit_mil(datasets=datasets, roots=roots)
+    assert (tmp_path / "experiment/models/mil").is_dir()
+
+    def fake_infer(model, *, features_path, **kwargs):
+        assert model["trained"]
+        assert features_path.is_relative_to(tmp_path / "features")
+        return MilSlideOutputs(
+            patch_embeddings=np.ones((3, 4), np.float32),
+            attention=pd.DataFrame({"tile_id": [0, 1, 2], "attention": [0.2, 0.3, 0.5]}),
+            slide_embedding=np.ones(4, np.float32),
+            slide_embedding_grad=np.zeros(4, np.float32),
+            risk_score=0.5,
+        )
+
+    monkeypatch.setattr(mil, "infer_mil", fake_infer)
+    mil.predict_mil(datasets=datasets, roots=roots)
+    for ds in datasets:
+        store = cohort_store(ds, roots)
+        table = store.read("whole_image_risk_score_ensemble")
+        assert len(table) == 2
+        assert set(table["dataset"]) == {ds.name}
+        assert store.path("aligned_slide_embedding", fold=None, image_id=ds.dataset().image_ids[0]).exists()
+        # Reading a constituent alone must use the outputs written by the union.
+        (single,) = resolve_datasets([ds], roots=roots)
+        assert cohort_store(single, roots).path("whole_image_risk_score_ensemble").exists()
+
+    def fake_train_concepts(embeddings, labels, risk, **kwargs):
+        assert embeddings.shape == (4, 4)
+        assert len(labels) == len(risk) == 4
+        return {"downstream": True}
+
+    monkeypatch.setattr(concept_stage, "train_concepts", fake_train_concepts)
+    concept_stage.fit_concept(datasets=datasets, roots=roots)
+    assert cohort_store(datasets[0], roots).read("model_concepts", fold=None)["downstream"]
+    for p, contents in originals.items():
+        assert p.read_bytes() == contents
+    for ds in datasets:
+        assert not (ds.root / "models").exists()
+        assert not (ds.root / "preprocessing").exists()
+        assert not (ds.root / "results").exists()

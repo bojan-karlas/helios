@@ -9,8 +9,6 @@ chains them per slide and writes artifacts.
 """
 from __future__ import annotations
 
-from pathlib import Path
-
 import pandas as pd
 
 from helios.components.cells import (
@@ -22,10 +20,10 @@ from helios.components.cells import (
 from helios.progress import DEFAULT_PROGRESS, Progress
 from helios.stages._runtime import (
     DatasetArgs,
+    StorageRoots,
     cohort_store,
     resolve_datasets,
     select_image_ids,
-    single_output_guard,
 )
 
 # -- configurable defaults (source of truth for configs/default.yaml) ----------
@@ -56,7 +54,7 @@ def _mpp_magnification_fallback(
 def prep_cells(
     *,
     datasets: DatasetArgs,
-    output_root: str | Path | None = None,
+    roots: StorageRoots | None = None,
     patch_px: int = DEFAULT_PATCH_PX,
     device: str = DEFAULT_DEVICE,
     image_ids: list[str] | None = None,
@@ -68,12 +66,11 @@ def prep_cells(
     GRAIN CONTRACT: one image per work unit; the three components are chained
     per slide. The mitotic step always re-runs when cells were re-segmented.
     """
-    resolved = resolve_datasets(datasets)
-    single_output_guard(resolved, output_root)
+    resolved = resolve_datasets(datasets, roots=roots)
 
     for ds in resolved:
         cohort = ds.dataset()
-        store = cohort_store(ds.root, output_root)
+        store = cohort_store(ds, roots)
         ids = select_image_ids(ds, store, image_ids)
 
         for image_id in progress.task(ids, desc=f"cells {ds.name}"):

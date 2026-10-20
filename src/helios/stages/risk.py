@@ -8,8 +8,6 @@ OOF/ensemble reduce shape is shared.
 """
 from __future__ import annotations
 
-from pathlib import Path
-
 import pandas as pd
 
 from helios.components.risk import (
@@ -22,6 +20,7 @@ from helios.data.io import ArtifactStore
 from helios.progress import DEFAULT_PROGRESS, Progress
 from helios.stages._runtime import (
     DatasetArgs,
+    StorageRoots,
     cohort_store,
     drop_provenance,
     folds_across,
@@ -29,7 +28,6 @@ from helios.stages._runtime import (
     read_cv_splits,
     resolve_datasets,
     select_image_ids,
-    single_output_guard,
     tag_dataset,
     train_ids,
 )
@@ -66,7 +64,7 @@ _FUSION_INPUTS = (
 def fit_risk(
     *,
     datasets: DatasetArgs,
-    output_root: str | Path | None = None,
+    roots: StorageRoots | None = None,
     risk: list[str] = DEFAULT_RISK,
     target: str = DEFAULT_TARGET,
     staging_feature: str = DEFAULT_STAGING_FEATURE,
@@ -83,8 +81,8 @@ def fit_risk(
     subpopulation.
     """
     _validate(risk)
-    resolved = resolve_datasets(datasets)
-    stores = [cohort_store(ds.root, output_root) for ds in resolved]
+    resolved = resolve_datasets(datasets, roots=roots, require_models=True)
+    stores = [cohort_store(ds, roots) for ds in resolved]
     out = stores[0]
     folds = folds_across(stores)
 
@@ -113,7 +111,7 @@ def fit_risk(
 def predict_risk(
     *,
     datasets: DatasetArgs,
-    output_root: str | Path | None = None,
+    roots: StorageRoots | None = None,
     risk: list[str] = DEFAULT_RISK,
     staging_feature: str = DEFAULT_STAGING_FEATURE,
     clinical_features: list[str] = DEFAULT_CLINICAL_FEATURES,
@@ -127,11 +125,10 @@ def predict_risk(
     last, joins the other sub-scores, and also writes the ``survival_curve``.
     """
     _validate(risk)
-    resolved = resolve_datasets(datasets)
-    single_output_guard(resolved, output_root)
+    resolved = resolve_datasets(datasets, roots=roots)
 
     for ds in resolved:
-        store = cohort_store(ds.root, output_root)
+        store = cohort_store(ds, roots)
         ids = select_image_ids(ds, store, image_ids)
 
         for kind in _ordered(risk):

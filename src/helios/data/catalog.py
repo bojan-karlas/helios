@@ -14,8 +14,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal, cast, get_args
 
 import yaml
+
+StorageRole = Literal["source", "preprocessing", "features", "models", "results"]
+
+
+def storage_role(value: object) -> StorageRole:
+    if value not in get_args(StorageRole):
+        raise ValueError(f"Invalid artifact storage role: {value!r}")
+    return cast(StorageRole, value)
 
 
 def _configs_dir() -> Path:
@@ -39,6 +48,7 @@ class ArtifactSpec:
     key: tuple[str, ...]
     format: str
     path: str | None
+    role: StorageRole
 
     @property
     def is_foldable(self) -> bool:
@@ -55,6 +65,7 @@ def load_artifacts() -> dict[str, ArtifactSpec]:
             key=tuple(a.get("key", []) or []),
             format=a.get("format", "bundle"),
             path=a.get("path"),
+            role=storage_role(a.get("role")),
         )
         for aid, a in data.items()
     }

@@ -7,8 +7,6 @@ to one row per image internally.
 """
 from __future__ import annotations
 
-from pathlib import Path
-
 import numpy as np
 import pandas as pd
 from numpy.typing import NDArray
@@ -18,13 +16,13 @@ from helios.data.io import ArtifactStore
 from helios.progress import DEFAULT_PROGRESS, Progress
 from helios.stages._runtime import (
     DatasetArgs,
+    StorageRoots,
     cohort_store,
     folds_across,
     model_folds,
     read_cv_splits,
     resolve_datasets,
     select_image_ids,
-    single_output_guard,
     tag_dataset,
     train_ids,
 )
@@ -36,7 +34,7 @@ DEFAULT_N_BOOTSTRAP: int = 100
 def fit_concept(
     *,
     datasets: DatasetArgs,
-    output_root: str | Path | None = None,
+    roots: StorageRoots | None = None,
     n_bootstrap: int = DEFAULT_N_BOOTSTRAP,
     force: bool = False,
     progress: Progress = DEFAULT_PROGRESS,
@@ -49,8 +47,8 @@ def fit_concept(
     Writes ``model_concepts`` keyed by fold. Each cohort's ``where`` filter
     optionally restricts training to a metadata subpopulation.
     """
-    resolved = resolve_datasets(datasets)
-    stores = [cohort_store(ds.root, output_root) for ds in resolved]
+    resolved = resolve_datasets(datasets, roots=roots, require_models=True)
+    stores = [cohort_store(ds, roots) for ds in resolved]
     out = stores[0]
     folds = folds_across(stores)
 
@@ -80,7 +78,7 @@ def fit_concept(
 def predict_concept(
     *,
     datasets: DatasetArgs,
-    output_root: str | Path | None = None,
+    roots: StorageRoots | None = None,
     image_ids: list[str] | None = None,
     force: bool = False,
     progress: Progress = DEFAULT_PROGRESS,
@@ -90,11 +88,10 @@ def predict_concept(
     GRAIN CONTRACT: one cohort per work unit; the concept inference component
     consumes all fold models and reduces OOF/ensemble to one row per image.
     """
-    resolved = resolve_datasets(datasets)
-    single_output_guard(resolved, output_root)
+    resolved = resolve_datasets(datasets, roots=roots)
 
     for ds in resolved:
-        store = cohort_store(ds.root, output_root)
+        store = cohort_store(ds, roots)
         ids = select_image_ids(ds, store, image_ids)
         folds = model_folds(store, "model_concepts")
         if not folds:

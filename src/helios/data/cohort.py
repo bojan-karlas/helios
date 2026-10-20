@@ -12,7 +12,8 @@ reused, and version-controlled. It is accepted anywhere ``--dataset`` is::
     name: helios_train
     datasets:
       - /data/MGB
-      - ../cohorts/MRV            # relative to this file
+      - source_root: ../cohorts/MRV
+        features_root: /feature-store/MRV
     filter: "path_stage in ['I', 'II']"   # optional pandas-query over image_metadata
 
 A bare path (``--dataset /data/MGB``) is just a single-root cohort with no
@@ -39,18 +40,21 @@ COHORT_SUFFIXES = (".yaml", ".yml")
 class ResolvedDataset:
     """One physical dataset root plus the row filter selecting its population.
 
-    The unit a stage iterates over: ``root`` locates the cohort on disk, ``where``
+    The unit a stage iterates over: ``root`` locates the source on disk, ``where``
     is an optional pandas-``query`` over ``image_metadata`` restricting which
     images participate, and ``name`` (the root directory name) is the provenance
-    label stamped onto result tables.
+    label stamped onto result tables. Optional preprocessing and feature roots
+    apply to both reading and writing this constituent's derived data.
     """
 
     root: Path
     where: str | None = None
+    preprocessing_root: Path | None = None
+    features_root: Path | None = None
 
     @property
     def name(self) -> str:
-        return self.root.name
+        return self.root.name or self.root.resolve().name
 
     def dataset(self) -> Dataset:
         """The lazy :class:`~helios.data.dataset.Dataset` bound to this root."""
@@ -68,7 +72,7 @@ class CohortSpec:
     """A parsed cohort-definition file: a named union of roots + optional filter."""
 
     name: str
-    datasets: tuple[str, ...]
+    datasets: tuple[ResolvedDataset, ...]
     filter: str | None = None
 
 
@@ -82,17 +86,43 @@ def is_cohort_file(arg: str | Path | ResolvedDataset) -> bool:
 
 def load_cohort_spec(path: str | Path) -> CohortSpec:
     """Parse a cohort-definition YAML, resolving roots relative to the file."""
-    data = yaml.safe_load(Path(path).read_text()) or {}
-    roots = data.get("datasets") or data.get("roots")
-    if not roots:
+    data = yaml.safe_load(Path(path).read_text())
+    if not isinstance(data, dict):
+        raise ValueError(f"Cohort file {path} must contain a mapping.")
+    unknown = set(data) - {"name", "datasets", "roots", "filter"}
+    if unknown:
+        raise ValueError(f"Unknown cohort fields in {path}: {sorted(unknown)}")
+    entries = data.get("datasets") or data.get("roots")
+    if not isinstance(entries, list) or not entries:
         raise ValueError(f"Cohort file {path} must list one or more 'datasets'.")
+    if data.get("filter") is not None and not isinstance(data["filter"], str):
+        raise ValueError(f"Cohort filter in {path} must be a string.")
     base = Path(path).resolve().parent
-    resolved = tuple(
-        str(Path(r) if Path(r).is_absolute() else base / r) for r in roots
-    )
+
+    def location(value: object) -> Path:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"Dataset roots in {path} must be nonempty path strings.")
+        p = Path(value)
+        return p if p.is_absolute() else base / p
+
+    resolved: list[ResolvedDataset] = []
+    for entry in entries:
+        if isinstance(entry, str):
+            resolved.append(ResolvedDataset(location(entry)))
+        elif isinstance(entry, dict):
+            unknown = set(entry) - {"source_root", "preprocessing_root", "features_root"}
+            if unknown:
+                raise ValueError(f"Unknown dataset fields in {path}: {sorted(unknown)}")
+            resolved.append(ResolvedDataset(
+                root=location(entry.get("source_root")),
+                preprocessing_root=location(entry["preprocessing_root"]) if "preprocessing_root" in entry else None,
+                features_root=location(entry["features_root"]) if "features_root" in entry else None,
+            ))
+        else:
+            raise ValueError(f"Dataset entries in {path} must be paths or root mappings.")
     return CohortSpec(
         name=str(data.get("name", Path(path).stem)),
-        datasets=resolved,
+        datasets=tuple(resolved),
         filter=data.get("filter"),
     )
 
@@ -116,10 +146,12 @@ def resolve_datasets(
             out.append(item.with_filter(where))
         elif is_cohort_file(item):
             spec = load_cohort_spec(item)
-            for root in spec.datasets:
-                out.append(ResolvedDataset(Path(root), where=combine_filters(spec.filter, where)))
+            for ds in spec.datasets:
+                out.append(ds.with_filter(combine_filters(spec.filter, where)))
         else:
             out.append(ResolvedDataset(Path(item), where=where))
+    if not out:
+        raise ValueError("At least one dataset is required.")
     return out
 
 

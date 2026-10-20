@@ -33,3 +33,18 @@ def test_committed_configs_have_no_dataset_block() -> None:
                 f"{path.relative_to(ROOT)} must not reference a dataset; "
                 "dataset blocks belong only in gitignored user --config files."
             )
+
+
+def test_artifact_registry_matches_spec_roles_and_paths() -> None:
+    spec = yaml.safe_load((ROOT / "dev/notes/agent/pipeline-spec.yaml").read_text())
+    registry = yaml.safe_load((CONFIGS_DIR / "artifacts.yaml").read_text())["artifacts"]
+    assert registry == {
+        a["id"]: {
+            "title": a.get("title"),
+            "key": a.get("key", []) or [],
+            "format": a.get("format", "bundle"),
+            "path": a.get("path"),
+            "role": a["role"],
+        }
+        for a in spec["artifacts"]
+    }

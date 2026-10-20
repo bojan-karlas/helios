@@ -80,7 +80,11 @@ its component(s) once per work unit, and writes the outputs back.
   called directly: `from helios.stages.thumbnails import prep_thumbnails`.
 - [`stages/_runtime.py`](src/helios/stages/_runtime.py) holds the shared
   orchestration helpers every stage reuses (`cohort_store`, `folds_across`,
-  `train_ids`, `model_folds`, `single_output_guard`, ...).
+  `train_ids`, `model_folds`, `resolve_datasets`, ...).
+- Storage roles are `source`, `preprocessing`, `features`, `models`, and
+  `results`. Each artifact declares its role in the spec. Stages accept
+  `roots=StorageRoots(...)` overrides, while resolved cohort constituents
+  preserve their individual preprocessing and feature roots.
 - [`stages/__init__.py`](src/helios/stages/__init__.py) holds the `STAGES`
   registry (`verb -> noun -> function`). A stage becomes reachable (CLI) and
   configurable (config introspection) the moment it is registered here.

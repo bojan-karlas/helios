@@ -7,8 +7,6 @@ report build; ``--no-assets`` / ``--no-summarize`` trim optional outputs.
 """
 from __future__ import annotations
 
-from pathlib import Path
-
 import pandas as pd
 
 from helios.components.report import (
@@ -21,10 +19,10 @@ from helios.data.io import ArtifactStore
 from helios.progress import DEFAULT_PROGRESS, Progress
 from helios.stages._runtime import (
     DatasetArgs,
+    StorageRoots,
     cohort_store,
     resolve_datasets,
     select_image_ids,
-    single_output_guard,
 )
 
 # -- configurable defaults (source of truth for configs/default.yaml) ----------
@@ -56,7 +54,7 @@ _SUMMARY_TABLES = (
 def build_report(
     *,
     datasets: DatasetArgs,
-    output_root: str | Path | None = None,
+    roots: StorageRoots | None = None,
     assets: bool = DEFAULT_ASSETS,
     summarize: bool = DEFAULT_SUMMARIZE,
     image_ids: list[str] | None = None,
@@ -69,11 +67,10 @@ def build_report(
     one cohort-level summary join. Reads the shipped result tables; missing
     optional inputs are simply skipped by the report components.
     """
-    resolved = resolve_datasets(datasets)
-    single_output_guard(resolved, output_root)
+    resolved = resolve_datasets(datasets, roots=roots)
 
     for ds in resolved:
-        store = cohort_store(ds.root, output_root)
+        store = cohort_store(ds, roots)
         ids = select_image_ids(ds, store, image_ids)
         tables = _read_tables(store, _CASE_TABLES)
 

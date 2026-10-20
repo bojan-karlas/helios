@@ -21,7 +21,7 @@ from helios.stages import STAGES
 
 #: Parameters that are runtime seams, never emitted to config.
 RUNTIME_PARAMS = frozenset(
-    {"datasets", "output_root", "roots", "image_ids", "force", "progress"}
+    {"datasets", "roots", "image_ids", "force", "progress"}
 )
 
 

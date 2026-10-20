@@ -7,12 +7,14 @@ artifacts:
     - image_id
     format: svs/tiff/ndpi
     path: wsi/{image_id}.svs
+    role: source
   image_metadata:
     title: Image Metadata Table
     key:
     - image_id
     format: csv
     path: metadata/image_metadata.csv
+    role: source
   cv_splits:
     title: Cross-Validation Splits
     key:
@@ -20,12 +22,14 @@ artifacts:
     - fold
     format: csv
     path: metadata/cv_splits.csv
+    role: preprocessing
   background_mask:
     title: Background Mask (Debug)
     key:
     - image_id
     format: png
     path: debug/background_mask/{image_id}.png
+    role: preprocessing
   tile_metadata:
     title: Tile Metadata
     key:
@@ -34,6 +38,7 @@ artifacts:
     - tile_id
     format: parquet
     path: metadata/tile_metadata/size_mm={size_mm}/{image_id}.parquet
+    role: preprocessing
   tiles:
     title: Tile Images
     key:
@@ -42,6 +47,7 @@ artifacts:
     - tile_id
     format: hdf5
     path: tiles/size_mm={size_mm}/{image_id}/{image_id}.hdf5
+    role: preprocessing
   tile_background:
     title: Tile Background Flags
     key:
@@ -50,6 +56,7 @@ artifacts:
     - tile_id
     format: parquet
     path: preprocessing/tile_background/size_mm={size_mm}/{image_id}.parquet
+    role: preprocessing
   tile_features:
     title: Tile (Patch) Embeddings
     key:
@@ -59,6 +66,7 @@ artifacts:
     - tile_id
     format: hdf5
     path: preprocessing/tile_features/size_mm={size_mm}/{model}/{image_id}/{image_id}.hdf5
+    role: features
   tile_augmentation:
     title: Stain-Augmented Tiles
     key:
@@ -68,6 +76,7 @@ artifacts:
     - tile_id
     format: hdf5
     path: preprocessing/tile_augmentation/target={target}/size_mm={size_mm}/{image_id}/{image_id}.hdf5
+    role: preprocessing
   tile_augmentation_features:
     title: Stain-Augmented Tile Embeddings
     key:
@@ -78,12 +87,14 @@ artifacts:
     - tile_id
     format: hdf5
     path: preprocessing/tile_augmentation_features/target={target}/size_mm={size_mm}/{model}/{image_id}/{image_id}.hdf5
+    role: features
   thumbnail:
     title: Slide Thumbnail
     key:
     - image_id
     format: png
     path: thumbnails/{image_id}.png
+    role: preprocessing
   cells:
     title: Classified Cell Coordinates
     key:
@@ -91,6 +102,7 @@ artifacts:
     - cell_id
     format: parquet
     path: cells/cell_coordinates/{image_id}.parquet
+    role: preprocessing
   tumor_cell_patches:
     title: Tumor Cell Patches
     key:
@@ -98,6 +110,7 @@ artifacts:
     - cell_id
     format: hdf5
     path: cells/tumor_cell_patches/{image_id}.hdf5
+    role: preprocessing
   mitotic_cells:
     title: Mitotic Figure Labels
     key:
@@ -105,6 +118,7 @@ artifacts:
     - cell_id
     format: parquet
     path: cells/mitotic/{image_id}.parquet
+    role: preprocessing
   tile_cell_counts:
     title: Per-Tile Cell Counts
     key:
@@ -113,6 +127,7 @@ artifacts:
     - tile_id
     format: parquet
     path: cells/tile_counts/size_mm={size_mm}/{image_id}.parquet
+    role: preprocessing
   aligned_patch_embeddings:
     title: Aligned Patch Embeddings
     key:
@@ -121,6 +136,7 @@ artifacts:
     - tile_id
     format: hdf5
     path: mil/patch_embeddings/fold={fold}/{image_id}.hdf5
+    role: results
   patch_attention:
     title: Patch Attention Scores
     key:
@@ -129,6 +145,7 @@ artifacts:
     - tile_id
     format: parquet
     path: mil/attention/fold={fold}/{image_id}.parquet
+    role: results
   aligned_slide_embedding:
     title: Aligned Slide Embedding
     key:
@@ -136,6 +153,7 @@ artifacts:
     - image_id
     format: npy
     path: mil/slide_embedding/fold={fold}/{image_id}.npy
+    role: results
   aligned_slide_embedding_grad:
     title: Aligned Slide Embedding Gradient
     key:
@@ -143,6 +161,7 @@ artifacts:
     - image_id
     format: npy
     path: mil/slide_embedding_grad/fold={fold}/{image_id}.npy
+    role: results
   whole_image_risk_score:
     title: Whole-Image Risk Score (Per-Fold)
     key:
@@ -150,36 +169,42 @@ artifacts:
     - image_id
     format: csv
     path: mil/fold={fold}/whole_image_risk_score.csv
+    role: results
   whole_image_risk_score_ensemble:
     title: Whole-Image Risk Score (Ensemble)
     key:
     - image_id
     format: csv
     path: results/whole_image_risk_score.csv
+    role: results
   cellular_features:
     title: Cellular Composition Features
     key:
     - image_id
     format: csv
     path: results/cellular_features.csv
+    role: results
   cellular_risk_score:
     title: Cellular Composition Risk Score
     key:
     - image_id
     format: csv
     path: results/cellular_risk_score.csv
+    role: results
   path_concept_predictions:
     title: Concept Predictions
     key:
     - image_id
     format: csv
     path: results/path_concept_predictions.csv
+    role: results
   path_concept_risk_score:
     title: Concept-Based Risk Score
     key:
     - image_id
     format: csv
     path: results/path_concept_risk_score.csv
+    role: results
   tile_clusters:
     title: Per-Tile Cluster Assignments
     key:
@@ -187,36 +212,42 @@ artifacts:
     - tile_id
     format: parquet
     path: morphology/clusters/{image_id}.parquet
+    role: results
   patch_morphology_presence:
     title: Cluster Presence Scores
     key:
     - image_id
     format: csv
     path: results/patch_morphology_presence.csv
+    role: results
   patch_morphology_risk_score:
     title: Patch Morphology Risk Score
     key:
     - image_id
     format: csv
     path: results/patch_morphology_risk_score.csv
+    role: results
   staging_risk_score:
     title: Staging Risk Score
     key:
     - image_id
     format: csv
     path: results/staging_risk_score.csv
+    role: results
   clinical_risk_score:
     title: Clinical Risk Score
     key:
     - image_id
     format: csv
     path: results/clinical_risk_score.csv
+    role: results
   helios_risk_score:
     title: HELIOS Risk Score
     key:
     - image_id
     format: csv
     path: results/helios_risk_score.csv
+    role: results
   survival_curve:
     title: Survival Curve
     key:
@@ -224,18 +255,21 @@ artifacts:
     - time
     format: csv
     path: results/survival_curve/{image_id}.csv
+    role: results
   case_report:
     title: Case Report (JSON)
     key:
     - image_id
     format: json
     path: reports/{image_id}/report.json
+    role: results
   case_report_md:
     title: Case Report (Markdown)
     key:
     - image_id
     format: md
     path: reports/{image_id}/report.md
+    role: results
   case_assets:
     title: Rendered Report Assets
     key:
@@ -243,51 +277,60 @@ artifacts:
     - asset_id
     format: png
     path: reports/{image_id}/assets/{asset_id}.png
+    role: results
   cohort_summary:
     title: Cohort Summary Table
     key:
     - image_id
     format: csv
     path: reports/cohort_summary.csv
+    role: results
   model_mil:
     title: A-MIL Model Bundle
     key:
     - fold
     format: bundle
     path: models/mil/fold={fold}
+    role: models
   model_concepts:
     title: Concept Models Bundle
     key:
     - fold
     format: bundle
     path: models/concepts/fold={fold}
+    role: models
   model_cellular:
     title: Cellular Composition Risk Model
     key:
     - fold
     format: bundle
     path: models/cellular/fold={fold}
+    role: models
   model_morphology:
     title: Morphology Model Bundle
     key:
     - fold
     format: bundle
     path: models/morphology/fold={fold}
+    role: models
   model_fusion:
     title: HELIOS Risk Model
     key:
     - fold
     format: bundle
     path: models/fusion/fold={fold}
+    role: models
   model_staging:
     title: Staging Risk Model
     key:
     - fold
     format: bundle
     path: models/staging/fold={fold}
+    role: models
   model_clinical:
     title: Clinical Risk Model
     key:
     - fold
     format: bundle
     path: models/clinical/fold={fold}
+    role: models

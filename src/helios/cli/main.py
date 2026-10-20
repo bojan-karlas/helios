@@ -14,7 +14,15 @@ from pathlib import Path
 
 import typer
 
-from helios.cli._common import console_progress, datasets_arg
+from helios.cli._common import (
+    FEATURES_ROOT,
+    MODELS_ROOT,
+    PREPROCESSING_ROOT,
+    REMOVED_OUTPUT_ROOT,
+    RESULTS_ROOT,
+    console_progress,
+    datasets_arg,
+)
 from helios.cli.fit import fit_app
 from helios.cli.predict import predict_app
 from helios.cli.prep import prep_app
@@ -30,9 +38,11 @@ def report(
     dataset: list[str] = typer.Option(
         ..., "--dataset", help="Cohort root(s) or cohort file(s) to report; repeatable or comma-separated."
     ),
-    output_root: Path | None = typer.Option(
-        None, "--output-root", help="Write reports here (source stays read-only); single --dataset only."
-    ),
+    preprocessing_root: Path | None = PREPROCESSING_ROOT,
+    features_root: Path | None = FEATURES_ROOT,
+    models_root: Path | None = MODELS_ROOT,
+    results_root: Path | None = RESULTS_ROOT,
+    output_root: Path | None = REMOVED_OUTPUT_ROOT,
     no_assets: bool = typer.Option(False, "--no-assets", help="Skip rendering PNG assets."),
     no_summarize: bool = typer.Option(False, "--no-summarize", help="Skip the cohort summary join."),
     config: Path | None = typer.Option(None, "--config", "-c", help="Override config YAML."),
@@ -40,10 +50,15 @@ def report(
 ) -> None:
     """Build the per-case reports and cohort summary (web-app data package)."""
     from helios.config.stage_config import load_stage_params
-    from helios.data.cohort import resolve_datasets
+    from helios.data.resolver import StorageRoots
+    from helios.stages._runtime import resolve_datasets
     from helios.stages.report import build_report
 
-    datasets = resolve_datasets(datasets_arg(dataset))
+    roots = StorageRoots(
+        preprocessing_root=preprocessing_root, features_root=features_root,
+        models_root=models_root, results_root=results_root,
+    )
+    datasets = resolve_datasets(datasets_arg(dataset), roots=roots)
     overrides = {
         "assets": False if no_assets else None,
         "summarize": False if no_summarize else None,
@@ -51,9 +66,9 @@ def report(
     params = load_stage_params("report", "build", config_path=config, overrides=overrides)
     build_report(
         datasets=datasets,
-        output_root=output_root,
+        roots=roots,
         force=force,
-        progress=console_progress(output_root or datasets[0].root),
+        progress=console_progress(results_root or models_root or datasets[0].root),
         **params,
     )
     typer.echo("report: done")

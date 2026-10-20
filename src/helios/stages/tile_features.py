@@ -6,8 +6,6 @@ writes the ``tile_features`` artifact. Runs over one or more datasets.
 """
 from __future__ import annotations
 
-from pathlib import Path
-
 import numpy as np
 from numpy.typing import NDArray
 
@@ -15,10 +13,10 @@ from helios.components.features import IMPLEMENTED_FEATURE_MODELS, extract_featu
 from helios.progress import DEFAULT_PROGRESS, Progress
 from helios.stages._runtime import (
     DatasetArgs,
+    StorageRoots,
     cohort_store,
     resolve_datasets,
     select_image_ids,
-    single_output_guard,
 )
 
 # -- configurable defaults (source of truth for configs/default.yaml) ----------
@@ -31,7 +29,7 @@ DEFAULT_DEVICE: str = "cuda"
 def prep_tile_features(
     *,
     datasets: DatasetArgs,
-    output_root: str | Path | None = None,
+    roots: StorageRoots | None = None,
     size_mm: list[float] = DEFAULT_SIZE_MM,
     model: list[str] = DEFAULT_MODELS,
     batch_size: int = DEFAULT_BATCH_SIZE,
@@ -52,11 +50,10 @@ def prep_tile_features(
     datasets:
         One or more cohort roots, each holding ``metadata/image_metadata.csv``
         and staged ``tiles``. Each dataset's outputs are written under its own
-        root unless ``output_root`` redirects them.
-    output_root:
-        Optional separate base for derived artifacts; the source cohort stays
-        read-only and ``tile_features`` are written here instead of in place.
-        Only valid with a single dataset (the redirect target is unambiguous).
+        roots unless overridden.
+    roots:
+        Role-specific storage overrides. Tile inputs use the preprocessing
+        root and embedding outputs use the features root.
     size_mm:
         Tile resolutions (microns-per-pixel target) to process.
     model:
@@ -75,11 +72,10 @@ def prep_tile_features(
         Progress sink (default: no-op).
     """
     _validate_models(model)
-    resolved = resolve_datasets(datasets)
-    single_output_guard(resolved, output_root)
+    resolved = resolve_datasets(datasets, roots=roots)
 
     for ds in resolved:
-        store = cohort_store(ds.root, output_root)
+        store = cohort_store(ds, roots)
         ids = select_image_ids(ds, store, image_ids)
         units = [(s, m, i) for s in size_mm for m in model for i in ids]
 

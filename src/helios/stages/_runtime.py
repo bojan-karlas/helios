@@ -5,31 +5,29 @@ partition / fold loops. These helpers capture the few patterns every stage
 repeats so the orchestration shape stays identical across ``prep``/``fit``/
 ``predict``/``report``:
 
-* :func:`cohort_store` --- build an :class:`ArtifactStore` for one cohort, honouring
-  an optional ``output_root`` redirect (source stays read-only).
-* :func:`single_output_guard` --- reject ``output_root`` with >1 dataset, where the
-  redirect target would be ambiguous (the ``prep``/``predict`` per-cohort shape).
+* :func:`cohort_store` -- route each constituent's artifacts by storage role.
+* :func:`resolve_datasets` -- validate constituent and run root settings.
 * :func:`folds_of` / :func:`folds_across` --- discover the K cross-validation folds
   from the optional ``cv_splits`` artifact (``[None]`` == trained without CV).
 * :func:`train_ids` --- the image ids in a fold's *train* split (the rows a
   per-fold ``fit`` component learns from).
 
 The fold model: ``cv_splits`` is an OPTIONAL tidy CSV (``image_id, fold, split``).
-Absent ⇒ a single fold-free model (fold ``None``); present ⇒ one model per fold.
+Absent means a single fold-free model; otherwise there is one model per fold.
 The ``fold`` key is dropped from paths when ``None`` (see
 :data:`helios.data.resolver.OPTIONAL_KEYS`), so the same artifact id addresses
 both the per-fold and the reduced instances.
 """
 from __future__ import annotations
 
-from collections.abc import Sequence
 from pathlib import Path
 
 import pandas as pd
 
-from helios.data.cohort import DatasetArgs, ResolvedDataset, resolve_datasets
+from helios.data.cohort import DatasetArgs, ResolvedDataset
+from helios.data.cohort import resolve_datasets as resolve_dataset_args
 from helios.data.io import ArtifactStore
-from helios.data.resolver import Resolver, Roots
+from helios.data.resolver import Resolver, Roots, StorageRoots
 
 __all__ = [
     "DatasetArgs",
@@ -41,7 +39,7 @@ __all__ = [
     "filtered_ids",
     "select_image_ids",
     "cohort_store",
-    "single_output_guard",
+    "StorageRoots",
     "read_cv_splits",
     "folds_of",
     "folds_across",
@@ -111,23 +109,41 @@ def drop_provenance(frame: pd.DataFrame) -> pd.DataFrame:
     return frame.drop(columns=[DATASET_COLUMN], errors="ignore")
 
 
-def cohort_store(dataset: str | Path, output_root: str | Path | None = None) -> ArtifactStore:
-    """An :class:`ArtifactStore` reading ``dataset`` and writing derived outputs.
+def resolve_datasets(
+    datasets: DatasetArgs,
+    *,
+    where: str | None = None,
+    roots: StorageRoots | None = None,
+    require_models: bool = False,
+) -> list[ResolvedDataset]:
+    """Resolve constituents and reject ambiguous run destinations before I/O."""
+    resolved = resolve_dataset_args(datasets, where=where)
+    overrides = roots or StorageRoots()
+    if len(resolved) > 1:
+        if overrides.preprocessing_root is not None or overrides.features_root is not None:
+            raise ValueError(
+                "For multiple datasets, set preprocessing_root and features_root per dataset in the cohort YAML."
+            )
+        if require_models and overrides.models_root is None:
+            raise ValueError("Pooled training requires an explicit models_root (--models-root).")
+    if overrides.results_root is not None:
+        names = [ds.name for ds in resolved]
+        if any(name in {"", ".", ".."} for name in names) or len(names) != len(set(names)):
+            raise ValueError("A shared results_root requires distinct, nonempty dataset directory names.")
+    return resolved
 
-    With ``output_root`` set, the source cohort stays read-only and every derived
-    artifact (work/features/output/models) lands under ``output_root`` instead.
-    """
-    return ArtifactStore(Resolver(Roots.for_run(dataset, output_root)))
 
-
-def single_output_guard(datasets: Sequence[object], output_root: str | Path | None) -> None:
-    """Reject an ``output_root`` redirect when more than one dataset is given.
-
-    For per-cohort stages (``prep``, ``predict``) a single ``output_root`` cannot
-    unambiguously hold several cohorts' outputs.
-    """
-    if output_root is not None and len(datasets) > 1:
-        raise ValueError("--output-root is only valid with a single --dataset (ambiguous target).")
+def cohort_store(dataset: str | Path | ResolvedDataset, roots: StorageRoots | None = None) -> ArtifactStore:
+    """Use constituent-local data roots and shared run model/results overrides."""
+    ds = dataset if isinstance(dataset, ResolvedDataset) else ResolvedDataset(Path(dataset))
+    overrides = roots or StorageRoots()
+    return ArtifactStore(Resolver(Roots(
+        source_root=ds.root,
+        preprocessing_root=overrides.preprocessing_root or ds.preprocessing_root,
+        features_root=overrides.features_root or ds.features_root,
+        models_root=overrides.models_root,
+        results_root=overrides.results_root / ds.name if overrides.results_root is not None else None,
+    )))
 
 
 def read_cv_splits(store: ArtifactStore) -> pd.DataFrame | None:

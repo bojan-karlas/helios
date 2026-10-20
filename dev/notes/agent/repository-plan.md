@@ -62,15 +62,30 @@ Build a repo that: (1) trains all HELIOS pipeline models from datasets placed in
 
 ## Path resolution & split roots (CONFIRMED)
 - Hybrid: each stage checks artifact; present -> consume; missing -> produce. (Make file-target/DAG.)
-- Stages live under INDEPENDENT, configurable roots (NOT one monolithic dataset dir):
-  - source root (READ-ONLY): wsi/**/*.svs, metadata/image_metadata.csv
-  - work/intermediate root (RW): tiles/, preprocessing/, tile_metadata/, thumbnails/
-  - features root (RW, optional): large feature stores (WASHU symlinks tile_features to pipelinecache)
-- Per-stage resolver: stage -> (root, partition-template). Templates use partition keys only
-  (image_id, size_mm, model, target); NO cohort names / absolute paths in repo.
-- Defaults to single root if only one given (WASHU-as-one-tree still works).
-- Pipeline NEVER writes into source root (safe for ro mounts; matches Docker mount contract:
-  input ro, output rw with status.json/events.jsonl).
+- Every artifact explicitly declares one of five storage roles in pipeline-spec.yaml:
+  - source: fixed wsi/ and metadata/image_metadata.csv.
+  - preprocessing: tiles, augmented tiles, tile metadata, cv_splits, masks, thumbnails and cell detections.
+  - features: original and augmented foundation embeddings.
+  - models: fitted bundles.
+  - results: MIL-aligned embeddings/attention, analysis tables (including cellular_features), predictions and reports.
+- Role settings use source_root, preprocessing_root, features_root, models_root and results_root.
+  Roles group storage, not execution order; results can feed downstream model training.
+- Resolver: artifact -> declared role root + existing relative path template.
+  No dataset-specific paths are embedded in the registry.
+- Omitted derived roots default to the physical dataset directory. Source artifacts are never modified,
+  but generated artifacts may share that directory. To mount it read-only, override all derived roles.
+- Cohort manifests accept path strings or mappings with source_root and optional preprocessing_root/features_root.
+  Relative paths resolve against the manifest. Existing datasets/roots path lists and cohort filters are supported.
+- Cohort unions preserve per-constituent preprocessing/feature roots for both reads and writes.
+  They create no union-level preprocessing/feature copy. Single-dataset CLI overrides win over manifest values;
+  multi-dataset calls must specify preprocessing/features per constituent, not through a shared CLI override.
+- Pooled fitting requires an explicit models_root, shared by all constituents and reused for prediction.
+- An explicit results_root places each constituent under its directory name, even in single-dataset calls:
+  <results_root>/<dataset-name>/<artifact-relative-path>. Names must be distinct within a shared run.
+  Without an override, results stay in each dataset directory. This mapping is stable across union/single calls.
+- --output-root is retired with an actionable error; it is not silently reinterpreted. No automatic data moves.
+- Python stages accept a shared StorageRoots override object; resolved constituents retain dataset storage.
+- Run status/events/logs use results_root, otherwise models_root, otherwise the first dataset directory.
 - Resolver is the dataset-agnostic seam; hybrid skip logic lives here (exists(resolve(...))).
 
 ## Per-training-stage dataset binding + precondition resolution (CONFIRMED)
@@ -79,7 +94,7 @@ Build a repo that: (1) trains all HELIOS pipeline models from datasets placed in
     dataset" is NOT global -- it is PER FIT STAGE.
 - CONFIG: each fit stage (cell*, mil, concepts, cellular, morphology, fusion, ...) declares its OWN
     `dataset` binding in the config files (configs/train/<stage>.yaml). A binding = the set of roots
-    (source/work/features) for that stage. Stages default to the GLOBAL/primary dataset when unset, so the
+    (source/preprocessing/features/results) for that stage. Stages default to the GLOBAL/primary dataset when unset, so the
     common single-cohort case needs zero extra config.
 - DAG IMPLICATION: a stage's input artifacts resolve UNDER ITS OWN dataset binding, not a single global root.
     Cross-dataset deps are allowed and explicit, e.g. concept_models_training reads aligned_slide_embedding
@@ -172,8 +187,8 @@ cell-maps at any zoom. Pre-rendered PNGs optional. Schemas LIGHT + versioned
 (schema_version), meant to evolve. NO heavy validators now (permissive parsing;
 dataclasses/TypedDict; pydantic only sparingly for config). Self-describing formats.
 
-Job dir:
-  <output_root>/<job_id>/
+Deployment packaging sketch (separate from current artifact-relative paths):
+  <results_root>/<job_id>/
     status.json (job snapshot; poll target), events.jsonl (append-only),
     job.json (manifest+digests), logs/run.log, cases/<image_id>/...
 
@@ -352,7 +367,8 @@ helios/
     ./scripts/sync.sh pull models --latest --dry-run
 - Backend rclone (Dropbox first-class); versioning via IMMUTABLE versioned paths (models/<version>/).
 - Script reads .env, ZERO paths in Python; package stays pure (no rclone dep). Ops layer only.
-- .env can ALSO hold other runtime roots (source/work/output) the CLI reads via env vars
+- Dataset storage is configured through cohort manifests and explicit root flags.
+  Do not assume .env root variables are read by the CLI.
   -> single uncommitted config point, consistent pattern.
 - SUPERSEDES earlier src/helios/sync/ module idea (package stays pure, no rclone dep).
 

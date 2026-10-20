@@ -8,7 +8,7 @@ from helios.data.catalog import (
 )
 from helios.data.dataset import Dataset
 from helios.data.io import ArtifactStore, read, write
-from helios.data.resolver import Resolver, Roots, render_path
+from helios.data.resolver import Resolver, Roots, StorageRoots, render_path
 
 __all__ = [
     "ArtifactSpec",
@@ -22,5 +22,6 @@ __all__ = [
     "load_bundle",
     "Resolver",
     "Roots",
+    "StorageRoots",
     "render_path",
 ]

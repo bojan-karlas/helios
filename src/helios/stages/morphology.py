@@ -17,13 +17,13 @@ from helios.data.io import ArtifactStore
 from helios.progress import DEFAULT_PROGRESS, Progress
 from helios.stages._runtime import (
     DatasetArgs,
+    StorageRoots,
     cohort_store,
     folds_across,
     model_folds,
     read_cv_splits,
     resolve_datasets,
     select_image_ids,
-    single_output_guard,
     tag_dataset,
     train_ids,
 )
@@ -43,7 +43,7 @@ DEFAULT_SEED: int = 42
 def fit_morphology(
     *,
     datasets: DatasetArgs,
-    output_root: str | Path | None = None,
+    roots: StorageRoots | None = None,
     target: str = DEFAULT_TARGET,
     attention_cutoff: float = DEFAULT_ATTENTION_CUTOFF,
     n_pca: int = DEFAULT_N_PCA,
@@ -65,8 +65,8 @@ def fit_morphology(
     Writes ``model_morphology`` keyed by fold. Each cohort's ``where`` filter
     optionally restricts training to a metadata subpopulation.
     """
-    resolved = resolve_datasets(datasets)
-    stores = [cohort_store(ds.root, output_root) for ds in resolved]
+    resolved = resolve_datasets(datasets, roots=roots, require_models=True)
+    stores = [cohort_store(ds, roots) for ds in resolved]
     out = stores[0]
     folds = folds_across(stores)
 
@@ -105,7 +105,7 @@ def fit_morphology(
 def predict_morphology(
     *,
     datasets: DatasetArgs,
-    output_root: str | Path | None = None,
+    roots: StorageRoots | None = None,
     image_ids: list[str] | None = None,
     force: bool = False,
     progress: Progress = DEFAULT_PROGRESS,
@@ -116,11 +116,10 @@ def predict_morphology(
     all fold models and reduces OOF/ensemble. Writes ``tile_clusters`` (per
     image), ``patch_morphology_presence`` and ``patch_morphology_risk_score``.
     """
-    resolved = resolve_datasets(datasets)
-    single_output_guard(resolved, output_root)
+    resolved = resolve_datasets(datasets, roots=roots)
 
     for ds in resolved:
-        store = cohort_store(ds.root, output_root)
+        store = cohort_store(ds, roots)
         ids = select_image_ids(ds, store, image_ids)
         folds = model_folds(store, "model_morphology")
         if not folds:

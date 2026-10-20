@@ -298,19 +298,50 @@ artifact spec drives the graph.
 
 ## Working with HELIOS
 
-### Workspace & output layout
+### Storage roots
 
-By default, derived artifacts (tiles, features, models, predictions, reports) are
-written back under the cohort root, so a cohort directory becomes the
-self-contained record of everything computed from it. To keep source data
-read-only, redirect derived outputs elsewhere with `--output-root`:
+Artifacts are grouped by storage role, independently of execution order:
+
+| Role | Contents | Location |
+| --- | --- | --- |
+| `source` | Fixed WSI files and image metadata | Dataset directory |
+| `preprocessing` | Tiles, augmented tiles, tile metadata, CV splits, masks, thumbnails, cell detections | Per dataset |
+| `features` | Original and augmented foundation-model tile embeddings | Per dataset |
+| `models` | Fitted model bundles | Shared by a training run |
+| `results` | Model-dependent embeddings, attention, predictions, cellular features, reports | Per dataset within a run |
+
+All roles default to the dataset directory. For a single dataset, override
+derived locations with `--preprocessing-root`, `--features-root`,
+`--models-root`, and `--results-root`. Reads and writes use the same root for
+each role. Artifact-relative paths are unchanged: a model base `/runs/exp1`
+holds `models/mil/...`; a feature base holds `preprocessing/tile_features/...`.
+
+For example, reuse preprocessing and features in the dataset while keeping
+trained models and results elsewhere:
 
 ```bash
-helios prep --dataset /data/my_cohort --output-root /scratch/runs/my_cohort
+helios prep tile-features --dataset /data/VISIOMEL
+helios fit mil --dataset /data/VISIOMEL --models-root /runs/exp1
+helios predict mil --dataset /data/VISIOMEL \
+  --models-root /runs/exp1 --results-root /runs/exp1
 ```
 
-The source cohort is never written to; everything derived lands under the run
-root instead. (`--output-root` targets a single `--dataset` at a time.)
+An explicit results base always adds the dataset directory name, even for a
+single-dataset invocation: `/runs/exp1/VISIOMEL/results/...`,
+`/runs/exp1/VISIOMEL/mil/...`, and `/runs/exp1/VISIOMEL/reports/...`. This lets
+downstream stages find the same artifacts whether a constituent is processed
+alone or in a union. Without `--results-root`, results stay directly under each
+dataset. Source WSI and image metadata are never modified; to mount the entire
+source directory read-only, place all derived roles elsewhere.
+
+Run logs (`run.log`, `status.json`, `events.jsonl`) use the explicit results
+base, otherwise the explicit model base, otherwise the first dataset directory.
+
+`--output-root` has been removed and reports a migration error. To reproduce
+its old redirected storage, set each needed role root explicitly. For existing
+result files, account for the new dataset subdirectory under `--results-root`;
+no files are moved automatically. Python stages accept `roots=StorageRoots(...)`
+instead of `output_root=...`.
 
 ### Named, versioned cohorts
 
@@ -328,8 +359,32 @@ filter: "path_stage in ['I', 'II']"     # optional pandas-query over image_metad
 ```
 
 ```bash
-helios fit mil --dataset cohorts/train.yaml
+helios fit mil --dataset cohorts/train.yaml --models-root /runs/train
 ```
+
+Entries can also specify each constituent's storage:
+
+```yaml
+name: visiomel-mgb
+datasets:
+  - source_root: /data/VISIOMEL
+    preprocessing_root: /data/VISIOMEL
+    features_root: /feature-store/VISIOMEL
+  - source_root: /data/MGB
+```
+
+Omitted preprocessing and feature roots default to that entry's source root.
+All relative paths resolve against the YAML file. A cohort creates no extra
+preprocessing or feature store: extraction writes into each constituent's
+roots, and training reads from them. Single-dataset CLI overrides take
+precedence over manifest values; for unions, set those roots per entry rather
+than using `--preprocessing-root` or `--features-root`.
+
+Pooled training requires an explicit `--models-root`. Use that same model base
+for prediction, including on a different dataset. With a shared `--results-root`,
+each dataset's predictions and reports use its own directory-name subfolder;
+constituent directory names must be distinct. The existing path-list syntax
+and `roots` alias for `datasets` remain supported.
 
 This makes training and evaluation populations reproducible and reviewable. You
 can also:
@@ -373,15 +428,17 @@ score to retain information not captured by the available pathology labels.
 ```bash
 helios fit concept \
   --dataset /data/my_cohort \
-  --output-root /scratch/runs/my_cohort \
+  --models-root /scratch/runs/experiment \
+  --results-root /scratch/runs/experiment \
   --n-bootstrap 100
 
 helios predict concept \
   --dataset /data/my_cohort \
-  --output-root /scratch/runs/my_cohort
+  --models-root /scratch/runs/experiment \
+  --results-root /scratch/runs/experiment
 ```
 
-Use the same `--output-root` used for `helios predict mil`. The prediction stage
+Use the same `--results-root` used for `helios predict mil`. The prediction stage
 reduces fold outputs out-of-fold when `cv_splits` exists and averages the fold
 models for deployment cohorts without splits. Programmatic callers may pass a
 pathologist correction table to `infer_concepts`; non-null values keyed by

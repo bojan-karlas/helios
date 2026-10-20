@@ -11,23 +11,33 @@ from pathlib import Path
 
 import typer
 
-from helios.cli._common import console_progress, csv, datasets_arg
+from helios.cli._common import (
+    FEATURES_ROOT,
+    MODELS_ROOT,
+    PREPROCESSING_ROOT,
+    REMOVED_OUTPUT_ROOT,
+    RESULTS_ROOT,
+    console_progress,
+    csv,
+    datasets_arg,
+)
 
 fit_app = typer.Typer(add_completion=False, help="Train models (per-fold bundles).")
 
 _DATASET = typer.Option(..., "--dataset", help="Training cohort root(s) or cohort file(s); pooled across folds.")
-_OUTPUT_ROOT = typer.Option(None, "--output-root", help="Write model bundles here instead of the first cohort.")
 _CONFIG = typer.Option(None, "--config", "-c", help="Override config YAML.")
 _FORCE = typer.Option(False, "--force", help="Re-fit even if a model bundle exists.")
-_FILTER = typer.Option(
-    None, "--filter", help="pandas-query over image_metadata to subset training rows."
-)
+_FILTER = typer.Option(None, "--filter", help="pandas-query over image_metadata to subset training rows.")
 
 
 @fit_app.command("mil")
 def mil(
     dataset: list[str] = _DATASET,
-    output_root: Path | None = _OUTPUT_ROOT,
+    preprocessing_root: Path | None = PREPROCESSING_ROOT,
+    features_root: Path | None = FEATURES_ROOT,
+    models_root: Path | None = MODELS_ROOT,
+    results_root: Path | None = RESULTS_ROOT,
+    output_root: Path | None = REMOVED_OUTPUT_ROOT,
     size_mm: float | None = typer.Option(None, "--size-mm", help="Tile resolution to train on."),
     model: str | None = typer.Option(None, "--model", help="Foundation model providing tile features."),
     target: str | None = typer.Option(None, "--target", help="Outcome column to train against."),
@@ -61,10 +71,15 @@ def mil(
 ) -> None:
     """Train the whole-slide A-MIL model."""
     from helios.config.stage_config import load_stage_params
-    from helios.data.cohort import resolve_datasets
+    from helios.data.resolver import StorageRoots
+    from helios.stages._runtime import resolve_datasets
     from helios.stages.mil import fit_mil
 
-    datasets = resolve_datasets(datasets_arg(dataset), where=filter)
+    roots = StorageRoots(
+        preprocessing_root=preprocessing_root, features_root=features_root,
+        models_root=models_root, results_root=results_root,
+    )
+    datasets = resolve_datasets(datasets_arg(dataset), where=filter, roots=roots, require_models=True)
     overrides = {
         "size_mm": size_mm,
         "model": model,
@@ -86,8 +101,8 @@ def mil(
     }
     params = load_stage_params("fit", "mil", config_path=config, overrides=overrides)
     fit_mil(
-        datasets=datasets, output_root=output_root, force=force,
-        progress=console_progress(output_root or datasets[0].root), **params,
+        datasets=datasets, roots=roots, force=force,
+        progress=console_progress(results_root or models_root or datasets[0].root), **params,
     )
     typer.echo("fit mil: done")
 
@@ -95,7 +110,11 @@ def mil(
 @fit_app.command("concept")
 def concept(
     dataset: list[str] = _DATASET,
-    output_root: Path | None = _OUTPUT_ROOT,
+    preprocessing_root: Path | None = PREPROCESSING_ROOT,
+    features_root: Path | None = FEATURES_ROOT,
+    models_root: Path | None = MODELS_ROOT,
+    results_root: Path | None = RESULTS_ROOT,
+    output_root: Path | None = REMOVED_OUTPUT_ROOT,
     n_bootstrap: int | None = typer.Option(None, "--n-bootstrap", help="Bootstrap replicas per concept."),
     filter: str | None = _FILTER,
     config: Path | None = _CONFIG,
@@ -103,14 +122,19 @@ def concept(
 ) -> None:
     """Train per-concept probes (+ concept risk + residual correction)."""
     from helios.config.stage_config import load_stage_params
-    from helios.data.cohort import resolve_datasets
+    from helios.data.resolver import StorageRoots
+    from helios.stages._runtime import resolve_datasets
     from helios.stages.concept import fit_concept
 
-    datasets = resolve_datasets(datasets_arg(dataset), where=filter)
+    roots = StorageRoots(
+        preprocessing_root=preprocessing_root, features_root=features_root,
+        models_root=models_root, results_root=results_root,
+    )
+    datasets = resolve_datasets(datasets_arg(dataset), where=filter, roots=roots, require_models=True)
     params = load_stage_params("fit", "concept", config_path=config, overrides={"n_bootstrap": n_bootstrap})
     fit_concept(
-        datasets=datasets, output_root=output_root, force=force,
-        progress=console_progress(output_root or datasets[0].root), **params,
+        datasets=datasets, roots=roots, force=force,
+        progress=console_progress(results_root or models_root or datasets[0].root), **params,
     )
     typer.echo("fit concept: done")
 
@@ -118,7 +142,11 @@ def concept(
 @fit_app.command("morphology")
 def morphology(
     dataset: list[str] = _DATASET,
-    output_root: Path | None = _OUTPUT_ROOT,
+    preprocessing_root: Path | None = PREPROCESSING_ROOT,
+    features_root: Path | None = FEATURES_ROOT,
+    models_root: Path | None = MODELS_ROOT,
+    results_root: Path | None = RESULTS_ROOT,
+    output_root: Path | None = REMOVED_OUTPUT_ROOT,
     target: str | None = typer.Option(None, "--target", help="Outcome column to train against."),
     attention_cutoff: float | None = typer.Option(
         None, "--attention-cutoff", help="Cumulative attention-mass cutoff for the tile filter."
@@ -138,10 +166,15 @@ def morphology(
 ) -> None:
     """Train the patch-morphology clustering risk model."""
     from helios.config.stage_config import load_stage_params
-    from helios.data.cohort import resolve_datasets
+    from helios.data.resolver import StorageRoots
+    from helios.stages._runtime import resolve_datasets
     from helios.stages.morphology import fit_morphology
 
-    datasets = resolve_datasets(datasets_arg(dataset), where=filter)
+    roots = StorageRoots(
+        preprocessing_root=preprocessing_root, features_root=features_root,
+        models_root=models_root, results_root=results_root,
+    )
+    datasets = resolve_datasets(datasets_arg(dataset), where=filter, roots=roots, require_models=True)
     overrides = {
         "target": target,
         "attention_cutoff": attention_cutoff,
@@ -155,8 +188,8 @@ def morphology(
     }
     params = load_stage_params("fit", "morphology", config_path=config, overrides=overrides)
     fit_morphology(
-        datasets=datasets, output_root=output_root, force=force,
-        progress=console_progress(output_root or datasets[0].root), **params,
+        datasets=datasets, roots=roots, force=force,
+        progress=console_progress(results_root or models_root or datasets[0].root), **params,
     )
     typer.echo("fit morphology: done")
 
@@ -164,7 +197,11 @@ def morphology(
 @fit_app.command("risk")
 def risk(
     dataset: list[str] = _DATASET,
-    output_root: Path | None = _OUTPUT_ROOT,
+    preprocessing_root: Path | None = PREPROCESSING_ROOT,
+    features_root: Path | None = FEATURES_ROOT,
+    models_root: Path | None = MODELS_ROOT,
+    results_root: Path | None = RESULTS_ROOT,
+    output_root: Path | None = REMOVED_OUTPUT_ROOT,
     risk: str | None = typer.Option(
         None, "--risk", help="Comma list of risk kinds (cellular,staging,clinical,helios)."
     ),
@@ -176,14 +213,19 @@ def risk(
 ) -> None:
     """Train the simple risk sub-models (and HELIOS fusion)."""
     from helios.config.stage_config import load_stage_params
-    from helios.data.cohort import resolve_datasets
+    from helios.data.resolver import StorageRoots
+    from helios.stages._runtime import resolve_datasets
     from helios.stages.risk import fit_risk
 
-    datasets = resolve_datasets(datasets_arg(dataset), where=filter)
+    roots = StorageRoots(
+        preprocessing_root=preprocessing_root, features_root=features_root,
+        models_root=models_root, results_root=results_root,
+    )
+    datasets = resolve_datasets(datasets_arg(dataset), where=filter, roots=roots, require_models=True)
     overrides = {"risk": csv(risk), "target": target, "estimator": estimator}
     params = load_stage_params("fit", "risk", config_path=config, overrides=overrides)
     fit_risk(
-        datasets=datasets, output_root=output_root, force=force,
-        progress=console_progress(output_root or datasets[0].root), **params,
+        datasets=datasets, roots=roots, force=force,
+        progress=console_progress(results_root or models_root or datasets[0].root), **params,
     )
     typer.echo("fit risk: done")

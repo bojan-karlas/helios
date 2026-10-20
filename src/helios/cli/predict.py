@@ -12,15 +12,21 @@ from pathlib import Path
 
 import typer
 
-from helios.cli._common import console_progress, csv, datasets_arg
+from helios.cli._common import (
+    FEATURES_ROOT,
+    MODELS_ROOT,
+    PREPROCESSING_ROOT,
+    REMOVED_OUTPUT_ROOT,
+    RESULTS_ROOT,
+    console_progress,
+    csv,
+    datasets_arg,
+)
 
 predict_app = typer.Typer(add_completion=False, help="Run inference (per-cohort).")
 
 _DATASET = typer.Option(
     ..., "--dataset", help="Cohort root(s) or cohort file(s) to score; repeatable or comma-separated."
-)
-_OUTPUT_ROOT = typer.Option(
-    None, "--output-root", help="Write predictions here (source stays read-only); single --dataset only."
 )
 _CONFIG = typer.Option(None, "--config", "-c", help="Override config YAML.")
 _FORCE = typer.Option(False, "--force", help="Re-score even if outputs exist.")
@@ -32,7 +38,11 @@ _FILTER = typer.Option(
 @predict_app.command("mil")
 def mil(
     dataset: list[str] = _DATASET,
-    output_root: Path | None = _OUTPUT_ROOT,
+    preprocessing_root: Path | None = PREPROCESSING_ROOT,
+    features_root: Path | None = FEATURES_ROOT,
+    models_root: Path | None = MODELS_ROOT,
+    results_root: Path | None = RESULTS_ROOT,
+    output_root: Path | None = REMOVED_OUTPUT_ROOT,
     size_mm: float | None = typer.Option(None, "--size-mm", help="Tile resolution to score on."),
     model: str | None = typer.Option(None, "--model", help="Foundation model providing tile features."),
     device: str | None = typer.Option(None, "--device", help="Torch device (cuda, cpu)."),
@@ -42,15 +52,20 @@ def mil(
 ) -> None:
     """Score whole-slide A-MIL and reduce whole-image risk."""
     from helios.config.stage_config import load_stage_params
-    from helios.data.cohort import resolve_datasets
+    from helios.data.resolver import StorageRoots
+    from helios.stages._runtime import resolve_datasets
     from helios.stages.mil import predict_mil
 
-    datasets = resolve_datasets(datasets_arg(dataset), where=filter)
+    roots = StorageRoots(
+        preprocessing_root=preprocessing_root, features_root=features_root,
+        models_root=models_root, results_root=results_root,
+    )
+    datasets = resolve_datasets(datasets_arg(dataset), where=filter, roots=roots)
     overrides = {"size_mm": size_mm, "model": model, "device": device}
     params = load_stage_params("predict", "mil", config_path=config, overrides=overrides)
     predict_mil(
-        datasets=datasets, output_root=output_root, force=force,
-        progress=console_progress(output_root or datasets[0].root), **params,
+        datasets=datasets, roots=roots, force=force,
+        progress=console_progress(results_root or models_root or datasets[0].root), **params,
     )
     typer.echo("predict mil: done")
 
@@ -58,21 +73,30 @@ def mil(
 @predict_app.command("concept")
 def concept(
     dataset: list[str] = _DATASET,
-    output_root: Path | None = _OUTPUT_ROOT,
+    preprocessing_root: Path | None = PREPROCESSING_ROOT,
+    features_root: Path | None = FEATURES_ROOT,
+    models_root: Path | None = MODELS_ROOT,
+    results_root: Path | None = RESULTS_ROOT,
+    output_root: Path | None = REMOVED_OUTPUT_ROOT,
     filter: str | None = _FILTER,
     config: Path | None = _CONFIG,
     force: bool = _FORCE,
 ) -> None:
     """Predict concepts and the concept-based risk score."""
     from helios.config.stage_config import load_stage_params
-    from helios.data.cohort import resolve_datasets
+    from helios.data.resolver import StorageRoots
+    from helios.stages._runtime import resolve_datasets
     from helios.stages.concept import predict_concept
 
-    datasets = resolve_datasets(datasets_arg(dataset), where=filter)
+    roots = StorageRoots(
+        preprocessing_root=preprocessing_root, features_root=features_root,
+        models_root=models_root, results_root=results_root,
+    )
+    datasets = resolve_datasets(datasets_arg(dataset), where=filter, roots=roots)
     params = load_stage_params("predict", "concept", config_path=config)
     predict_concept(
-        datasets=datasets, output_root=output_root, force=force,
-        progress=console_progress(output_root or datasets[0].root), **params,
+        datasets=datasets, roots=roots, force=force,
+        progress=console_progress(results_root or models_root or datasets[0].root), **params,
     )
     typer.echo("predict concept: done")
 
@@ -80,21 +104,30 @@ def concept(
 @predict_app.command("morphology")
 def morphology(
     dataset: list[str] = _DATASET,
-    output_root: Path | None = _OUTPUT_ROOT,
+    preprocessing_root: Path | None = PREPROCESSING_ROOT,
+    features_root: Path | None = FEATURES_ROOT,
+    models_root: Path | None = MODELS_ROOT,
+    results_root: Path | None = RESULTS_ROOT,
+    output_root: Path | None = REMOVED_OUTPUT_ROOT,
     filter: str | None = _FILTER,
     config: Path | None = _CONFIG,
     force: bool = _FORCE,
 ) -> None:
     """Assign clusters, score cluster presence, and produce morphology risk."""
     from helios.config.stage_config import load_stage_params
-    from helios.data.cohort import resolve_datasets
+    from helios.data.resolver import StorageRoots
+    from helios.stages._runtime import resolve_datasets
     from helios.stages.morphology import predict_morphology
 
-    datasets = resolve_datasets(datasets_arg(dataset), where=filter)
+    roots = StorageRoots(
+        preprocessing_root=preprocessing_root, features_root=features_root,
+        models_root=models_root, results_root=results_root,
+    )
+    datasets = resolve_datasets(datasets_arg(dataset), where=filter, roots=roots)
     params = load_stage_params("predict", "morphology", config_path=config)
     predict_morphology(
-        datasets=datasets, output_root=output_root, force=force,
-        progress=console_progress(output_root or datasets[0].root), **params,
+        datasets=datasets, roots=roots, force=force,
+        progress=console_progress(results_root or models_root or datasets[0].root), **params,
     )
     typer.echo("predict morphology: done")
 
@@ -102,7 +135,11 @@ def morphology(
 @predict_app.command("risk")
 def risk(
     dataset: list[str] = _DATASET,
-    output_root: Path | None = _OUTPUT_ROOT,
+    preprocessing_root: Path | None = PREPROCESSING_ROOT,
+    features_root: Path | None = FEATURES_ROOT,
+    models_root: Path | None = MODELS_ROOT,
+    results_root: Path | None = RESULTS_ROOT,
+    output_root: Path | None = REMOVED_OUTPUT_ROOT,
     risk: str | None = typer.Option(
         None, "--risk", help="Comma list of risk kinds (cellular,staging,clinical,helios)."
     ),
@@ -112,13 +149,18 @@ def risk(
 ) -> None:
     """Score the simple risk sub-models (and HELIOS fusion + survival)."""
     from helios.config.stage_config import load_stage_params
-    from helios.data.cohort import resolve_datasets
+    from helios.data.resolver import StorageRoots
+    from helios.stages._runtime import resolve_datasets
     from helios.stages.risk import predict_risk
 
-    datasets = resolve_datasets(datasets_arg(dataset), where=filter)
+    roots = StorageRoots(
+        preprocessing_root=preprocessing_root, features_root=features_root,
+        models_root=models_root, results_root=results_root,
+    )
+    datasets = resolve_datasets(datasets_arg(dataset), where=filter, roots=roots)
     params = load_stage_params("predict", "risk", config_path=config, overrides={"risk": csv(risk)})
     predict_risk(
-        datasets=datasets, output_root=output_root, force=force,
-        progress=console_progress(output_root or datasets[0].root), **params,
+        datasets=datasets, roots=roots, force=force,
+        progress=console_progress(results_root or models_root or datasets[0].root), **params,
     )
     typer.echo("predict risk: done")
