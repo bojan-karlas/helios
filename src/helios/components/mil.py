@@ -11,7 +11,7 @@ inference take *resolved paths* and open them lazily (per the streaming seam,
 arrays. The owning stages live in :mod:`helios.stages.mil`.
 
 The multi-branch gated-attention architecture and training loop are ported from
-the project's ``train_visiomel_visiomel_augmented_04202026.py`` script; one
+the project's reference augmented A-MIL training script; one
 difference from that script is required by the HELIOS stage contract:
 ``train_mil`` only ever sees one fold's *train* slides (the CV test fold is
 scored later by :func:`infer_mil`), so early stopping is done against an
@@ -107,7 +107,7 @@ class MilSlideOutputs:
 
 
 # =================================================================
-# Architecture (ported from train_visiomel_visiomel_augmented_04202026.py)
+# Architecture (ported from the reference augmented A-MIL training script)
 # =================================================================
 class _MultiBranchGatedAMIL(nn.Module):
     def __init__(

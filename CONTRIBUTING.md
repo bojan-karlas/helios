@@ -202,16 +202,16 @@ comma-separated). The [`helios.data.cohort`](src/helios/data/cohort.py) layer
 resolves each value into a list of `ResolvedDataset` (one physical root + an
 optional pandas-`query` row filter). A `--dataset` value may be:
 
-- a **plain root** (`--dataset /data/MGB`) -- a single unfiltered cohort;
+- a **plain root** (`--dataset /data/COHORT1`) -- a single unfiltered cohort;
 - a **cohort-definition file** (`--dataset cohorts/train.yaml`) -- a named,
   version-controllable union of roots plus an optional filter:
 
   ```yaml
   # cohorts/train.yaml
-  name: helios_train
+  name: TRAIN_COHORT
   datasets:
-    - /data/MGB
-    - ../cohorts/MRV            # relative to this file
+    - /data/COHORT1
+    - ../cohorts/COHORT2        # relative to this file
   filter: "path_stage in ['I', 'II']"   # optional, over image_metadata
   ```
 

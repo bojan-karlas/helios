@@ -107,7 +107,7 @@ def segment_cells(
     explodes those into one row per cell.
     """
     # Directory name is derived from the slide filename so the output is
-    # findable per slide (e.g. ".../cellvit_BWH-SKCM-P00001-S01-B1-I1") instead
+    # findable per slide (e.g. ".../cellvit_SITE-SKCM-P00001-S01-B1-I1") instead
     # of a random temp suffix. Pass an explicit `outdir` to override.
     #
     # Because the name is now fixed rather than unique-per-call, a re-run of the

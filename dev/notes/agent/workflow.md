@@ -55,7 +55,7 @@ HELIOS is an end-to-end computational pathology system that takes an H&E-stained
    - Output: Predicted Mitotic Figures (per-cell binary labels)
    - Validated performance:
      - MIDOG++ test set: Accuracy = 0.991, F1 = 0.721
-     - MGB-MF (external validation): Accuracy = 0.996, F1 = 0.563
+     - External validation cohort: Accuracy = 0.996, F1 = 0.563
 
 **Output:** Tumor, Immune, and Mitotic Tumor Cell Coordinates (x/y coordinates with cell type labels across the WSI)
 
@@ -76,20 +76,20 @@ HELIOS is an end-to-end computational pathology system that takes an H&E-stained
    - Output: Tissue Patches
 
 3. **CycleGAN Stain Augmentation** *(applied during MIL training only)*
-   - Trained on the **HELIOS-2K** training dataset (in the paper; **in this repo the generator is pretrained
+   - Trained on the **TRAIN_COHORT** training dataset (in the paper; **in this repo the generator is pretrained
      externally and loaded for inference only**)
    - Applies stain augmentation to patches to reduce staining variability
-   - Output: Augmented Tissue Patches (stored as augmented HELIOS-2K)
+   - Output: Augmented Tissue Patches (stored as augmented TRAIN_COHORT)
 
 4. **Pathology Foundation Model**
    - Encodes each patch into a high-dimensional embedding vector
    - Best-performing model: **Virchow 2** (AUROC 0.828, AUPRC 0.526)
    - Other evaluated models (in descending AUROC order):
      - UNI (0.816), CONCH 1.5 (0.816), UNI 2 (0.808), Phikon 2 (0.813), Prov GigaPath (0.814), CONCH (0.811), Lunit DINO (0.812), CHIEF (0.805), CTransPath (0.801), MUSK (0.799), ResNet 50 (0.792)
-   - Evaluated via HELIOS-2K cross-validation
+   - Evaluated via TRAIN_COHORT cross-validation
    - Output: Patch Embeddings (one vector per patch)
 
-5. **A-MIL (Attention-based Multiple Instance Learning) Model** *(trainable deep learning, trained on HELIOS-2K)*
+5. **A-MIL (Attention-based Multiple Instance Learning) Model** *(trainable deep learning, trained on TRAIN_COHORT)*
    - A sequence of trainable modules:
      - **Alignment** (patch level): Projects patch embeddings into a recurrence-aligned space → **Aligned Patch Embeddings** *(output)*
      - **Attention**: Assigns an attention score to each patch → **Patch Attention Scores** *(output)*
@@ -135,7 +135,7 @@ HELIOS is an end-to-end computational pathology system that takes an H&E-stained
 
 **Output (Cell Ratio and Coverage Results):** 4 scalar features -- eTIL, Mitosis-to-Tumor Ratio, TIL Coverage, Mitotic Coverage
 
-4. **Risk Model** (trained on HELIOS-2K)
+4. **Risk Model** (trained on TRAIN_COHORT)
    - Simple ML classifier (e.g., Logistic Regression or Random Forest)
    - Input: the 4 cellular features
    - Output: **Cellular Risk Score** (scalar, e.g., 0.232)
@@ -148,7 +148,7 @@ This module implements a **Post-hoc Concept Bottleneck Model** approach. It has 
 
 ### Training Phase
 
-**Training data:** MGB H&E images paired with Tumor Synoptic Features (pathologist annotations), *without* recurrence labels
+**Training data:** COHORT1 H&E images paired with Tumor Synoptic Features (pathologist annotations), *without* recurrence labels
 
 **Pathological concepts:**
 
@@ -164,14 +164,14 @@ This module implements a **Post-hoc Concept Bottleneck Model** approach. It has 
 - Numerical features → **Uniform [0,1] Normalization** → normalized scalars
 
 **Concept model training:**
-- Source representations: **Aligned Slide Embeddings** from the A-MIL model (trained separately on HELIOS-2K)
+- Source representations: **Aligned Slide Embeddings** from the A-MIL model (trained separately on TRAIN_COHORT)
 - For each concept, a linear probe is trained on top of aligned slide embeddings:
   - Categorical concepts → **Logistic Regression** → binary Concept Model (produces Concept Activation Vector)
   - Numerical concepts → **Ridge Regression** → scalar Concept Model (produces Concept Activation Vector)
 - This yields one trained Concept Model per concept
 
 **Concept model validation:**
-- MGB: cross-validation; MRV + Mayo: external validation
+- COHORT1: cross-validation; COHORT2 + COHORT3: external validation
 - Categorical AUROC (e.g., Ulceration: 0.638/0.724/0.773/0.867 across cohorts)
 - Numerical 1-RMSE (e.g., Breslow Thickness: 0.79/0.811/0.812; Mitotic Rate: 0.738/0.716/0.709)
 
@@ -190,11 +190,11 @@ This module implements a **Post-hoc Concept Bottleneck Model** approach. It has 
    - Ulceration: 16.2%, Radial Growth: 81.8%, Breslow Thickness: 1.3 mm, ...
    - Optional: **Pathologist Corrections** can manually override any concept prediction
 
-3. **Interpretable Concept Based Risk Model** (simple linear model, trained on HELIOS-2K)
+3. **Interpretable Concept Based Risk Model** (simple linear model, trained on TRAIN_COHORT)
    - Input: Concept Presence Predictions
    - Output: **Concept Based Risk Score**
 
-4. **Residual Based Error Correction Model** (simple linear model, trained on HELIOS-2K)
+4. **Residual Based Error Correction Model** (simple linear model, trained on TRAIN_COHORT)
    - Input: Aligned Slide Embedding
    - Captures information not encoded by the concept set
    - Output: residual correction term
@@ -225,7 +225,7 @@ This module implements a **Post-hoc Concept Bottleneck Model** approach. It has 
    - Reduces dimensionality of filtered patch embeddings
    - Output: PCA-reduced patch embeddings
 
-3. **Leiden Clustering** *(trained/fit on HELIOS-2K)*
+3. **Leiden Clustering** *(trained/fit on TRAIN_COHORT)*
    - Unsupervised community detection clustering algorithm
    - Groups patches by morphological similarity in PCA space
    - Output: Cluster assignments across all patches (UMAP-visualizable)
@@ -241,7 +241,7 @@ This module implements a **Post-hoc Concept Bottleneck Model** approach. It has 
    - Example scores: Invasive melanocytes 56.7%, Superficial melanocytes 13.0%, Connective + lymphocytes 22.6%, ...
    - Output: **Cluster Presence Scores** (one vector of scores per slide)
 
-6. **Risk Model** (simple ML model, e.g., Logistic Regression or Random Forest; trained on HELIOS-2K)
+6. **Risk Model** (simple ML model, e.g., Logistic Regression or Random Forest; trained on TRAIN_COHORT)
    - Input: Cluster Presence Scores vector
    - Output: **Patch Morphology Risk Score** (e.g., 0.271)
 
@@ -289,12 +289,11 @@ This module implements a **Post-hoc Concept Bottleneck Model** approach. It has 
 
 | Dataset | Role |
 |---|---|
-| **HELIOS-2K** | Primary training and cross-validation dataset for all HELIOS models (MIL, clustering, risk models) |
-| **HELIOS-2K (augmented)** | CycleGAN stain-augmented version of HELIOS-2K, used during MIL training |
-| **MGB** | MGB H&E images + tumor synoptic features; used for concept model training (cross-validation) |
-| **MRV** | External validation cohort for concept models and risk models |
-| **Mayo** | External validation cohort for concept models |
-| **MGB-MF** | External validation for OMG-Net mitotic figure classifier |
+| **TRAIN_COHORT** | Primary training and cross-validation dataset for all HELIOS models (MIL, clustering, risk models) |
+| **TRAIN_COHORT (augmented)** | CycleGAN stain-augmented version of TRAIN_COHORT, used during MIL training |
+| **COHORT1** | H&E images + tumor synoptic features; used for concept model training (cross-validation) |
+| **COHORT2** | External validation cohort for concept models and risk models |
+| **COHORT3** | External validation cohort for concept models |
 | **MIDOG++** | Public mitotic figure dataset; used to train and test OMG-Net |
 
 ---
@@ -305,15 +304,15 @@ This module implements a **Post-hoc Concept Bottleneck Model** approach. It has 
 |---|---|---|---|
 | CellViT++ | Deep learning segmentation | (pretrained) | Cell types & coordinates |
 | OMG-Net | CNN binary classifier | MIDOG++ | Mitotic figure predictions |
-| CycleGAN | Generative model | HELIOS-2K | Stain-augmented patches |
+| CycleGAN | Generative model | TRAIN_COHORT | Stain-augmented patches |
 | Pathology Foundation Model (Virchow 2) | Transformer (pretrained) | (pretrained) | Patch embeddings |
-| A-MIL (Alignment + Attention + Pooling + Classifier) | Trainable deep learning | HELIOS-2K | Aligned embeddings, attention scores, risk score |
-| Concept Models (per concept) | Logistic Regression / Ridge Regression | MGB (no recurrence labels) | Concept presence predictions |
-| Interpretable Concept Based Risk Model | Simple linear model | HELIOS-2K | Concept-based risk score |
-| Residual Error Correction Model | Simple linear model | HELIOS-2K | Residual correction |
-| Cellular Risk Model | Logistic Regression / Random Forest | HELIOS-2K | Cellular risk score |
-| Patch Morphology Risk Model | Logistic Regression / Random Forest | HELIOS-2K | Patch morphology risk score |
-| Weighted Risk Score Fusion Model | Logistic Regression / simple weighted model | HELIOS-2K | Final HELIOS risk score |
+| A-MIL (Alignment + Attention + Pooling + Classifier) | Trainable deep learning | TRAIN_COHORT | Aligned embeddings, attention scores, risk score |
+| Concept Models (per concept) | Logistic Regression / Ridge Regression | COHORT1 (no recurrence labels) | Concept presence predictions |
+| Interpretable Concept Based Risk Model | Simple linear model | TRAIN_COHORT | Concept-based risk score |
+| Residual Error Correction Model | Simple linear model | TRAIN_COHORT | Residual correction |
+| Cellular Risk Model | Logistic Regression / Random Forest | TRAIN_COHORT | Cellular risk score |
+| Patch Morphology Risk Model | Logistic Regression / Random Forest | TRAIN_COHORT | Patch morphology risk score |
+| Weighted Risk Score Fusion Model | Logistic Regression / simple weighted model | TRAIN_COHORT | Final HELIOS risk score |
 
 ---
 

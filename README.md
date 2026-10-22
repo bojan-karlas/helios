@@ -320,15 +320,15 @@ For example, reuse preprocessing and features in the dataset while keeping
 trained models and results elsewhere:
 
 ```bash
-helios prep tile-features --dataset /data/VISIOMEL
-helios fit mil --dataset /data/VISIOMEL --models-root /runs/exp1
-helios predict mil --dataset /data/VISIOMEL \
+helios prep tile-features --dataset /data/COHORT1
+helios fit mil --dataset /data/COHORT1 --models-root /runs/exp1
+helios predict mil --dataset /data/COHORT1 \
   --models-root /runs/exp1 --results-root /runs/exp1
 ```
 
 An explicit results base always adds the dataset directory name, even for a
-single-dataset invocation: `/runs/exp1/VISIOMEL/results/...`,
-`/runs/exp1/VISIOMEL/mil/...`, and `/runs/exp1/VISIOMEL/reports/...`. This lets
+single-dataset invocation: `/runs/exp1/COHORT1/results/...`,
+`/runs/exp1/COHORT1/mil/...`, and `/runs/exp1/COHORT1/reports/...`. This lets
 downstream stages find the same artifacts whether a constituent is processed
 alone or in a union. Without `--results-root`, results stay directly under each
 dataset. Source WSI and image metadata are never modified; to mount the entire
@@ -351,10 +351,10 @@ that names a union of roots plus an optional row filter:
 
 ```yaml
 # cohorts/train.yaml
-name: helios_train
+name: TRAIN_COHORT
 datasets:
-  - /data/MGB
-  - ../cohorts/MRV                      # relative paths resolve against this file
+  - /data/COHORT1
+  - ../cohorts/COHORT2                  # relative paths resolve against this file
 filter: "path_stage in ['I', 'II']"     # optional pandas-query over image_metadata
 ```
 
@@ -365,12 +365,12 @@ helios fit mil --dataset cohorts/train.yaml --models-root /runs/train
 Entries can also specify each constituent's storage:
 
 ```yaml
-name: visiomel-mgb
+name: TRAIN_COHORT
 datasets:
-  - source_root: /data/VISIOMEL
-    preprocessing_root: /data/VISIOMEL
-    features_root: /feature-store/VISIOMEL
-  - source_root: /data/MGB
+  - source_root: /data/COHORT1
+    preprocessing_root: /data/COHORT1
+    features_root: /feature-store/COHORT1
+  - source_root: /data/COHORT2
 ```
 
 Omitted preprocessing and feature roots default to that entry's source root.
@@ -390,7 +390,7 @@ This makes training and evaluation populations reproducible and reviewable. You
 can also:
 
 - **Union on the fly** -- repeat `--dataset` (or comma-separate) to pool several
-  cohorts: `--dataset /data/MGB --dataset /data/MRV`.
+  cohorts: `--dataset /data/COHORT1 --dataset /data/COHORT2`.
 - **Filter ad hoc** -- add `--filter "patient_age_at_diagnosis > 60"` on `fit` /
   `predict`; it's AND-combined with any cohort-file filter.
 - **Trace provenance** -- result tables carry a `dataset` column recording which

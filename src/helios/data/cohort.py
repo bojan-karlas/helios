@@ -9,14 +9,14 @@ reused, and version-controlled. It is accepted anywhere ``--dataset`` is::
 .. code-block:: yaml
 
     # cohorts/train.yaml
-    name: helios_train
+    name: TRAIN_COHORT
     datasets:
-      - /data/MGB
-      - source_root: ../cohorts/MRV
-        features_root: /feature-store/MRV
+      - /data/COHORT1
+      - source_root: ../cohorts/COHORT2
+        features_root: /feature-store/COHORT2
     filter: "path_stage in ['I', 'II']"   # optional pandas-query over image_metadata
 
-A bare path (``--dataset /data/MGB``) is just a single-root cohort with no
+A bare path (``--dataset /data/COHORT1``) is just a single-root cohort with no
 filter, so cohort files and plain roots are interchangeable and composable
 (repeated ``--dataset`` flags still union). Resolution flattens every input into
 a list of :class:`ResolvedDataset` -- one physical root plus the effective row

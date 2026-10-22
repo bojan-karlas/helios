@@ -584,7 +584,7 @@ components:
     produces: [tile_augmentation]
     partitions: [target, size_mm, image_id]
     params:
-      target: [MGB+MRV, VISIOMEL]
+      target: []
     description: |
       Apply stain augmentation to reduce staining variability, using a pretrained CycleGAN stain
       generator. The generator is TRAINED IN A SEPARATE REPO and loaded internally (per target),
