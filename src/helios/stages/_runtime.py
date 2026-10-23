@@ -20,18 +20,39 @@ both the per-fold and the reduced instances.
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 
 import pandas as pd
 
-from helios.data.cohort import DatasetArgs, ResolvedDataset
+from helios.data.cohort import AugmentationSpec, DatasetArgs, ResolvedDataset
 from helios.data.cohort import resolve_datasets as resolve_dataset_args
-from helios.data.io import ArtifactStore
-from helios.data.resolver import Resolver, Roots, StorageRoots
+from helios.data.io import ArtifactStore, read
+from helios.data.resolver import Resolver, Roots, StorageRoots, format_hive_subpath
+from helios.progress import DEFAULT_PROGRESS, Progress
+from helios.stages._ray import (
+    ParallelConfig,
+    StageExecutionError,
+    WorkContext,
+    WorkFailure,
+    available_cpu_count,
+    available_gpu_count,
+    run_cellvit_isolated,
+    run_work_units,
+)
 
 __all__ = [
+    "AugmentationSpec",
     "DatasetArgs",
     "ResolvedDataset",
+    "ParallelConfig",
+    "StageExecutionError",
+    "WorkContext",
+    "WorkFailure",
+    "available_cpu_count",
+    "available_gpu_count",
+    "run_cellvit_isolated",
+    "run_work_units",
     "resolve_datasets",
     "dataset_name",
     "tag_dataset",
@@ -40,10 +61,13 @@ __all__ = [
     "select_image_ids",
     "cohort_store",
     "StorageRoots",
+    "resolve_splits_path",
     "read_cv_splits",
     "folds_of",
     "folds_across",
     "train_ids",
+    "build_cohort_provenance",
+    "build_bundle_metadata",
     "model_folds",
 ]
 
@@ -126,11 +150,47 @@ def resolve_datasets(
             )
         if require_models and overrides.models_root is None:
             raise ValueError("Pooled training requires an explicit models_root (--models-root).")
+        _validate_unique_union_image_ids(resolved)
     if overrides.results_root is not None:
-        names = [ds.name for ds in resolved]
-        if any(name in {"", ".", ".."} for name in names) or len(names) != len(set(names)):
+        names = [ds.logical_name for ds in resolved]
+        if any(name in {"", ".", ".."} for name in names):
+            raise ValueError("A shared results_root requires nonempty cohort/dataset names.")
+        # Distinct physical roots must either share one named logical cohort or have distinct names.
+        by_name: dict[str, set[Path]] = {}
+        for ds in resolved:
+            if ds.cohort_name is None:
+                by_name.setdefault(ds.name, set()).add(ds.root)
+        if any(len(paths) > 1 for paths in by_name.values()):
             raise ValueError("A shared results_root requires distinct, nonempty dataset directory names.")
     return resolved
+
+
+def _validate_unique_union_image_ids(datasets: Sequence[ResolvedDataset]) -> None:
+    """Ensure a named multi-dataset union has no duplicate image_ids across constituents."""
+    by_cohort: dict[str, list[ResolvedDataset]] = {}
+    for ds in datasets:
+        if ds.cohort_name is not None:
+            by_cohort.setdefault(ds.cohort_name, []).append(ds)
+    for group in by_cohort.values():
+        if len(group) <= 1:
+            continue
+        seen: set[str] = set()
+        duplicates: list[str] = []
+        for ds in group:
+            meta_path = ds.dataset().image_metadata_path
+            if not meta_path.is_file():
+                continue
+            store = cohort_store(ds)
+            ids = select_image_ids(ds, store, None)
+            for image_id in ids:
+                if image_id in seen:
+                    duplicates.append(image_id)
+                else:
+                    seen.add(image_id)
+        if duplicates:
+            raise ValueError(
+                f"Union cohort has duplicate image_ids across constituent datasets: {duplicates[:5]}"
+            )
 
 
 def cohort_store(dataset: str | Path | ResolvedDataset, roots: StorageRoots | None = None) -> ArtifactStore:
@@ -142,42 +202,97 @@ def cohort_store(dataset: str | Path | ResolvedDataset, roots: StorageRoots | No
         preprocessing_root=overrides.preprocessing_root or ds.preprocessing_root,
         features_root=overrides.features_root or ds.features_root,
         models_root=overrides.models_root,
-        results_root=overrides.results_root / ds.name if overrides.results_root is not None else None,
+        results_root=overrides.results_root / ds.logical_name if overrides.results_root is not None else None,
     )))
 
 
-def read_cv_splits(store: ArtifactStore) -> pd.DataFrame | None:
+def resolve_splits_path(
+    dataset: ResolvedDataset | ArtifactStore,
+    roots: StorageRoots | None = None,
+    *,
+    extra_hive: dict[str, object] | None = None,
+) -> Path:
+    """Resolve the CV splits CSV path for a dataset or cohort."""
+    overrides = roots or StorageRoots()
+    if overrides.splits_file is not None:
+        base_path = Path(overrides.splits_file)
+    elif isinstance(dataset, ResolvedDataset) and dataset.splits_file is not None:
+        base_path = dataset.splits_file
+    elif isinstance(dataset, ArtifactStore):
+        return dataset.resolver.path("cv_splits", extra_hive=extra_hive)
+    else:
+        store = cohort_store(dataset, overrides)
+        return store.resolver.path("cv_splits", extra_hive=extra_hive)
+    sub = format_hive_subpath(extra_hive)
+    if sub != Path():
+        return base_path.parent / sub / base_path.name
+    return base_path
+
+
+def read_cv_splits(
+    store_or_ds: ArtifactStore | ResolvedDataset,
+    roots: StorageRoots | None = None,
+    *,
+    progress: Progress = DEFAULT_PROGRESS,
+) -> pd.DataFrame | None:
     """The cohort's ``cv_splits`` table, or ``None`` when it was never produced."""
-    if store.exists("cv_splits"):
-        return store.read("cv_splits")
+    if isinstance(store_or_ds, ResolvedDataset):
+        path = resolve_splits_path(store_or_ds, roots)
+        if path.is_file():
+            progress.log(f"Loaded CV splits from {path}")
+            return read(path, "csv")
+        store = cohort_store(store_or_ds, roots)
+        if store.exists("cv_splits"):
+            fallback = store.path("cv_splits")
+            progress.log(f"Loaded CV splits from {fallback}")
+            return store.read("cv_splits")
+        return None
+    if roots is not None and roots.splits_file is not None and Path(roots.splits_file).is_file():
+        progress.log(f"Loaded CV splits from {roots.splits_file}")
+        return read(roots.splits_file, "csv")
+    if store_or_ds.exists("cv_splits"):
+        progress.log(f"Loaded CV splits from {store_or_ds.path('cv_splits')}")
+        return store_or_ds.read("cv_splits")
     return None
 
 
-def folds_of(store: ArtifactStore) -> list[int | None]:
+def folds_of(
+    store_or_ds: ArtifactStore | ResolvedDataset,
+    roots: StorageRoots | None = None,
+) -> list[int | None]:
     """Folds defined by a cohort's ``cv_splits`` (``[None]`` if trained without CV)."""
-    splits = read_cv_splits(store)
+    splits = read_cv_splits(store_or_ds, roots)
     if splits is None or FOLD_COLUMN not in splits:
         return [None]
     folds: list[int | None] = [int(f) for f in sorted(splits[FOLD_COLUMN].dropna().unique())]
     return folds or [None]
 
 
-def folds_across(stores: list[ArtifactStore]) -> list[int | None]:
+def folds_across(
+    stores_or_datasets: Sequence[ArtifactStore | ResolvedDataset],
+    roots: StorageRoots | None = None,
+) -> list[int | None]:
     """Union of folds across pooled training cohorts.
 
     Used by ``fit`` stages that pool several ``--dataset`` cohorts: if any cohort
     defines folds, train per fold; if none do, train a single fold-free model.
     """
     seen: set[int] = set()
-    for store in stores:
-        for fold in folds_of(store):
+    for item in stores_or_datasets:
+        for fold in folds_of(item, roots):
             if fold is not None:
                 seen.add(fold)
     result: list[int | None] = [f for f in sorted(seen)]
     return result or [None]
 
 
-def train_ids(store: ArtifactStore, fold: int | None, *, where: str | None = None) -> list[str]:
+def train_ids(
+    store_or_ds: ArtifactStore | ResolvedDataset,
+    fold: int | None,
+    *,
+    where: str | None = None,
+    roots: StorageRoots | None = None,
+) -> list[str]:
     """Image ids in ``fold``'s train split (all images when there is no CV).
 
     With no ``cv_splits`` (or ``fold is None``) every image is a training row.
@@ -186,16 +301,78 @@ def train_ids(store: ArtifactStore, fold: int | None, *, where: str | None = Non
     subpopulation (e.g. ``"path_stage in ['I', 'II']"``), composed *after* the
     fold's train split so filtering never leaks test images into training.
     """
-    splits = read_cv_splits(store)
+    store = cohort_store(store_or_ds, roots) if isinstance(store_or_ds, ResolvedDataset) else store_or_ds
+    effective_where = where if where is not None else (
+        store_or_ds.where if isinstance(store_or_ds, ResolvedDataset) else None
+    )
+    splits = read_cv_splits(store_or_ds, roots)
+    all_ids = [str(i) for i in store.read("image_metadata")[IMAGE_ID_COLUMN]]
     if splits is None or fold is None or FOLD_COLUMN not in splits:
-        ids = [str(i) for i in store.read("image_metadata")[IMAGE_ID_COLUMN]]
+        ids = all_ids
     else:
         rows = splits[splits[FOLD_COLUMN] == fold]
         if SPLIT_COLUMN in rows:
             rows = rows[rows[SPLIT_COLUMN] == TRAIN_SPLIT]
-        ids = [str(i) for i in rows[IMAGE_ID_COLUMN]]
-    keep = filtered_ids(store, where)
+        split_ids = {str(i) for i in rows[IMAGE_ID_COLUMN]}
+        ids = [i for i in all_ids if i in split_ids]
+    keep = filtered_ids(store, effective_where)
     return ids if keep is None else [i for i in ids if i in keep]
+
+
+def build_cohort_provenance(
+    datasets: Sequence[ResolvedDataset],
+    roots: StorageRoots | None = None,
+) -> dict[str, object]:
+    """Serialize resolved cohort constituents into a re-runnable ``cohort.yaml`` mapping."""
+    lead = datasets[0]
+    entries: list[dict[str, object]] = []
+    for ds in datasets:
+        entry: dict[str, object] = {"source_root": str(ds.root.resolve())}
+        pre = (roots.preprocessing_root if roots else None) or ds.preprocessing_root
+        feat = (roots.features_root if roots else None) or ds.features_root
+        if pre is not None:
+            entry["preprocessing_root"] = str(Path(pre).resolve())
+        if feat is not None:
+            entry["features_root"] = str(Path(feat).resolve())
+        if ds.augmentations:
+            entry["augmentations"] = [
+                {
+                    "method": a.method,
+                    **({"source": a.source} if a.source is not None else {}),
+                    "target": a.target,
+                    **({"checkpoint": str(a.checkpoint.resolve())} if a.checkpoint is not None else {}),
+                }
+                for a in ds.augmentations
+            ]
+        entries.append(entry)
+    doc: dict[str, object] = {
+        "name": lead.logical_name,
+        "datasets": entries,
+    }
+    if lead.where:
+        doc["filter"] = lead.where
+    splits_path = resolve_splits_path(lead, roots)
+    if splits_path.is_file():
+        doc["splits"] = str(splits_path.resolve())
+    return doc
+
+
+def build_bundle_metadata(
+    noun: str,
+    params: dict[str, object],
+    datasets: Sequence[ResolvedDataset],
+    roots: StorageRoots | None = None,
+    *,
+    fold: int | None = None,
+) -> dict[str, object]:
+    """Build re-runnable ``config.yaml`` + ``cohort.yaml`` metadata for a model bundle."""
+    return {
+        "config": {"fit": {noun: params}},
+        "cohort": build_cohort_provenance(datasets, roots),
+        "stage": f"fit.{noun}",
+        "fold": fold,
+        "cohort_name": datasets[0].logical_name,
+    }
 
 
 def model_folds(store: ArtifactStore, model_id: str) -> list[int | None]:

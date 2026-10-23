@@ -14,10 +14,15 @@ import typer
 
 from helios.cli._common import (
     FEATURES_ROOT,
+    LOG_DIR,
+    MAX_CPUS,
     MODELS_ROOT,
     PREPROCESSING_ROOT,
+    RAY_ADDRESS,
     REMOVED_OUTPUT_ROOT,
     RESULTS_ROOT,
+    RUN_TAG,
+    SPLITS_FILE,
     console_progress,
     csv,
     datasets_arg,
@@ -42,6 +47,11 @@ def mil(
     features_root: Path | None = FEATURES_ROOT,
     models_root: Path | None = MODELS_ROOT,
     results_root: Path | None = RESULTS_ROOT,
+    splits_file: Path | None = SPLITS_FILE,
+    log_dir: Path | None = LOG_DIR,
+    run_tag: str | None = RUN_TAG,
+    ray_address: str | None = RAY_ADDRESS,
+    max_cpus: int | None = MAX_CPUS,
     output_root: Path | None = REMOVED_OUTPUT_ROOT,
     size_mm: float | None = typer.Option(None, "--size-mm", help="Tile resolution to score on."),
     model: str | None = typer.Option(None, "--model", help="Foundation model providing tile features."),
@@ -53,19 +63,24 @@ def mil(
     """Score whole-slide A-MIL and reduce whole-image risk."""
     from helios.config.stage_config import load_stage_params
     from helios.data.resolver import StorageRoots
-    from helios.stages._runtime import resolve_datasets
+    from helios.stages._runtime import ParallelConfig, resolve_datasets
     from helios.stages.mil import predict_mil
 
     roots = StorageRoots(
         preprocessing_root=preprocessing_root, features_root=features_root,
         models_root=models_root, results_root=results_root,
+        splits_file=splits_file,
     )
+    parallel = ParallelConfig(ray_address=ray_address, max_cpus=max_cpus)
     datasets = resolve_datasets(datasets_arg(dataset), where=filter, roots=roots)
     overrides = {"size_mm": size_mm, "model": model, "device": device}
     params = load_stage_params("predict", "mil", config_path=config, overrides=overrides)
     predict_mil(
-        datasets=datasets, roots=roots, force=force,
-        progress=console_progress(results_root or models_root or datasets[0].root), **params,
+        datasets=datasets, roots=roots, parallel=parallel, force=force,
+        progress=console_progress(
+            results_root or models_root or datasets[0].root, log_dir=log_dir, run_tag=run_tag
+        ),
+        **params,
     )
     typer.echo("predict mil: done")
 
@@ -77,6 +92,11 @@ def concept(
     features_root: Path | None = FEATURES_ROOT,
     models_root: Path | None = MODELS_ROOT,
     results_root: Path | None = RESULTS_ROOT,
+    splits_file: Path | None = SPLITS_FILE,
+    log_dir: Path | None = LOG_DIR,
+    run_tag: str | None = RUN_TAG,
+    ray_address: str | None = RAY_ADDRESS,
+    max_cpus: int | None = MAX_CPUS,
     output_root: Path | None = REMOVED_OUTPUT_ROOT,
     filter: str | None = _FILTER,
     config: Path | None = _CONFIG,
@@ -85,18 +105,23 @@ def concept(
     """Predict concepts and the concept-based risk score."""
     from helios.config.stage_config import load_stage_params
     from helios.data.resolver import StorageRoots
-    from helios.stages._runtime import resolve_datasets
+    from helios.stages._runtime import ParallelConfig, resolve_datasets
     from helios.stages.concept import predict_concept
 
     roots = StorageRoots(
         preprocessing_root=preprocessing_root, features_root=features_root,
         models_root=models_root, results_root=results_root,
+        splits_file=splits_file,
     )
+    parallel = ParallelConfig(ray_address=ray_address, max_cpus=max_cpus)
     datasets = resolve_datasets(datasets_arg(dataset), where=filter, roots=roots)
     params = load_stage_params("predict", "concept", config_path=config)
     predict_concept(
-        datasets=datasets, roots=roots, force=force,
-        progress=console_progress(results_root or models_root or datasets[0].root), **params,
+        datasets=datasets, roots=roots, parallel=parallel, force=force,
+        progress=console_progress(
+            results_root or models_root or datasets[0].root, log_dir=log_dir, run_tag=run_tag
+        ),
+        **params,
     )
     typer.echo("predict concept: done")
 
@@ -108,6 +133,11 @@ def morphology(
     features_root: Path | None = FEATURES_ROOT,
     models_root: Path | None = MODELS_ROOT,
     results_root: Path | None = RESULTS_ROOT,
+    splits_file: Path | None = SPLITS_FILE,
+    log_dir: Path | None = LOG_DIR,
+    run_tag: str | None = RUN_TAG,
+    ray_address: str | None = RAY_ADDRESS,
+    max_cpus: int | None = MAX_CPUS,
     output_root: Path | None = REMOVED_OUTPUT_ROOT,
     filter: str | None = _FILTER,
     config: Path | None = _CONFIG,
@@ -116,18 +146,23 @@ def morphology(
     """Assign clusters, score cluster presence, and produce morphology risk."""
     from helios.config.stage_config import load_stage_params
     from helios.data.resolver import StorageRoots
-    from helios.stages._runtime import resolve_datasets
+    from helios.stages._runtime import ParallelConfig, resolve_datasets
     from helios.stages.morphology import predict_morphology
 
     roots = StorageRoots(
         preprocessing_root=preprocessing_root, features_root=features_root,
         models_root=models_root, results_root=results_root,
+        splits_file=splits_file,
     )
+    parallel = ParallelConfig(ray_address=ray_address, max_cpus=max_cpus)
     datasets = resolve_datasets(datasets_arg(dataset), where=filter, roots=roots)
     params = load_stage_params("predict", "morphology", config_path=config)
     predict_morphology(
-        datasets=datasets, roots=roots, force=force,
-        progress=console_progress(results_root or models_root or datasets[0].root), **params,
+        datasets=datasets, roots=roots, parallel=parallel, force=force,
+        progress=console_progress(
+            results_root or models_root or datasets[0].root, log_dir=log_dir, run_tag=run_tag
+        ),
+        **params,
     )
     typer.echo("predict morphology: done")
 
@@ -139,6 +174,11 @@ def risk(
     features_root: Path | None = FEATURES_ROOT,
     models_root: Path | None = MODELS_ROOT,
     results_root: Path | None = RESULTS_ROOT,
+    splits_file: Path | None = SPLITS_FILE,
+    log_dir: Path | None = LOG_DIR,
+    run_tag: str | None = RUN_TAG,
+    ray_address: str | None = RAY_ADDRESS,
+    max_cpus: int | None = MAX_CPUS,
     output_root: Path | None = REMOVED_OUTPUT_ROOT,
     risk: str | None = typer.Option(
         None, "--risk", help="Comma list of risk kinds (cellular,staging,clinical,helios)."
@@ -150,17 +190,22 @@ def risk(
     """Score the simple risk sub-models (and HELIOS fusion + survival)."""
     from helios.config.stage_config import load_stage_params
     from helios.data.resolver import StorageRoots
-    from helios.stages._runtime import resolve_datasets
+    from helios.stages._runtime import ParallelConfig, resolve_datasets
     from helios.stages.risk import predict_risk
 
     roots = StorageRoots(
         preprocessing_root=preprocessing_root, features_root=features_root,
         models_root=models_root, results_root=results_root,
+        splits_file=splits_file,
     )
+    parallel = ParallelConfig(ray_address=ray_address, max_cpus=max_cpus)
     datasets = resolve_datasets(datasets_arg(dataset), where=filter, roots=roots)
     params = load_stage_params("predict", "risk", config_path=config, overrides={"risk": csv(risk)})
     predict_risk(
-        datasets=datasets, roots=roots, force=force,
-        progress=console_progress(results_root or models_root or datasets[0].root), **params,
+        datasets=datasets, roots=roots, parallel=parallel, force=force,
+        progress=console_progress(
+            results_root or models_root or datasets[0].root, log_dir=log_dir, run_tag=run_tag
+        ),
+        **params,
     )
     typer.echo("predict risk: done")

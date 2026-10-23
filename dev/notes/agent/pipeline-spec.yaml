@@ -112,7 +112,7 @@ artifacts:
     title: Cross-Validation Splits
     key: [image_id, fold]
     format: csv
-    path: metadata/cv_splits.csv
+    path: cv_splits.csv
     description: |
       OPTIONAL tidy long table assigning each image to CV folds. Columns: image_id, fold, split in {train,val?,test}
       (val optional -- if absent and a model needs validation, it does a random train/val split of the train rows).
@@ -129,7 +129,7 @@ artifacts:
     title: Background Mask (Debug)
     key: [size_mm, image_id]
     format: png
-    path: debug/background_mask/size_mm={size_mm}/{image_id}.png
+    path: background_mask/size_mm={size_mm}/{image_id}.png
     description: |
       Thumbnail-resolution binary debug mask combining color-based background/non-tissue pixels with rejected tile
       footprints. Depends on the tile grid at size_mm; saved mainly for debugging/QC.
@@ -139,7 +139,7 @@ artifacts:
     title: Tile Metadata
     key: [size_mm, image_id, tile_id]
     format: parquet
-    path: metadata/tile_metadata/size_mm={size_mm}/{image_id}.parquet
+    path: tile_metadata/size_mm={size_mm}/{image_id}.parquet
     description: |
       Per-tile grid + pixel coords. Row-oriented: one row per tile, indexed by tile_id (the row's position).
       Columns: tile_row, tile_col, tile_x, tile_y, tile_width, tile_height.
@@ -158,7 +158,7 @@ artifacts:
     title: Tile Background Flags
     key: [size_mm, image_id, tile_id]
     format: parquet
-    path: preprocessing/tile_background/size_mm={size_mm}/{image_id}.parquet
+    path: tile_background/size_mm={size_mm}/{image_id}.parquet
     description: |
       Per-tile binary background flag -- 1 if the tile maps onto background_mask pixels. Consumed downstream to drop
       non-tissue tiles (NOT used to gate feature extraction).
@@ -168,7 +168,7 @@ artifacts:
     title: Tile (Patch) Embeddings
     key: [size_mm, model, image_id, tile_id]
     format: hdf5
-    path: preprocessing/tile_features/size_mm={size_mm}/{model}/{image_id}/{image_id}.hdf5
+    path: tile_features/size_mm={size_mm}/model={model}/{image_id}/{image_id}.hdf5
     description: |
       Foundation-model embedding per tile. model in {virchow2,uni,uni2,conch,conch1.5,chief,
       ctranspath,dino,gigapath,musk,phikon2,resnet-50}.
@@ -176,17 +176,17 @@ artifacts:
   - id: tile_augmentation
     role: preprocessing
     title: Stain-Augmented Tiles
-    key: [target, size_mm, image_id, tile_id]
+    key: [method, source, target, size_mm, image_id, tile_id]
     format: hdf5
-    path: preprocessing/tile_augmentation/target={target}/size_mm={size_mm}/{image_id}/{image_id}.hdf5
-    description: Stain-augmented tiles. target is the dataset used to train a stain augmenter.
+    path: tile_augmentation/method={method}/source={source}/target={target}/size_mm={size_mm}/{image_id}/{image_id}.hdf5
+    description: Stain-augmented tiles under canonical Hive method/parameter directories.
 
   - id: tile_augmentation_features
     role: features
     title: Stain-Augmented Tile Embeddings
-    key: [target, size_mm, model, image_id, tile_id]
+    key: [method, source, target, size_mm, model, image_id, tile_id]
     format: hdf5
-    path: preprocessing/tile_augmentation_features/target={target}/size_mm={size_mm}/{model}/{image_id}/{image_id}.hdf5
+    path: tile_augmentation_features/method={method}/source={source}/target={target}/size_mm={size_mm}/model={model}/{image_id}/{image_id}.hdf5
     description: Foundation embeddings computed on stain-augmented tiles.
 
   - id: thumbnail
@@ -285,7 +285,7 @@ artifacts:
     title: Whole-Image Risk Score (Per-Fold)
     key: [fold, image_id]
     format: csv
-    path: mil/fold={fold}/whole_image_risk_score.csv
+    path: mil/risk_score/fold={fold}/whole_image_risk_score.csv
     description: |
       A-MIL classifier scalar risk, PER FOLD: one CSV per fold (one row per image_id scored by that fold's MIL
       model). Consumed per-fold by concept training/inference (the concept residual regressor is fit per fold).
@@ -296,7 +296,7 @@ artifacts:
     title: Whole-Image Risk Score (Ensemble)
     key: [image_id]
     format: csv
-    path: results/whole_image_risk_score.csv
+    path: mil/risk_score/whole_image_risk_score.csv
     description: |
       Shipped whole-image risk: one row per image_id, OOF on the CV cohort (test-fold model) / ensemble-averaged on
       deploy. Carries a `fold` provenance column (= test fold producing each image's OOF value; null on deploy).
@@ -304,11 +304,11 @@ artifacts:
   # --- analysis artifacts (per-module sub-scores + features) ---
 
   - id: cellular_features
-    role: results
+    role: preprocessing
     title: Cellular Composition Features
-    key: [image_id]
+    key: [size_mm, image_id]
     format: csv
-    path: results/cellular_features.csv
+    path: cells/cellular_features/size_mm={size_mm}/cellular_features.csv
     description: eTIL, mitosis-to-tumor ratio, TIL coverage, mitotic coverage.
 
   - id: cellular_risk_score
@@ -316,7 +316,7 @@ artifacts:
     title: Cellular Composition Risk Score
     key: [image_id]
     format: csv
-    path: results/cellular_risk_score.csv
+    path: cellular/cellular_risk_score.csv
     description: |
       Recurrence-risk sub-score from the cellular composition model. One row per image (OOF/ensemble) + `fold`
       provenance column (test fold; null on deploy).
@@ -326,7 +326,7 @@ artifacts:
     title: Concept Predictions
     key: [image_id]
     format: csv
-    path: results/path_concept_predictions.csv
+    path: concepts/path_concept_predictions.csv
     description: |
       Predicted pathological concepts (ulceration, breslow, mitotic rate, radial growth, ...).
 
@@ -335,7 +335,7 @@ artifacts:
     title: Concept-Based Risk Score
     key: [image_id]
     format: csv
-    path: results/path_concept_risk_score.csv
+    path: concepts/path_concept_risk_score.csv
     description: |
       Recurrence-risk sub-score from the concept-bottleneck model (+ residual correction). One row per image
       (OOF/ensemble) + `fold` provenance column (test fold; null on deploy).
@@ -355,7 +355,7 @@ artifacts:
     title: Cluster Presence Scores
     key: [image_id]
     format: csv
-    path: results/patch_morphology_presence.csv
+    path: morphology/patch_morphology_presence.csv
     description: |
       Per-slide presence/proportion of each morphology cluster (feature for the morphology risk model).
 
@@ -364,7 +364,7 @@ artifacts:
     title: Patch Morphology Risk Score
     key: [image_id]
     format: csv
-    path: results/patch_morphology_risk_score.csv
+    path: morphology/patch_morphology_risk_score.csv
     description: |
       Recurrence-risk sub-score from the cluster-presence morphology model. One row per image (OOF/ensemble) +
       `fold` provenance column (test fold; null on deploy).
@@ -374,7 +374,7 @@ artifacts:
     title: Staging Risk Score
     key: [image_id]
     format: csv
-    path: results/staging_risk_score.csv
+    path: staging/staging_risk_score.csv
     description: |
       Recurrence-risk sub-score; linear model on AJCC stage feature (default path_stage_substage). One row per
       image (OOF/ensemble) + `fold` provenance column (test fold; null on deploy).
@@ -384,7 +384,7 @@ artifacts:
     title: Clinical Risk Score
     key: [image_id]
     format: csv
-    path: results/clinical_risk_score.csv
+    path: clinical/clinical_risk_score.csv
     description: |
       Recurrence-risk sub-score; linear model on clinical features (default patient_age_at_diagnosis, patient_sex,
       sample_tissue_site_category). One row per image (OOF/ensemble) + `fold` provenance column (test fold; null
@@ -397,7 +397,7 @@ artifacts:
     title: HELIOS Risk Score
     key: [image_id]
     format: csv
-    path: results/helios_risk_score.csv
+    path: fusion/helios_risk_score.csv
     description: |
       Final fused recurrence-risk scores. One row per image_id with columns risk_helios (image-only, excludes
       staging) and risk_helios_s (HELIOS + staging sub-score). OOF/ensemble + `fold` provenance column (test fold;
@@ -408,7 +408,7 @@ artifacts:
     title: Survival Curve
     key: [image_id, time]
     format: csv
-    path: results/survival_curve/{image_id}.csv
+    path: fusion/survival_curve/{image_id}.csv
     description: |
       Predicted recurrence-free probability over time, one CSV per image_id (rows = timepoints; columns time, recurrence_free_prob).
 
@@ -454,7 +454,7 @@ artifacts:
     role: models
     title: A-MIL Model Bundle
     key: [fold]
-    path: models/mil/fold={fold}
+    path: mil/fold={fold}
     description: |
       Attention-MIL bundle (alignment + attention + pooling + classifier). One per fold (K independently-fit
       models; ensembled at deploy, never a single all-data model).
@@ -463,7 +463,7 @@ artifacts:
     role: models
     title: Concept Models Bundle
     key: [fold]
-    path: models/concepts/fold={fold}
+    path: concepts/fold={fold}
     description: |
       Per-fold bundle of concept models: for EACH concept, a SET of linear probes (LogReg categorical / Ridge
       numerical) produced by BOOTSTRAPPING the concept-training set (n_bootstrap replicas, default ~100) so concept
@@ -474,35 +474,35 @@ artifacts:
     role: models
     title: Cellular Composition Risk Model
     key: [fold]
-    path: models/cellular/fold={fold}
+    path: cellular/fold={fold}
     description: Simple ML risk model (LogReg/RandomForest) over cellular composition features. One per fold.
 
   - id: model_morphology
     role: models
     title: Morphology Model Bundle
     key: [fold]
-    path: models/morphology/fold={fold}
+    path: morphology/fold={fold}
     description: PCA + Leiden clustering + cluster-presence risk model. One per fold.
 
   - id: model_fusion
     role: models
     title: HELIOS Risk Model
     key: [fold]
-    path: models/fusion/fold={fold}
+    path: fusion/fold={fold}
     description: Simple model combining sub-scores into the final HELIOS / HELIOS-S risk. One per fold.
 
   - id: model_staging
     role: models
     title: Staging Risk Model
     key: [fold]
-    path: models/staging/fold={fold}
+    path: staging/fold={fold}
     description: sklearn linear model mapping AJCC stage feature to recurrence risk. One per fold.
 
   - id: model_clinical
     role: models
     title: Clinical Risk Model
     key: [fold]
-    path: models/clinical/fold={fold}
+    path: clinical/fold={fold}
     description: sklearn linear model mapping clinical features to recurrence risk. One per fold.
 
 # ----------------------------------------------------------------------------------------------------------------------

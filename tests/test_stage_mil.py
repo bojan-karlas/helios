@@ -36,6 +36,14 @@ def cohort(tmp_path: Path) -> Path:
                 {"image_id": image_id, "fold": fold, "split": "train" if in_train else "test"}
             )
     store.write("cv_splits", pd.DataFrame(rows))
+    for image_id in IMAGE_IDS:
+        store.write(
+            "tile_features",
+            {"features": np.ones((3, 4), dtype=np.float32)},
+            size_mm=0.25,
+            model="virchow2",
+            image_id=image_id,
+        )
     return root
 
 
@@ -73,6 +81,12 @@ def test_fit_filter_subsets_train_ids(monkeypatch, cohort: Path) -> None:
 
     assert seen[0] == [IMAGE_IDS[0]], "filter must intersect the fold's train split"
     assert seen[1] == [], "no fold-1 train image matches the filter"
+
+
+def test_fit_mil_raises_on_missing_slide_features(tmp_path: Path) -> None:
+    root = make_cohort(tmp_path / "incomplete", n_images=2, n_patients=2)
+    with pytest.raises(FileNotFoundError, match="Missing tile_features"):
+        mil.fit_mil(datasets=[root])
 
 
 def test_predict_scores_each_fold_then_reduces(monkeypatch, cohort: Path) -> None:
@@ -140,7 +154,7 @@ def test_union_extract_fit_predict_and_downstream_fit_use_split_roots(monkeypatc
 
     monkeypatch.setattr(mil, "train_mil", fake_train)
     mil.fit_mil(datasets=datasets, roots=roots)
-    assert (tmp_path / "experiment/models/mil").is_dir()
+    assert (tmp_path / "experiment/mil").is_dir()
 
     def fake_infer(model, *, features_path, **kwargs):
         assert model["trained"]

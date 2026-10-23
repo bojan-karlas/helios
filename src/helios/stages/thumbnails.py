@@ -4,13 +4,21 @@ Reads each cohort image's WSI and writes the ``thumbnail`` artifact.
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
+from functools import partial
+from pathlib import Path
+
 from helios.components.thumbnails import extract_thumbnail
+from helios.data.io import ArtifactStore
 from helios.progress import DEFAULT_PROGRESS, Progress
 from helios.stages._runtime import (
     DatasetArgs,
+    ParallelConfig,
     StorageRoots,
+    WorkContext,
     cohort_store,
     resolve_datasets,
+    run_work_units,
     select_image_ids,
 )
 
@@ -22,6 +30,7 @@ def prep_thumbnails(
     *,
     datasets: DatasetArgs,
     roots: StorageRoots | None = None,
+    parallel: ParallelConfig | None = None,
     max_size: int = DEFAULT_MAX_SIZE,
     image_ids: list[str] | None = None,
     force: bool = False,
@@ -32,17 +41,30 @@ def prep_thumbnails(
     GRAIN CONTRACT: one image per work unit; :func:`extract_thumbnail` is called
     once per slide.
     """
-    resolved = resolve_datasets(datasets, roots=roots)
-
-    for ds in resolved:
-        cohort = ds.dataset()
+    for ds in resolve_datasets(datasets, roots=roots):
         store = cohort_store(ds, roots)
-        ids = select_image_ids(ds, store, image_ids)
+        run_work_units(
+            select_image_ids(ds, store, image_ids),
+            partial(_thumbnail, store=store, slides=ds.dataset().slides, max_size=max_size, force=force),
+            stage=f"thumbnails {ds.name}",
+            progress=progress,
+            parallel=parallel,
+        )
 
-        for image_id in progress.task(ids, desc=f"thumbnails {ds.name}"):
-            if not force and store.exists("thumbnail", image_id=image_id):
-                progress.log(f"skip thumbnail image={image_id} (exists)")
-                continue
-            thumb = extract_thumbnail(str(cohort.slides[image_id]), max_size=max_size)
-            store.write("thumbnail", thumb, image_id=image_id)
-            progress.log(f"wrote thumbnail image={image_id}")
+
+def _thumbnail(
+    image_id: str,
+    ctx: WorkContext,
+    *,
+    store: ArtifactStore,
+    slides: Mapping[str, Path],
+    max_size: int,
+    force: bool,
+) -> str:
+    if not force and store.exists("thumbnail", image_id=image_id):
+        ctx.progress.log(f"skip thumbnail image={image_id} (exists)")
+        return "skipped"
+    thumb = extract_thumbnail(str(slides[image_id]), max_size=max_size)
+    store.write("thumbnail", thumb, image_id=image_id)
+    ctx.progress.log(f"wrote thumbnail image={image_id}")
+    return "completed"

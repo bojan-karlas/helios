@@ -302,46 +302,40 @@ artifact spec drives the graph.
 
 Artifacts are grouped by storage role, independently of execution order:
 
-| Role | Contents | Location |
-| --- | --- | --- |
-| `source` | Fixed WSI files and image metadata | Dataset directory |
-| `preprocessing` | Tiles, augmented tiles, tile metadata, CV splits, masks, thumbnails, cell detections | Per dataset |
-| `features` | Original and augmented foundation-model tile embeddings | Per dataset |
-| `models` | Fitted model bundles | Shared by a training run |
-| `results` | Model-dependent embeddings, attention, predictions, cellular features, reports | Per dataset within a run |
+| Role | Contents | Default root | Explicit `--<role>-root PATH` |
+| --- | --- | --- | --- |
+| `source` | Fixed WSI files and image metadata | `<source_root>` | `<source_root>` |
+| `preprocessing` | Tiles, augmented tiles, tile metadata, CV splits, masks, thumbnails, cells, cellular features | `<source_root>/preprocessing` | `PATH` (per dataset) |
+| `features` | Original and augmented foundation-model tile embeddings | `<source_root>/features` | `PATH` (per dataset) |
+| `models` | Fitted model bundles (`config.yaml` + `cohort.yaml` provenance) | `<source_root>/models` | `PATH` (shared across cohort) |
+| `results` | Stage-organized MIL outputs, predictions, risk scores, reports | `<source_root>/results` | `PATH/<cohort>` (per logical cohort) |
 
-All roles default to the dataset directory. For a single dataset, override
-derived locations with `--preprocessing-root`, `--features-root`,
-`--models-root`, and `--results-root`. Reads and writes use the same root for
-each role. Artifact-relative paths are unchanged: a model base `/runs/exp1`
-holds `models/mil/...`; a feature base holds `preprocessing/tile_features/...`.
-
-For example, reuse preprocessing and features in the dataset while keeping
-trained models and results elsewhere:
+When role flags are omitted on a single dataset, derived artifacts live under
+`<source_root>/{preprocessing,features,models,results}/...`. When explicit role
+roots are supplied, `--models-root /runs/exp1/models` writes
+`/runs/exp1/models/<stage>/...` and `--results-root /runs/exp1/results` scopes
+each evaluated cohort under `/runs/exp1/results/<cohort>/<stage>/...`:
 
 ```bash
 helios prep tile-features --dataset /data/COHORT1
-helios fit mil --dataset /data/COHORT1 --models-root /runs/exp1
+helios fit mil --dataset /data/COHORT1 --models-root /runs/exp1/models
 helios predict mil --dataset /data/COHORT1 \
-  --models-root /runs/exp1 --results-root /runs/exp1
+  --models-root /runs/exp1/models --results-root /runs/exp1/results
 ```
 
-An explicit results base always adds the dataset directory name, even for a
-single-dataset invocation: `/runs/exp1/COHORT1/results/...`,
-`/runs/exp1/COHORT1/mil/...`, and `/runs/exp1/COHORT1/reports/...`. This lets
-downstream stages find the same artifacts whether a constituent is processed
-alone or in a union. Without `--results-root`, results stay directly under each
-dataset. Source WSI and image metadata are never modified; to mount the entire
-source directory read-only, place all derived roles elsewhere.
+Run logs are written to `<log_dir>/<run_id>/` (`run.log`, `status.json`,
+`events.jsonl`, `workers/<worker-id>.log`), where `--log-dir` defaults to
+`<results_root>/logs` (or `<models_root>/logs` / `<dataset>/logs`) and
+`--run-tag` appends an optional kebab-case suffix to `<run_id>`.
 
-Run logs (`run.log`, `status.json`, `events.jsonl`) use the explicit results
-base, otherwise the explicit model base, otherwise the first dataset directory.
+Stages run serially in a single process by default. Parallel execution is
+opt-in via Ray: `--max-cpus N` (N > 1) starts a local Ray runtime for the
+command (respecting `CUDA_VISIBLE_DEVICES`), while `--ray-address` attaches to
+an existing cluster; see `scripts/slurm/` for multi-node cluster and job-array
+worker launch scripts. Python stages accept `parallel=ParallelConfig(...)`.
 
-`--output-root` has been removed and reports a migration error. To reproduce
-its old redirected storage, set each needed role root explicitly. For existing
-result files, account for the new dataset subdirectory under `--results-root`;
-no files are moved automatically. Python stages accept `roots=StorageRoots(...)`
-instead of `output_root=...`.
+`--output-root` has been removed and reports a migration error. Python stages
+accept `roots=StorageRoots(...)` instead of `output_root=...`.
 
 ### Named, versioned cohorts
 
@@ -362,19 +356,24 @@ filter: "path_stage in ['I', 'II']"     # optional pandas-query over image_metad
 helios fit mil --dataset cohorts/train.yaml --models-root /runs/train
 ```
 
-Entries can also specify each constituent's storage:
+Entries can also specify each constituent's storage and tile augmentations:
 
 ```yaml
 name: TRAIN_COHORT
 datasets:
   - source_root: /data/COHORT1
-    preprocessing_root: /data/COHORT1
+    preprocessing_root: /data/COHORT1/preprocessing
     features_root: /feature-store/COHORT1
+    augmentations:
+      - method: cyclegan
+        source: COHORT1
+        target: COHORT2
+        checkpoint: /models/c1_to_c2/latest_net_G_A.pth
   - source_root: /data/COHORT2
 ```
 
-Omitted preprocessing and feature roots default to that entry's source root.
-All relative paths resolve against the YAML file. A cohort creates no extra
+Omitted preprocessing and feature roots default to `<source_root>/preprocessing`
+and `<source_root>/features`. All relative paths resolve against the YAML file. A cohort creates no extra
 preprocessing or feature store: extraction writes into each constituent's
 roots, and training reads from them. Single-dataset CLI overrides take
 precedence over manifest values; for unions, set those roots per entry rather

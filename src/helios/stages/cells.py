@@ -7,33 +7,40 @@ classification (``mitotic_cells``). All three external models are inference-only
 The implementations live in :mod:`helios.components.cells`; this stage only
 chains them per slide and writes artifacts.
 """
+
 from __future__ import annotations
+
+from collections.abc import Mapping
+from functools import partial
+from pathlib import Path
 
 import pandas as pd
 
-from helios.components.cells import (
-    classify_mitoses,
-    cluster_based_filtering,
-    extract_tumor_patches,
-    segment_cells,
-)
+from helios.components.cells import classify_mitoses, cluster_based_filtering, extract_tumor_patches
+from helios.data.io import ArtifactStore
 from helios.progress import DEFAULT_PROGRESS, Progress
 from helios.stages._runtime import (
     DatasetArgs,
+    ParallelConfig,
     StorageRoots,
+    WorkContext,
+    available_cpu_count,
+    available_gpu_count,
     cohort_store,
     resolve_datasets,
+    run_cellvit_isolated,
+    run_work_units,
     select_image_ids,
 )
+
+CELL_OUTPUTS = ("cells", "tumor_cell_patches", "mitotic_cells")
 
 # -- configurable defaults (source of truth for configs/default.yaml) ----------
 DEFAULT_PATCH_PX: int = 64
 DEFAULT_DEVICE: str = "cuda"
 
 
-def _mpp_magnification_fallback(
-    image_metadata: pd.DataFrame, image_id: str
-) -> tuple[float | None, int | None]:
+def _mpp_magnification_fallback(image_metadata: pd.DataFrame, image_id: str) -> tuple[float | None, int | None]:
     """Look up ``image_mpp`` / ``image_magnification`` for one image.
 
     Passed to :func:`segment_cells` as a fallback for slides where CellViT
@@ -55,6 +62,7 @@ def prep_cells(
     *,
     datasets: DatasetArgs,
     roots: StorageRoots | None = None,
+    parallel: ParallelConfig | None = None,
     patch_px: int = DEFAULT_PATCH_PX,
     device: str = DEFAULT_DEVICE,
     image_ids: list[str] | None = None,
@@ -66,29 +74,73 @@ def prep_cells(
     GRAIN CONTRACT: one image per work unit; the three components are chained
     per slide. The mitotic step always re-runs when cells were re-segmented.
     """
-    resolved = resolve_datasets(datasets, roots=roots)
+    cfg = parallel or ParallelConfig()
+    n_gpus = available_gpu_count() if device.startswith("cuda") else 0
+    # CellViT spawns its own CPU pool per slide; bound it to a per-GPU share of the
+    # CPU budget and reserve that share from Ray so slides never oversubscribe.
+    # (Budgets reflect the coordinator's host; with --ray-address set --max-cpus
+    # to the per-node allowance.)
+    total_cpus = available_cpu_count(cfg.max_cpus)
+    cpus_per_slide = max(4, min(32, total_cpus // max(1, n_gpus)))
 
-    for ds in resolved:
+    for ds in resolve_datasets(datasets, roots=roots):
         cohort = ds.dataset()
         store = cohort_store(ds, roots)
-        ids = select_image_ids(ds, store, image_ids)
+        run_work_units(
+            select_image_ids(ds, store, image_ids),
+            partial(
+                _cells,
+                store=store,
+                slides=cohort.slides,
+                image_metadata=cohort.image_metadata,
+                patch_px=patch_px,
+                device=device,
+                cpus=cpus_per_slide,
+                force=force,
+            ),
+            stage=f"cells {ds.name}",
+            progress=progress,
+            parallel=parallel,
+            num_cpus=float(min(cpus_per_slide, total_cpus)),
+            num_gpus=1.0 if n_gpus > 0 else 0.0,
+        )
 
-        for image_id in progress.task(ids, desc=f"cells {ds.name}"):
-            wsi_path = str(cohort.slides[image_id])
-            if not force and store.exists("mitotic_cells", image_id=image_id):
-                progress.log(f"skip cells image={image_id} (exists)")
-                continue
 
-            image_mpp, image_magnification = _mpp_magnification_fallback(cohort.image_metadata, image_id)
-            cells = segment_cells(
-                wsi_path, device=device, image_mpp=image_mpp, image_magnification=image_magnification
-            )
-            cells = cluster_based_filtering(cells)
-            store.write("cells", cells, image_id=image_id)
+def _cells(
+    image_id: str,
+    ctx: WorkContext,
+    *,
+    store: ArtifactStore,
+    slides: Mapping[str, Path],
+    image_metadata: pd.DataFrame,
+    patch_px: int,
+    device: str,
+    cpus: int,
+    force: bool,
+) -> str:
+    wsi_path = str(slides[image_id])
+    if not force and all(store.exists(a, image_id=image_id) for a in CELL_OUTPUTS):
+        ctx.progress.log(f"skip cells image={image_id} (exists)")
+        return "skipped"
+    # The last output doubles as the unit's completion marker: clear it before recomputing.
+    store.remove("mitotic_cells", image_id=image_id)
 
-            patch_index, patches = extract_tumor_patches(wsi_path, cells, patch_px=patch_px)
-            store.write("tumor_cell_patches", {"patches": patches}, image_id=image_id)
+    image_mpp, image_magnification = _mpp_magnification_fallback(image_metadata, image_id)
+    cells = run_cellvit_isolated(
+        wsi_path,
+        device=device,
+        image_mpp=image_mpp,
+        image_magnification=image_magnification,
+        available_cpus=cpus,
+        worker_log_path=ctx.log_path,
+    )
+    cells = cluster_based_filtering(cells)
+    store.write("cells", cells, image_id=image_id)
 
-            mitotic = classify_mitoses(patches, patch_index, device=device)
-            store.write("mitotic_cells", mitotic, image_id=image_id)
-            progress.log(f"wrote cells + mitotic image={image_id}")
+    patch_index, patches = extract_tumor_patches(wsi_path, cells, patch_px=patch_px)
+    store.write("tumor_cell_patches", {"patches": patches}, image_id=image_id)
+
+    mitotic = classify_mitoses(patches, patch_index, device=device)
+    store.write("mitotic_cells", mitotic, image_id=image_id)
+    ctx.progress.log(f"wrote cells + mitotic image={image_id}")
+    return "completed"

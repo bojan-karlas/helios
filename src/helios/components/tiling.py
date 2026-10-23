@@ -19,6 +19,8 @@ def extract_tiles(
     tile_px: int = 224,
     stride_fraction: float = 0.5,
     image_mpp: float | None = None,
+    start: int = 0,
+    stop: int | None = None,
 ) -> tuple[pd.DataFrame, NDArray[np.uint8]]:
     """Tile one slide at a target physical resolution.
 
@@ -67,21 +69,22 @@ def extract_tiles(
         tile_id = 0
         for tile_row, y in enumerate(range(0, height - source_px + 1, stride_px)):
             for tile_col, x in enumerate(range(0, width - source_px + 1, stride_px)):
-                tile = slide(x, y, source_px)
-                resized = Image.fromarray(tile).resize((tile_px, tile_px), Image.Resampling.BILINEAR)
-                images.append(np.asarray(resized.convert("RGB"), dtype=np.uint8))
-                rows.append(
-                    {
-                        "tile_id": tile_id,
-                        "tile_row": tile_row,
-                        "tile_col": tile_col,
-                        "tile_x": x,
-                        "tile_y": y,
-                        "tile_width": source_px,
-                        "tile_height": source_px,
-                        "size_mm": size_mm,
-                    }
-                )
+                if tile_id >= start and (stop is None or tile_id < stop):
+                    tile = slide(x, y, source_px)
+                    resized = Image.fromarray(tile).resize((tile_px, tile_px), Image.Resampling.BILINEAR)
+                    images.append(np.asarray(resized.convert("RGB"), dtype=np.uint8))
+                    rows.append(
+                        {
+                            "tile_id": tile_id,
+                            "tile_row": tile_row,
+                            "tile_col": tile_col,
+                            "tile_x": x,
+                            "tile_y": y,
+                            "tile_width": source_px,
+                            "tile_height": source_px,
+                            "size_mm": size_mm,
+                        }
+                    )
                 tile_id += 1
         metadata = pd.DataFrame(rows, columns=[
             "tile_id", "tile_row", "tile_col", "tile_x", "tile_y",

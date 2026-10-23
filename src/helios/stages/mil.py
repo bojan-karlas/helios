@@ -15,8 +15,11 @@ from helios.components.features import FEATURE_MODELS
 from helios.components.mil import SlideFeatureRef, infer_mil, reduce_whole_image_risk, train_mil
 from helios.progress import DEFAULT_PROGRESS, Progress
 from helios.stages._runtime import (
+    AugmentationSpec,
     DatasetArgs,
+    ParallelConfig,
     StorageRoots,
+    build_bundle_metadata,
     cohort_store,
     folds_across,
     model_folds,
@@ -51,6 +54,7 @@ def fit_mil(
     *,
     datasets: DatasetArgs,
     roots: StorageRoots | None = None,
+    parallel: ParallelConfig | None = None,
     size_mm: float = DEFAULT_SIZE_MM,
     model: str = DEFAULT_MODEL,
     target: str = DEFAULT_TARGET,
@@ -84,7 +88,7 @@ def fit_mil(
     resolved = resolve_datasets(datasets, roots=roots, require_models=True)
     stores = [cohort_store(ds, roots) for ds in resolved]
     out = stores[0]
-    folds = folds_across(stores)
+    folds = folds_across(resolved, roots)
 
     for fold in progress.task(folds, desc="fit mil"):
         if not force and out.exists("model_mil", fold=fold):
@@ -93,25 +97,41 @@ def fit_mil(
         slides: list[SlideFeatureRef] = []
         for ds, store in zip(resolved, stores, strict=True):
             labels = ds.dataset().image_metadata.set_index("image_id")
-            for image_id in train_ids(store, fold, where=ds.where):
+            aug_specs = (
+                (AugmentationSpec(method="cyclegan", target=augmentation_target),)
+                if augmentation_target is not None
+                else ds.augmentations
+            )
+            for image_id in train_ids(ds, fold, where=ds.where, roots=roots):
+                aug_paths = tuple(
+                    store.path(
+                        "tile_augmentation_features",
+                        **spec.key_values(),
+                        size_mm=size_mm,
+                        model=model,
+                        image_id=image_id,
+                    )
+                    for spec in aug_specs
+                )
+                feat_path = store.path(
+                    "tile_features", size_mm=size_mm, model=model, image_id=image_id
+                )
+                if not feat_path.exists():
+                    raise FileNotFoundError(
+                        f"Missing tile_features for training slide {image_id!r} in {ds.name}: {feat_path}"
+                    )
+                for ap in aug_paths:
+                    if not ap.exists():
+                        raise FileNotFoundError(
+                            f"Missing tile_augmentation_features for training slide {image_id!r} in {ds.name}: {ap}"
+                        )
                 slides.append(
                     SlideFeatureRef(
                         image_id=image_id,
-                        features_path=store.path(
-                            "tile_features", size_mm=size_mm, model=model, image_id=image_id
-                        ),
+                        features_path=feat_path,
                         background_path=store.path("tile_background", size_mm=size_mm, image_id=image_id),
-                        aug_features_path=(
-                            store.path(
-                                "tile_augmentation_features",
-                                target=augmentation_target,
-                                size_mm=size_mm,
-                                model=model,
-                                image_id=image_id,
-                            )
-                            if augmentation_target is not None
-                            else None
-                        ),
+                        aug_features_path=aug_paths[0] if len(aug_paths) == 1 else None,
+                        aug_features_paths=aug_paths,
                         label=_label(labels, image_id, target),
                     )
                 )
@@ -133,7 +153,32 @@ def fit_mil(
             progress=progress,
             fold=fold,
         )
-        out.write("model_mil", bundle, fold=fold)
+        meta = build_bundle_metadata(
+            "mil",
+            {
+                "size_mm": size_mm,
+                "model": model,
+                "target": target,
+                "augmentation_target": augmentation_target,
+                "aug_swap_prob": aug_swap_prob,
+                "aug_mode": aug_mode,
+                "n_branches": n_branches,
+                "num_heads": num_heads,
+                "dropout_rate": dropout_rate,
+                "lambda_div": lambda_div,
+                "lr": lr,
+                "weight_decay": weight_decay,
+                "max_epochs": max_epochs,
+                "patience": patience,
+                "val_frac": val_frac,
+                "seed": seed,
+                "device": device,
+            },
+            resolved,
+            roots,
+            fold=fold,
+        )
+        out.write("model_mil", bundle, metadata=meta, fold=fold)
         progress.log(f"wrote model_mil fold={fold} (n_train={len(slides)})")
 
 
@@ -141,6 +186,7 @@ def predict_mil(
     *,
     datasets: DatasetArgs,
     roots: StorageRoots | None = None,
+    parallel: ParallelConfig | None = None,
     size_mm: float = DEFAULT_SIZE_MM,
     model: str = DEFAULT_MODEL,
     device: str = DEFAULT_DEVICE,
@@ -159,6 +205,7 @@ def predict_mil(
     for ds in resolved:
         store = cohort_store(ds, roots)
         ids = select_image_ids(ds, store, image_ids)
+        cohort_ids = select_image_ids(ds, store, None)
         folds = model_folds(store, "model_mil")
         if not folds:
             raise FileNotFoundError(f"No model_mil bundle found under {ds.name}.")
@@ -166,9 +213,15 @@ def predict_mil(
         per_fold_scores: list[pd.DataFrame] = []
         for fold in folds:
             mil_model = store.read("model_mil", fold=fold)
-            rows: list[dict[str, object]] = []
             for image_id in progress.task(ids, desc=f"mil infer fold={fold} {ds.name}"):
-                if not force and store.exists("aligned_slide_embedding", fold=fold, image_id=image_id):
+                complete = (
+                    store.exists("aligned_patch_embeddings", fold=fold, image_id=image_id)
+                    and store.exists("patch_attention", fold=fold, image_id=image_id)
+                    and store.exists("aligned_slide_embedding", fold=fold, image_id=image_id)
+                    and store.exists("aligned_slide_embedding_grad", fold=fold, image_id=image_id)
+                    and store.part_exists("whole_image_risk_score", image_id, fold=fold)
+                )
+                if not force and complete:
                     continue
                 out = infer_mil(
                     mil_model,
@@ -187,15 +240,21 @@ def predict_mil(
                 store.write(
                     "aligned_slide_embedding_grad", out.slide_embedding_grad, fold=fold, image_id=image_id
                 )
-                rows.append({"image_id": image_id, "risk_score": out.risk_score, "fold": fold})
-            if rows:
-                scores = pd.DataFrame(rows)
+                store.write_part(
+                    "whole_image_risk_score",
+                    image_id,
+                    [{"image_id": image_id, "risk_score": out.risk_score, "fold": fold}],
+                    fold=fold,
+                )
+            # Reduce over the whole cohort so a partial re-run never shrinks the table.
+            scores = store.read_parts("whole_image_risk_score", cohort_ids, fold=fold)
+            if not scores.empty:
                 store.write("whole_image_risk_score", scores, fold=fold)
                 per_fold_scores.append(scores)
 
         ensemble = reduce_whole_image_risk(
             pd.concat(per_fold_scores, ignore_index=True) if per_fold_scores else pd.DataFrame(),
-            read_cv_splits(store),
+            read_cv_splits(ds, roots, progress=progress),
         )
         store.write("whole_image_risk_score_ensemble", tag_dataset(ensemble, ds.name))
         progress.log(f"wrote whole_image_risk_score_ensemble {ds.name}")

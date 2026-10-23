@@ -4,18 +4,26 @@ Reads the ``tiles`` artifact, embeds each slide's tiles with one or more
 foundation models (via :func:`helios.components.features.extract_features`), and
 writes the ``tile_features`` artifact. Runs over one or more datasets.
 """
+
 from __future__ import annotations
+
+from functools import partial
 
 import numpy as np
 from numpy.typing import NDArray
 
 from helios.components.features import IMPLEMENTED_FEATURE_MODELS, extract_features
+from helios.data.io import ArtifactStore
 from helios.progress import DEFAULT_PROGRESS, Progress
 from helios.stages._runtime import (
     DatasetArgs,
+    ParallelConfig,
     StorageRoots,
+    WorkContext,
+    available_gpu_count,
     cohort_store,
     resolve_datasets,
+    run_work_units,
     select_image_ids,
 )
 
@@ -30,6 +38,7 @@ def prep_tile_features(
     *,
     datasets: DatasetArgs,
     roots: StorageRoots | None = None,
+    parallel: ParallelConfig | None = None,
     size_mm: list[float] = DEFAULT_SIZE_MM,
     model: list[str] = DEFAULT_MODELS,
     batch_size: int = DEFAULT_BATCH_SIZE,
@@ -54,6 +63,8 @@ def prep_tile_features(
     roots:
         Role-specific storage overrides. Tile inputs use the preprocessing
         root and embedding outputs use the features root.
+    parallel:
+        Ray execution settings; ``None`` runs slides serially in this process.
     size_mm:
         Tile resolutions (microns-per-pixel target) to process.
     model:
@@ -72,39 +83,59 @@ def prep_tile_features(
         Progress sink (default: no-op).
     """
     _validate_models(model)
-    resolved = resolve_datasets(datasets, roots=roots)
+    gpu_budget = 1.0 if device.startswith("cuda") and available_gpu_count() > 0 else 0.0
 
-    for ds in resolved:
+    for ds in resolve_datasets(datasets, roots=roots):
         store = cohort_store(ds, roots)
         ids = select_image_ids(ds, store, image_ids)
-        units = [(s, m, i) for s in size_mm for m in model for i in ids]
+        run_work_units(
+            [(s, m, i) for s in size_mm for m in model for i in ids],
+            partial(_embed, store=store, batch_size=batch_size, device=device, force=force),
+            stage=f"tile-features {ds.name}",
+            unit_id=_unit_id,
+            progress=progress,
+            parallel=parallel,
+            num_gpus=gpu_budget,
+        )
 
-        for s, m, image_id in progress.task(units, desc=f"tile-features {ds.name}"):
-            if not force and store.exists("tile_features", size_mm=s, model=m, image_id=image_id):
-                progress.log(f"skip tile_features image={image_id} size_mm={s} model={m} (exists)")
-                continue
-            tiles = _tiles_array(store.read("tiles", size_mm=s, image_id=image_id))
-            tile_ids, coords = _tile_index(store, size_mm=s, image_id=image_id, n_tiles=len(tiles))
-            embeddings = extract_features(
-                tiles, model=m, batch_size=batch_size, device=device, progress=progress  # type: ignore[arg-type]
-            )
-            store.write(
-                "tile_features",
-                {"features": embeddings, "tile_ids": tile_ids, "coords": coords},
-                size_mm=s,
-                model=m,
-                image_id=image_id,
-            )
-            progress.log(f"wrote tile_features image={image_id} size_mm={s} model={m}")
+
+def _unit_id(unit: tuple[float, str, str]) -> str:
+    return f"size_mm={unit[0]}/model={unit[1]}/{unit[2]}"
+
+
+def _embed(
+    unit: tuple[float, str, str],
+    ctx: WorkContext,
+    *,
+    store: ArtifactStore,
+    batch_size: int,
+    device: str,
+    force: bool,
+) -> str:
+    s, m, image_id = unit
+    if not force and store.exists("tile_features", size_mm=s, model=m, image_id=image_id):
+        ctx.progress.log(f"skip tile_features image={image_id} size_mm={s} model={m} (exists)")
+        return "skipped"
+    tiles = _tiles_array(store.read("tiles", size_mm=s, image_id=image_id))
+    tile_ids, coords = _tile_index(store, size_mm=s, image_id=image_id, n_tiles=len(tiles))
+    embeddings = extract_features(
+        tiles, model=m, batch_size=batch_size, device=device, progress=ctx.progress  # type: ignore[arg-type]
+    )
+    store.write(
+        "tile_features",
+        {"features": embeddings, "tile_ids": tile_ids, "coords": coords},
+        size_mm=s,
+        model=m,
+        image_id=image_id,
+    )
+    ctx.progress.log(f"wrote tile_features image={image_id} size_mm={s} model={m}")
+    return "completed"
 
 
 def _validate_models(model: list[str]) -> None:
     unknown = [m for m in model if m not in IMPLEMENTED_FEATURE_MODELS]
     if unknown:
-        raise ValueError(
-            f"Unknown feature model(s): {unknown}. "
-            f"Available: {list(IMPLEMENTED_FEATURE_MODELS)}."
-        )
+        raise ValueError(f"Unknown feature model(s): {unknown}. Available: {list(IMPLEMENTED_FEATURE_MODELS)}.")
 
 
 def _tiles_array(tiles: object) -> NDArray[np.uint8]:
@@ -128,10 +159,7 @@ def _tile_index(store, *, size_mm: float, image_id: str, n_tiles: int):
     if missing:
         raise ValueError(f"tile_metadata is missing columns: {sorted(missing)}")
     if len(metadata) != n_tiles:
-        raise ValueError(
-            f"tile_metadata has {len(metadata)} rows but tiles has {n_tiles} rows "
-            f"for image {image_id!r}."
-        )
+        raise ValueError(f"tile_metadata has {len(metadata)} rows but tiles has {n_tiles} rows for image {image_id!r}.")
     ids = metadata["tile_id"].to_numpy(dtype=np.int64)
     if len(np.unique(ids)) != n_tiles:
         raise ValueError(f"tile_metadata contains duplicate tile_id values for image {image_id!r}.")

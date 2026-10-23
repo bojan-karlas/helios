@@ -16,7 +16,9 @@ from helios.data.io import ArtifactStore
 from helios.progress import DEFAULT_PROGRESS, Progress
 from helios.stages._runtime import (
     DatasetArgs,
+    ParallelConfig,
     StorageRoots,
+    build_bundle_metadata,
     cohort_store,
     folds_across,
     model_folds,
@@ -35,6 +37,7 @@ def fit_concept(
     *,
     datasets: DatasetArgs,
     roots: StorageRoots | None = None,
+    parallel: ParallelConfig | None = None,
     n_bootstrap: int = DEFAULT_N_BOOTSTRAP,
     force: bool = False,
     progress: Progress = DEFAULT_PROGRESS,
@@ -50,7 +53,7 @@ def fit_concept(
     resolved = resolve_datasets(datasets, roots=roots, require_models=True)
     stores = [cohort_store(ds, roots) for ds in resolved]
     out = stores[0]
-    folds = folds_across(stores)
+    folds = folds_across(resolved, roots)
 
     for fold in progress.task(folds, desc="fit concept"):
         if not force and out.exists("model_concepts", fold=fold):
@@ -61,7 +64,7 @@ def fit_concept(
         risk: list[pd.DataFrame] = []
         for ds, store in zip(resolved, stores, strict=True):
             meta = ds.dataset().image_metadata.set_index("image_id")
-            ids = [image_id for image_id in train_ids(store, fold, where=ds.where) if image_id in meta.index]
+            ids = [image_id for image_id in train_ids(ds, fold, where=ds.where, roots=roots) if image_id in meta.index]
             embeddings.append(_stack_embeddings(store, fold, ids))
             labels.append(meta.loc[ids].reset_index())
             risk.append(_select_risk(store.read("whole_image_risk_score", fold=fold), ids))
@@ -71,7 +74,14 @@ def fit_concept(
             pd.concat(risk, ignore_index=True),
             n_bootstrap=n_bootstrap,
         )
-        out.write("model_concepts", bundle, fold=fold)
+        meta = build_bundle_metadata(
+            "concept",
+            {"n_bootstrap": n_bootstrap},
+            resolved,
+            roots,
+            fold=fold,
+        )
+        out.write("model_concepts", bundle, metadata=meta, fold=fold)
         progress.log(f"wrote model_concepts fold={fold}")
 
 
@@ -79,6 +89,7 @@ def predict_concept(
     *,
     datasets: DatasetArgs,
     roots: StorageRoots | None = None,
+    parallel: ParallelConfig | None = None,
     image_ids: list[str] | None = None,
     force: bool = False,
     progress: Progress = DEFAULT_PROGRESS,
@@ -106,7 +117,9 @@ def predict_concept(
             fold: _select_risk(store.read("whole_image_risk_score", fold=fold), ids)
             for fold in folds
         }
-        predictions, risk_score = infer_concepts(models, embeddings, risk, read_cv_splits(store))
+        predictions, risk_score = infer_concepts(
+            models, embeddings, risk, read_cv_splits(ds, roots, progress=progress)
+        )
         store.write("path_concept_predictions", tag_dataset(predictions, ds.name))
         store.write("path_concept_risk_score", tag_dataset(risk_score, ds.name))
         progress.log(f"wrote concept predictions {ds.name}")

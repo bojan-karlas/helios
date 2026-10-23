@@ -12,7 +12,7 @@ from pathlib import Path
 
 import typer
 
-from helios.progress import Progress, configure_logging
+from helios.progress import Progress, configure_logging, create_run_log_dir
 from helios.progress.reporter import ProgressReporter
 
 
@@ -27,7 +27,14 @@ def reject_output_root(value: Path | None) -> None:
 PREPROCESSING_ROOT = typer.Option(None, "--preprocessing-root", help="Preprocessing base; single dataset only.")
 FEATURES_ROOT = typer.Option(None, "--features-root", help="Feature-store base; single dataset only.")
 MODELS_ROOT = typer.Option(None, "--models-root", help="Shared model base; required for pooled training.")
-RESULTS_ROOT = typer.Option(None, "--results-root", help="Results base; artifacts are grouped by dataset name.")
+RESULTS_ROOT = typer.Option(None, "--results-root", help="Results base; artifacts are grouped by cohort name.")
+SPLITS_FILE = typer.Option(None, "--splits-file", help="Explicit cross-validation splits CSV path.")
+LOG_DIR = typer.Option(None, "--log-dir", help="Base directory for run logs (<log_dir>/<run_id>/).")
+RUN_TAG = typer.Option(None, "--run-tag", help="Optional tag appended to <run_id> in ASCII kebab-case.")
+RAY_ADDRESS = typer.Option(None, "--ray-address", help="Attach to an existing Ray cluster (enables parallelism).")
+MAX_CPUS = typer.Option(
+    None, "--max-cpus", help="CPU budget; values above 1 start a local Ray runtime (default: serial, single process)."
+)
 REMOVED_OUTPUT_ROOT = typer.Option(None, "--output-root", hidden=True, callback=reject_output_root)
 
 
@@ -53,7 +60,17 @@ def datasets_arg(values: list[str] | None) -> list[str]:
     return out
 
 
-def console_progress(output_root: str | Path) -> Progress:
-    """A console Progress that also writes status.json / events.jsonl / run.log."""
-    configure_logging(Path(output_root))
-    return Progress.console(reporter=ProgressReporter(Path(output_root)))
+def console_progress(
+    output_root: str | Path,
+    *,
+    log_dir: str | Path | None = None,
+    run_tag: str | None = None,
+) -> Progress:
+    """A console Progress that writes status.json / events.jsonl / run.log under <log_dir>/<run_id>/."""
+    base_logs = Path(log_dir) if log_dir is not None else Path(output_root) / "logs"
+    run_id, run_dir = create_run_log_dir(base_logs, run_tag)
+    logger = configure_logging(run_dir)
+    reporter = ProgressReporter(run_dir)
+    reporter.update(run_id=run_id, log_dir=str(run_dir))
+    logger.info(f"run_id={run_id} log_dir={run_dir}")
+    return Progress.console(reporter=reporter)

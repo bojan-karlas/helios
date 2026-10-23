@@ -127,7 +127,10 @@ def test_invalid_manifests_report_errors(tmp_path: Path, contents: str) -> None:
 def test_roots_alias_remains_supported(tmp_path: Path) -> None:
     path = tmp_path / "old.yaml"
     path.write_text("roots: [/data/A]\n")
-    assert resolve_datasets([path]) == [ResolvedDataset(Path("/data/A"))]
+    (resolved,) = resolve_datasets([path])
+    assert resolved.root == Path("/data/A")
+    assert resolved.cohort_name == "old"
+    assert resolved.cohort_file == path.resolve()
 
 
 def test_cli_forwards_storage_roots_to_every_stage(monkeypatch, tmp_path: Path) -> None:
@@ -160,7 +163,7 @@ def test_cli_forwards_storage_roots_to_every_stage(monkeypatch, tmp_path: Path) 
             with monkeypatch.context() as patch:
                 patch.setattr(f"{stage.__module__}.{stage.__name__}", lambda _seen=seen, **kwargs: _seen.append(kwargs))
                 module = import_module(f"helios.cli.{'main' if verb == 'report' else verb}")
-                patch.setattr(module, "console_progress", lambda path: None)
+                patch.setattr(module, "console_progress", lambda path, **kw: None)
                 command = [verb] if verb == "report" else [verb, noun]
                 result = runner.invoke(app, command + options)
             assert result.exit_code == 0, (command, result.output, result.exception)

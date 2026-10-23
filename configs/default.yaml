@@ -34,6 +34,7 @@ fit:
     significance_alpha: 0.05
     target: disease_pfs_recurrence_5yfu
   risk:
+    cellular_size_mm: 0.25
     clinical_features:
     - patient_age_at_diagnosis
     - patient_sex
@@ -54,6 +55,7 @@ predict:
     size_mm: 0.25
   morphology: {}
   risk:
+    cellular_size_mm: 0.25
     clinical_features:
     - patient_age_at_diagnosis
     - patient_sex
@@ -70,15 +72,20 @@ prep:
     batch_size: 64
     checkpoint: []
     device: cuda
+    method: cyclegan
     model:
     - virchow2
     size_mm:
     - 0.25
+    source: null
     stain_model_root: src/helios/models/multistain_cyclegan
     target: []
   cell-features:
-    size_mm:
-    - 0.25
+    lymph_frac_threshold: 0.05
+    mitosis_min_count: 1
+    size_mm: 0.25
+    tissue_min_cells: 64
+    tumor_percentile: 75.0
   cells:
     device: cuda
     patch_px: 64
@@ -108,4 +115,5 @@ prep:
 report:
   build:
     assets: true
+    cellular_size_mm: 0.25
     summarize: true

@@ -7,7 +7,9 @@ emits a single rolling ``status.json`` (latest state) and an append-only
 from __future__ import annotations
 
 import json
+import os
 import time
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -23,6 +25,7 @@ class ProgressReporter:
     def __post_init__(self) -> None:
         self.out_dir = Path(self.out_dir)
         self.out_dir.mkdir(parents=True, exist_ok=True)
+        (self.out_dir / "workers").mkdir(parents=True, exist_ok=True)
 
     @property
     def status_path(self) -> Path:
@@ -32,6 +35,10 @@ class ProgressReporter:
     def events_path(self) -> Path:
         return self.out_dir / self.events_name
 
+    @property
+    def workers_dir(self) -> Path:
+        return self.out_dir / "workers"
+
     def event(self, kind: str, **fields: Any) -> None:
         record = {"ts": time.time(), "kind": kind, **fields}
         with self.events_path.open("a") as f:
@@ -40,7 +47,14 @@ class ProgressReporter:
     def update(self, **fields: Any) -> None:
         self._state.update(fields)
         self._state["ts"] = time.time()
-        self.status_path.write_text(json.dumps(self._state, indent=2, default=str))
+        payload = json.dumps(self._state, indent=2, default=str)
+        tmp = self.status_path.parent / f".{self.status_path.name}.{uuid.uuid4().hex}.tmp"
+        try:
+            tmp.write_text(payload)
+            os.replace(tmp, self.status_path)
+        finally:
+            if tmp.exists():
+                tmp.unlink(missing_ok=True)
 
     def stage(self, component: str, status: str, **fields: Any) -> None:
         """Convenience: record a component's status as both an event and state."""

@@ -86,7 +86,15 @@ class SlideFeatureRef:
     features_path: Path
     background_path: Path | None = None
     aug_features_path: Path | None = None
+    aug_features_paths: tuple[Path, ...] = ()
     label: object | None = None
+
+    def resolved_aug_paths(self) -> tuple[Path, ...]:
+        if self.aug_features_paths:
+            return self.aug_features_paths
+        if self.aug_features_path is not None:
+            return (self.aug_features_path,)
+        return ()
 
 
 @dataclass(frozen=True)
@@ -631,14 +639,30 @@ def _load_training_bag(
     foreground = ~is_background
     feats = feats[foreground]
 
-    if ref.aug_features_path is not None and aug_swap_prob > 0 and feats.shape[0] > 0:
-        aug_feats = _read_hdf5_features(ref.aug_features_path)[foreground]
-        swap = rng.random(feats.shape[0]) < aug_swap_prob
+    aug_paths = ref.resolved_aug_paths()
+    if aug_paths and aug_swap_prob > 0 and feats.shape[0] > 0:
+        aug_stacks = [_read_hdf5_features(p)[foreground] for p in aug_paths]
         if aug_mode == "replace":
-            feats = feats.copy()
-            feats[swap] = aug_feats[swap]
-        elif swap.any():
-            feats = np.concatenate([feats, aug_feats[swap]], axis=0)
+            swap = rng.random(feats.shape[0]) < aug_swap_prob
+            if swap.any():
+                feats = feats.copy()
+                if len(aug_stacks) == 1:
+                    feats[swap] = aug_stacks[0][swap]
+                else:
+                    choice = rng.integers(0, len(aug_stacks), size=int(swap.sum()))
+                    swap_indices = np.flatnonzero(swap)
+                    for k, stack in enumerate(aug_stacks):
+                        sel = swap_indices[choice == k]
+                        if sel.size:
+                            feats[sel] = stack[sel]
+        else:
+            extra_bags = [feats]
+            for stack in aug_stacks:
+                swap = rng.random(feats.shape[0]) < aug_swap_prob
+                if swap.any():
+                    extra_bags.append(stack[swap])
+            if len(extra_bags) > 1:
+                feats = np.concatenate(extra_bags, axis=0)
 
     return feats
 

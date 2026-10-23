@@ -8,7 +8,16 @@ from helios.data.catalog import (
 )
 from helios.data.dataset import Dataset
 from helios.data.io import ArtifactStore, read, write
-from helios.data.resolver import Resolver, Roots, StorageRoots, render_path
+from helios.data.resolver import (
+    Resolver,
+    Roots,
+    StorageRoots,
+    format_hive_subpath,
+    format_hive_value,
+    parse_hive_value,
+    render_path,
+    scan_hive,
+)
 
 __all__ = [
     "ArtifactSpec",
@@ -24,4 +33,8 @@ __all__ = [
     "Roots",
     "StorageRoots",
     "render_path",
+    "format_hive_value",
+    "parse_hive_value",
+    "format_hive_subpath",
+    "scan_hive",
 ]

@@ -60,6 +60,8 @@ def extract_features(
     model: FeatureModel,
     batch_size: int = 64,
     device: str = "cuda",
+    start: int = 0,
+    stop: int | None = None,
     progress: Progress = DEFAULT_PROGRESS,
 ) -> NDArray[np.float32]:
     """Embed every tile of ONE whole-slide image with a foundation model.
@@ -91,6 +93,8 @@ def extract_features(
         raise ValueError("batch_size must be positive")
     if tiles.ndim != 4 or tiles.shape[-1] != 3:
         raise ValueError("tiles must have shape (N, H, W, 3)")
+    if start != 0 or stop is not None:
+        tiles = tiles[start:stop]
     encoder = _load_encoder(model, device=device)
     n = int(len(tiles))
     n_batches = (n + batch_size - 1) // batch_size if batch_size > 0 else 0

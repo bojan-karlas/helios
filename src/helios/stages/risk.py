@@ -20,7 +20,9 @@ from helios.data.io import ArtifactStore
 from helios.progress import DEFAULT_PROGRESS, Progress
 from helios.stages._runtime import (
     DatasetArgs,
+    ParallelConfig,
     StorageRoots,
+    build_bundle_metadata,
     cohort_store,
     drop_provenance,
     folds_across,
@@ -31,6 +33,7 @@ from helios.stages._runtime import (
     tag_dataset,
     train_ids,
 )
+from helios.stages.cell_features import DEFAULT_SIZE_MM as DEFAULT_CELLULAR_SIZE_MM
 
 # -- configurable defaults (source of truth for configs/default.yaml) ----------
 DEFAULT_RISK: list[str] = list(RISK_KINDS)
@@ -65,11 +68,13 @@ def fit_risk(
     *,
     datasets: DatasetArgs,
     roots: StorageRoots | None = None,
+    parallel: ParallelConfig | None = None,
     risk: list[str] = DEFAULT_RISK,
     target: str = DEFAULT_TARGET,
     staging_feature: str = DEFAULT_STAGING_FEATURE,
     clinical_features: list[str] = DEFAULT_CLINICAL_FEATURES,
     estimator: str = DEFAULT_ESTIMATOR,
+    cellular_size_mm: float = DEFAULT_CELLULAR_SIZE_MM,
     force: bool = False,
     progress: Progress = DEFAULT_PROGRESS,
 ) -> None:
@@ -84,7 +89,7 @@ def fit_risk(
     resolved = resolve_datasets(datasets, roots=roots, require_models=True)
     stores = [cohort_store(ds, roots) for ds in resolved]
     out = stores[0]
-    folds = folds_across(stores)
+    folds = folds_across(resolved, roots)
 
     for kind in _ordered(risk):
         model_id, _ = _ARTIFACTS[kind]
@@ -96,15 +101,36 @@ def fit_risk(
             targets: list[pd.Series] = []
             for ds, store in zip(resolved, stores, strict=True):
                 meta = ds.dataset().image_metadata.set_index("image_id")
-                ids = [i for i in train_ids(store, fold, where=ds.where) if i in meta.index]
-                features.append(_features(kind, store, ids, staging_feature, clinical_features))
+                ids = [i for i in train_ids(ds, fold, where=ds.where, roots=roots) if i in meta.index]
+                feat_df = _features(kind, store, ids, staging_feature, clinical_features, cellular_size_mm)
+                present_ids = set(feat_df["image_id"].astype(str))
+                missing_ids = [i for i in ids if str(i) not in present_ids]
+                if missing_ids:
+                    raise ValueError(
+                        f"Missing {kind} training features for image_ids in {ds.name}: {missing_ids[:5]}"
+                    )
+                features.append(feat_df)
                 targets.append(meta.loc[ids, target])
             bundle = train_risk_model(
                 pd.concat(features, ignore_index=True),
                 pd.concat(targets, ignore_index=True),
                 estimator=estimator,
             )
-            out.write(model_id, bundle, fold=fold)
+            meta = build_bundle_metadata(
+                "risk",
+                {
+                    "risk": [kind],
+                    "target": target,
+                    "staging_feature": staging_feature,
+                    "clinical_features": clinical_features,
+                    "estimator": estimator,
+                    "cellular_size_mm": cellular_size_mm,
+                },
+                resolved,
+                roots,
+                fold=fold,
+            )
+            out.write(model_id, bundle, metadata=meta, fold=fold)
             progress.log(f"wrote {model_id} fold={fold}")
 
 
@@ -112,9 +138,11 @@ def predict_risk(
     *,
     datasets: DatasetArgs,
     roots: StorageRoots | None = None,
+    parallel: ParallelConfig | None = None,
     risk: list[str] = DEFAULT_RISK,
     staging_feature: str = DEFAULT_STAGING_FEATURE,
     clinical_features: list[str] = DEFAULT_CLINICAL_FEATURES,
+    cellular_size_mm: float = DEFAULT_CELLULAR_SIZE_MM,
     image_ids: list[str] | None = None,
     force: bool = False,
     progress: Progress = DEFAULT_PROGRESS,
@@ -140,8 +168,8 @@ def predict_risk(
                 progress.log(f"skip {score_id} {ds.name} (exists)")
                 continue
             models = {fold: store.read(model_id, fold=fold) for fold in folds}
-            features = _features(kind, store, ids, staging_feature, clinical_features)
-            scores = infer_risk_model(models, features, read_cv_splits(store))
+            features = _features(kind, store, ids, staging_feature, clinical_features, cellular_size_mm)
+            scores = infer_risk_model(models, features, read_cv_splits(ds, roots, progress=progress))
             store.write(score_id, tag_dataset(scores, ds.name))
             progress.log(f"wrote {score_id} {ds.name}")
             if kind == "helios":
@@ -155,10 +183,15 @@ def _features(
     ids: list[str],
     staging_feature: str,
     clinical_features: list[str],
+    cellular_size_mm: float,
 ) -> pd.DataFrame:
-    """Build the per-image feature table for one risk kind, restricted to ``ids``."""
+    """Build the per-image feature table for one risk kind, restricted to ``ids``.
+
+    The cellular table is read for exactly one tile resolution (default-threshold
+    variant) so the feature matrix never mixes ``size_mm`` partitions.
+    """
     if kind == "cellular":
-        table = drop_provenance(store.read("cellular_features"))
+        table = drop_provenance(store.read("cellular_features", size_mm=cellular_size_mm))
     elif kind == "staging":
         table = store.read("image_metadata")[["image_id", staging_feature]]
     elif kind == "clinical":

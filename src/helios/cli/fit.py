@@ -13,10 +13,15 @@ import typer
 
 from helios.cli._common import (
     FEATURES_ROOT,
+    LOG_DIR,
+    MAX_CPUS,
     MODELS_ROOT,
     PREPROCESSING_ROOT,
+    RAY_ADDRESS,
     REMOVED_OUTPUT_ROOT,
     RESULTS_ROOT,
+    RUN_TAG,
+    SPLITS_FILE,
     console_progress,
     csv,
     datasets_arg,
@@ -37,6 +42,11 @@ def mil(
     features_root: Path | None = FEATURES_ROOT,
     models_root: Path | None = MODELS_ROOT,
     results_root: Path | None = RESULTS_ROOT,
+    splits_file: Path | None = SPLITS_FILE,
+    log_dir: Path | None = LOG_DIR,
+    run_tag: str | None = RUN_TAG,
+    ray_address: str | None = RAY_ADDRESS,
+    max_cpus: int | None = MAX_CPUS,
     output_root: Path | None = REMOVED_OUTPUT_ROOT,
     size_mm: float | None = typer.Option(None, "--size-mm", help="Tile resolution to train on."),
     model: str | None = typer.Option(None, "--model", help="Foundation model providing tile features."),
@@ -72,13 +82,15 @@ def mil(
     """Train the whole-slide A-MIL model."""
     from helios.config.stage_config import load_stage_params
     from helios.data.resolver import StorageRoots
-    from helios.stages._runtime import resolve_datasets
+    from helios.stages._runtime import ParallelConfig, resolve_datasets
     from helios.stages.mil import fit_mil
 
     roots = StorageRoots(
         preprocessing_root=preprocessing_root, features_root=features_root,
         models_root=models_root, results_root=results_root,
+        splits_file=splits_file,
     )
+    parallel = ParallelConfig(ray_address=ray_address, max_cpus=max_cpus)
     datasets = resolve_datasets(datasets_arg(dataset), where=filter, roots=roots, require_models=True)
     overrides = {
         "size_mm": size_mm,
@@ -101,8 +113,11 @@ def mil(
     }
     params = load_stage_params("fit", "mil", config_path=config, overrides=overrides)
     fit_mil(
-        datasets=datasets, roots=roots, force=force,
-        progress=console_progress(results_root or models_root or datasets[0].root), **params,
+        datasets=datasets, roots=roots, parallel=parallel, force=force,
+        progress=console_progress(
+            results_root or models_root or datasets[0].root, log_dir=log_dir, run_tag=run_tag
+        ),
+        **params,
     )
     typer.echo("fit mil: done")
 
@@ -114,6 +129,11 @@ def concept(
     features_root: Path | None = FEATURES_ROOT,
     models_root: Path | None = MODELS_ROOT,
     results_root: Path | None = RESULTS_ROOT,
+    splits_file: Path | None = SPLITS_FILE,
+    log_dir: Path | None = LOG_DIR,
+    run_tag: str | None = RUN_TAG,
+    ray_address: str | None = RAY_ADDRESS,
+    max_cpus: int | None = MAX_CPUS,
     output_root: Path | None = REMOVED_OUTPUT_ROOT,
     n_bootstrap: int | None = typer.Option(None, "--n-bootstrap", help="Bootstrap replicas per concept."),
     filter: str | None = _FILTER,
@@ -123,18 +143,23 @@ def concept(
     """Train per-concept probes (+ concept risk + residual correction)."""
     from helios.config.stage_config import load_stage_params
     from helios.data.resolver import StorageRoots
-    from helios.stages._runtime import resolve_datasets
+    from helios.stages._runtime import ParallelConfig, resolve_datasets
     from helios.stages.concept import fit_concept
 
     roots = StorageRoots(
         preprocessing_root=preprocessing_root, features_root=features_root,
         models_root=models_root, results_root=results_root,
+        splits_file=splits_file,
     )
+    parallel = ParallelConfig(ray_address=ray_address, max_cpus=max_cpus)
     datasets = resolve_datasets(datasets_arg(dataset), where=filter, roots=roots, require_models=True)
     params = load_stage_params("fit", "concept", config_path=config, overrides={"n_bootstrap": n_bootstrap})
     fit_concept(
-        datasets=datasets, roots=roots, force=force,
-        progress=console_progress(results_root or models_root or datasets[0].root), **params,
+        datasets=datasets, roots=roots, parallel=parallel, force=force,
+        progress=console_progress(
+            results_root or models_root or datasets[0].root, log_dir=log_dir, run_tag=run_tag
+        ),
+        **params,
     )
     typer.echo("fit concept: done")
 
@@ -146,6 +171,11 @@ def morphology(
     features_root: Path | None = FEATURES_ROOT,
     models_root: Path | None = MODELS_ROOT,
     results_root: Path | None = RESULTS_ROOT,
+    splits_file: Path | None = SPLITS_FILE,
+    log_dir: Path | None = LOG_DIR,
+    run_tag: str | None = RUN_TAG,
+    ray_address: str | None = RAY_ADDRESS,
+    max_cpus: int | None = MAX_CPUS,
     output_root: Path | None = REMOVED_OUTPUT_ROOT,
     target: str | None = typer.Option(None, "--target", help="Outcome column to train against."),
     attention_cutoff: float | None = typer.Option(
@@ -167,13 +197,15 @@ def morphology(
     """Train the patch-morphology clustering risk model."""
     from helios.config.stage_config import load_stage_params
     from helios.data.resolver import StorageRoots
-    from helios.stages._runtime import resolve_datasets
+    from helios.stages._runtime import ParallelConfig, resolve_datasets
     from helios.stages.morphology import fit_morphology
 
     roots = StorageRoots(
         preprocessing_root=preprocessing_root, features_root=features_root,
         models_root=models_root, results_root=results_root,
+        splits_file=splits_file,
     )
+    parallel = ParallelConfig(ray_address=ray_address, max_cpus=max_cpus)
     datasets = resolve_datasets(datasets_arg(dataset), where=filter, roots=roots, require_models=True)
     overrides = {
         "target": target,
@@ -188,8 +220,11 @@ def morphology(
     }
     params = load_stage_params("fit", "morphology", config_path=config, overrides=overrides)
     fit_morphology(
-        datasets=datasets, roots=roots, force=force,
-        progress=console_progress(results_root or models_root or datasets[0].root), **params,
+        datasets=datasets, roots=roots, parallel=parallel, force=force,
+        progress=console_progress(
+            results_root or models_root or datasets[0].root, log_dir=log_dir, run_tag=run_tag
+        ),
+        **params,
     )
     typer.echo("fit morphology: done")
 
@@ -201,6 +236,11 @@ def risk(
     features_root: Path | None = FEATURES_ROOT,
     models_root: Path | None = MODELS_ROOT,
     results_root: Path | None = RESULTS_ROOT,
+    splits_file: Path | None = SPLITS_FILE,
+    log_dir: Path | None = LOG_DIR,
+    run_tag: str | None = RUN_TAG,
+    ray_address: str | None = RAY_ADDRESS,
+    max_cpus: int | None = MAX_CPUS,
     output_root: Path | None = REMOVED_OUTPUT_ROOT,
     risk: str | None = typer.Option(
         None, "--risk", help="Comma list of risk kinds (cellular,staging,clinical,helios)."
@@ -214,18 +254,23 @@ def risk(
     """Train the simple risk sub-models (and HELIOS fusion)."""
     from helios.config.stage_config import load_stage_params
     from helios.data.resolver import StorageRoots
-    from helios.stages._runtime import resolve_datasets
+    from helios.stages._runtime import ParallelConfig, resolve_datasets
     from helios.stages.risk import fit_risk
 
     roots = StorageRoots(
         preprocessing_root=preprocessing_root, features_root=features_root,
         models_root=models_root, results_root=results_root,
+        splits_file=splits_file,
     )
+    parallel = ParallelConfig(ray_address=ray_address, max_cpus=max_cpus)
     datasets = resolve_datasets(datasets_arg(dataset), where=filter, roots=roots, require_models=True)
     overrides = {"risk": csv(risk), "target": target, "estimator": estimator}
     params = load_stage_params("fit", "risk", config_path=config, overrides=overrides)
     fit_risk(
-        datasets=datasets, roots=roots, force=force,
-        progress=console_progress(results_root or models_root or datasets[0].root), **params,
+        datasets=datasets, roots=roots, parallel=parallel, force=force,
+        progress=console_progress(
+            results_root or models_root or datasets[0].root, log_dir=log_dir, run_tag=run_tag
+        ),
+        **params,
     )
     typer.echo("fit risk: done")

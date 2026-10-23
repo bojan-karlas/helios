@@ -1,4 +1,4 @@
-"""MultiStain-CycleGAN stain-normalization inference.
+"""MultiStain-CycleGAN stain-normalization inference and transform registry.
 
 The compatible generator architecture is adapted from
 DBO-DKFZ/multistain_cyclegan_normalization, itself based on CycleGAN/pix2pix.
@@ -11,10 +11,37 @@ from __future__ import annotations
 
 from functools import cache, partial
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import torch
 from numpy.typing import NDArray
+
+AUGMENTATION_METHODS = ("cyclegan",)
+
+
+def apply_augmentation(
+    tiles: NDArray[np.uint8],
+    *,
+    method: str = "cyclegan",
+    batch_size: int = 16,
+    device: str = "cuda",
+    **params: Any,
+) -> NDArray[np.uint8]:
+    """Dispatch tile augmentation by ``method`` (currently ``cyclegan``)."""
+    if method == "cyclegan":
+        checkpoint = params.get("checkpoint")
+        if not checkpoint:
+            raise ValueError("cyclegan augmentation requires a checkpoint path.")
+        return augment_stains(
+            tiles,
+            checkpoint=checkpoint,
+            batch_size=batch_size,
+            device=device,
+        )
+    raise ValueError(
+        f"Unsupported augmentation method {method!r}. Available: {list(AUGMENTATION_METHODS)}."
+    )
 
 
 def augment_stains(
@@ -23,6 +50,8 @@ def augment_stains(
     checkpoint: str | Path,
     batch_size: int = 16,
     device: str = "cuda",
+    start: int = 0,
+    stop: int | None = None,
 ) -> NDArray[np.uint8]:
     """Normalize one slide's tiles with a user-trained MultiStain-CycleGAN.
 
@@ -39,6 +68,8 @@ def augment_stains(
         raise ValueError("tiles must have dtype uint8")
     if batch_size <= 0:
         raise ValueError("batch_size must be positive")
+    if start != 0 or stop is not None:
+        array = array[start:stop]
 
     generator, resolved_device = _load_generator(str(Path(checkpoint).expanduser().resolve()), device)
     height, width = int(array.shape[1]), int(array.shape[2])

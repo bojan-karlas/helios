@@ -14,10 +14,15 @@ import typer
 
 from helios.cli._common import (
     FEATURES_ROOT,
+    LOG_DIR,
+    MAX_CPUS,
     MODELS_ROOT,
     PREPROCESSING_ROOT,
+    RAY_ADDRESS,
     REMOVED_OUTPUT_ROOT,
     RESULTS_ROOT,
+    RUN_TAG,
+    SPLITS_FILE,
     console_progress,
     csv,
     csv_floats,
@@ -28,7 +33,9 @@ prep_app = typer.Typer(add_completion=False, help="Derive data artifacts (no fit
 
 _DATASET = typer.Option(..., "--dataset", help="Cohort root(s) or cohort file(s); repeatable or comma-separated.")
 _DATASET_GROUP = typer.Option(
-    None, "--dataset", help="Cohort root(s) or cohort file(s); repeatable or comma-separated. Required for bare `helios prep`."
+    None,
+    "--dataset",
+    help="Cohort root(s) or cohort file(s); repeatable or comma-separated. Required for bare `helios prep`.",
 )
 _CONFIG = typer.Option(None, "--config", "-c", help="Override config YAML.")
 _FORCE = typer.Option(False, "--force", help="Re-derive even if outputs exist.")
@@ -42,6 +49,10 @@ def prep_all(
     features_root: Path | None = FEATURES_ROOT,
     models_root: Path | None = MODELS_ROOT,
     results_root: Path | None = RESULTS_ROOT,
+    log_dir: Path | None = LOG_DIR,
+    run_tag: str | None = RUN_TAG,
+    ray_address: str | None = RAY_ADDRESS,
+    max_cpus: int | None = MAX_CPUS,
     output_root: Path | None = REMOVED_OUTPUT_ROOT,
     config: Path | None = _CONFIG,
     force: bool = _FORCE,
@@ -54,17 +65,22 @@ def prep_all(
     from helios.config.stage_config import load_stage_params
     from helios.data.resolver import StorageRoots
     from helios.stages import STAGES
-    from helios.stages._runtime import resolve_datasets
+    from helios.stages._runtime import ParallelConfig, resolve_datasets
 
     roots = StorageRoots(
         preprocessing_root=preprocessing_root, features_root=features_root,
         models_root=models_root, results_root=results_root,
     )
+    parallel = ParallelConfig(ray_address=ray_address, max_cpus=max_cpus)
     datasets = resolve_datasets(datasets_arg(dataset), roots=roots)
-    progress = console_progress(results_root or models_root or datasets[0].root)
+    progress = console_progress(
+        results_root or models_root or datasets[0].root,
+        log_dir=log_dir,
+        run_tag=run_tag,
+    )
     for noun, stage in STAGES["prep"].items():
         params = load_stage_params("prep", noun, config_path=config)
-        stage(datasets=datasets, roots=roots, force=force, progress=progress, **params)
+        stage(datasets=datasets, roots=roots, parallel=parallel, force=force, progress=progress, **params)
     typer.echo("prep: done")
 
 
@@ -75,6 +91,11 @@ def splits(
     features_root: Path | None = FEATURES_ROOT,
     models_root: Path | None = MODELS_ROOT,
     results_root: Path | None = RESULTS_ROOT,
+    splits_file: Path | None = SPLITS_FILE,
+    log_dir: Path | None = LOG_DIR,
+    run_tag: str | None = RUN_TAG,
+    ray_address: str | None = RAY_ADDRESS,
+    max_cpus: int | None = MAX_CPUS,
     output_root: Path | None = REMOVED_OUTPUT_ROOT,
     n_folds: int | None = typer.Option(None, "--n-folds", help="Number of CV folds."),
     val_fraction: float | None = typer.Option(
@@ -97,13 +118,15 @@ def splits(
     """Generate cross-validation splits for a training cohort."""
     from helios.config.stage_config import load_stage_params
     from helios.data.resolver import StorageRoots
-    from helios.stages._runtime import resolve_datasets
+    from helios.stages._runtime import ParallelConfig, resolve_datasets
     from helios.stages.splits import prep_splits
 
     roots = StorageRoots(
         preprocessing_root=preprocessing_root, features_root=features_root,
         models_root=models_root, results_root=results_root,
+        splits_file=splits_file,
     )
+    parallel = ParallelConfig(ray_address=ray_address, max_cpus=max_cpus)
     datasets = resolve_datasets(datasets_arg(dataset), roots=roots)
     overrides = {
         "n_folds": n_folds,
@@ -114,8 +137,11 @@ def splits(
     }
     params = load_stage_params("prep", "splits", config_path=config, overrides=overrides)
     prep_splits(
-        datasets=datasets, roots=roots, force=force,
-        progress=console_progress(results_root or models_root or datasets[0].root), **params,
+        datasets=datasets, roots=roots, parallel=parallel, force=force,
+        progress=console_progress(
+            results_root or models_root or datasets[0].root, log_dir=log_dir, run_tag=run_tag
+        ),
+        **params,
     )
     typer.echo("prep splits: done")
 
@@ -127,6 +153,10 @@ def thumbnails(
     features_root: Path | None = FEATURES_ROOT,
     models_root: Path | None = MODELS_ROOT,
     results_root: Path | None = RESULTS_ROOT,
+    log_dir: Path | None = LOG_DIR,
+    run_tag: str | None = RUN_TAG,
+    ray_address: str | None = RAY_ADDRESS,
+    max_cpus: int | None = MAX_CPUS,
     output_root: Path | None = REMOVED_OUTPUT_ROOT,
     max_size: int | None = typer.Option(None, "--max-size", help="Thumbnail longest-edge pixels."),
     config: Path | None = _CONFIG,
@@ -135,18 +165,22 @@ def thumbnails(
     """Extract a low-resolution thumbnail per slide."""
     from helios.config.stage_config import load_stage_params
     from helios.data.resolver import StorageRoots
-    from helios.stages._runtime import resolve_datasets
+    from helios.stages._runtime import ParallelConfig, resolve_datasets
     from helios.stages.thumbnails import prep_thumbnails
 
     roots = StorageRoots(
         preprocessing_root=preprocessing_root, features_root=features_root,
         models_root=models_root, results_root=results_root,
     )
+    parallel = ParallelConfig(ray_address=ray_address, max_cpus=max_cpus)
     datasets = resolve_datasets(datasets_arg(dataset), roots=roots)
     params = load_stage_params("prep", "thumbnails", config_path=config, overrides={"max_size": max_size})
     prep_thumbnails(
-        datasets=datasets, roots=roots, force=force,
-        progress=console_progress(results_root or models_root or datasets[0].root), **params,
+        datasets=datasets, roots=roots, parallel=parallel, force=force,
+        progress=console_progress(
+            results_root or models_root or datasets[0].root, log_dir=log_dir, run_tag=run_tag
+        ),
+        **params,
     )
     typer.echo("prep thumbnails: done")
 
@@ -158,6 +192,10 @@ def tiles(
     features_root: Path | None = FEATURES_ROOT,
     models_root: Path | None = MODELS_ROOT,
     results_root: Path | None = RESULTS_ROOT,
+    log_dir: Path | None = LOG_DIR,
+    run_tag: str | None = RUN_TAG,
+    ray_address: str | None = RAY_ADDRESS,
+    max_cpus: int | None = MAX_CPUS,
     output_root: Path | None = REMOVED_OUTPUT_ROOT,
     size_mm: str | None = typer.Option(None, "--size-mm", help="Comma list of resolutions."),
     tile_px: int | None = typer.Option(None, "--tile-px", help="Tile edge length in pixels."),
@@ -170,13 +208,14 @@ def tiles(
     """Tile each slide and flag background tiles."""
     from helios.config.stage_config import load_stage_params
     from helios.data.resolver import StorageRoots
-    from helios.stages._runtime import resolve_datasets
+    from helios.stages._runtime import ParallelConfig, resolve_datasets
     from helios.stages.tiles import prep_tiles
 
     roots = StorageRoots(
         preprocessing_root=preprocessing_root, features_root=features_root,
         models_root=models_root, results_root=results_root,
     )
+    parallel = ParallelConfig(ray_address=ray_address, max_cpus=max_cpus)
     datasets = resolve_datasets(datasets_arg(dataset), roots=roots)
     overrides = {
         "size_mm": csv_floats(size_mm),
@@ -185,8 +224,11 @@ def tiles(
     }
     params = load_stage_params("prep", "tiles", config_path=config, overrides=overrides)
     prep_tiles(
-        datasets=datasets, roots=roots, force=force,
-        progress=console_progress(results_root or models_root or datasets[0].root), **params,
+        datasets=datasets, roots=roots, parallel=parallel, force=force,
+        progress=console_progress(
+            results_root or models_root or datasets[0].root, log_dir=log_dir, run_tag=run_tag
+        ),
+        **params,
     )
     typer.echo("prep tiles: done")
 
@@ -198,7 +240,13 @@ def augment(
     features_root: Path | None = FEATURES_ROOT,
     models_root: Path | None = MODELS_ROOT,
     results_root: Path | None = RESULTS_ROOT,
+    log_dir: Path | None = LOG_DIR,
+    run_tag: str | None = RUN_TAG,
+    ray_address: str | None = RAY_ADDRESS,
+    max_cpus: int | None = MAX_CPUS,
     output_root: Path | None = REMOVED_OUTPUT_ROOT,
+    method: str | None = typer.Option(None, "--method", help="Augmentation method (default: cyclegan)."),
+    source: str | None = typer.Option(None, "--source", help="Optional CycleGAN source stain domain."),
     target: str | None = typer.Option(None, "--target", help="Comma list of stain targets."),
     checkpoint: str | None = typer.Option(
         None, "--checkpoint", help="Comma list of user-trained MultiStain-CycleGAN G_A checkpoints."
@@ -218,15 +266,18 @@ def augment(
     """Stain-augment tiles and extract augmented features."""
     from helios.config.stage_config import load_stage_params
     from helios.data.resolver import StorageRoots
-    from helios.stages._runtime import resolve_datasets
+    from helios.stages._runtime import ParallelConfig, resolve_datasets
     from helios.stages.augment import prep_augment
 
     roots = StorageRoots(
         preprocessing_root=preprocessing_root, features_root=features_root,
         models_root=models_root, results_root=results_root,
     )
+    parallel = ParallelConfig(ray_address=ray_address, max_cpus=max_cpus)
     datasets = resolve_datasets(datasets_arg(dataset), roots=roots)
     overrides = {
+        "method": method,
+        "source": source,
         "target": csv(target),
         "checkpoint": csv(checkpoint),
         "stain_model_root": stain_model_root,
@@ -237,8 +288,11 @@ def augment(
     }
     params = load_stage_params("prep", "augment", config_path=config, overrides=overrides)
     prep_augment(
-        datasets=datasets, roots=roots, force=force,
-        progress=console_progress(results_root or models_root or datasets[0].root), **params,
+        datasets=datasets, roots=roots, parallel=parallel, force=force,
+        progress=console_progress(
+            results_root or models_root or datasets[0].root, log_dir=log_dir, run_tag=run_tag
+        ),
+        **params,
     )
     typer.echo("prep augment: done")
 
@@ -250,6 +304,10 @@ def tile_features(
     features_root: Path | None = FEATURES_ROOT,
     models_root: Path | None = MODELS_ROOT,
     results_root: Path | None = RESULTS_ROOT,
+    log_dir: Path | None = LOG_DIR,
+    run_tag: str | None = RUN_TAG,
+    ray_address: str | None = RAY_ADDRESS,
+    max_cpus: int | None = MAX_CPUS,
     output_root: Path | None = REMOVED_OUTPUT_ROOT,
     size_mm: str | None = typer.Option(None, "--size-mm", help="Comma list of resolutions, e.g. 0.25,0.5."),
     model: str | None = typer.Option(None, "--model", help="Comma list of foundation models."),
@@ -261,19 +319,23 @@ def tile_features(
     """Extract foundation tile features for staged tiles."""
     from helios.config.stage_config import load_stage_params
     from helios.data.resolver import StorageRoots
-    from helios.stages._runtime import resolve_datasets
+    from helios.stages._runtime import ParallelConfig, resolve_datasets
     from helios.stages.tile_features import prep_tile_features
 
     roots = StorageRoots(
         preprocessing_root=preprocessing_root, features_root=features_root,
         models_root=models_root, results_root=results_root,
     )
+    parallel = ParallelConfig(ray_address=ray_address, max_cpus=max_cpus)
     datasets = resolve_datasets(datasets_arg(dataset), roots=roots)
     overrides = {"size_mm": csv_floats(size_mm), "model": csv(model), "batch_size": batch_size, "device": device}
     params = load_stage_params("prep", "tile-features", config_path=config, overrides=overrides)
     prep_tile_features(
-        datasets=datasets, roots=roots, force=force,
-        progress=console_progress(results_root or models_root or datasets[0].root), **params,
+        datasets=datasets, roots=roots, parallel=parallel, force=force,
+        progress=console_progress(
+            results_root or models_root or datasets[0].root, log_dir=log_dir, run_tag=run_tag
+        ),
+        **params,
     )
     typer.echo("prep tile-features: done")
 
@@ -285,6 +347,10 @@ def cells(
     features_root: Path | None = FEATURES_ROOT,
     models_root: Path | None = MODELS_ROOT,
     results_root: Path | None = RESULTS_ROOT,
+    log_dir: Path | None = LOG_DIR,
+    run_tag: str | None = RUN_TAG,
+    ray_address: str | None = RAY_ADDRESS,
+    max_cpus: int | None = MAX_CPUS,
     output_root: Path | None = REMOVED_OUTPUT_ROOT,
     patch_px: int | None = typer.Option(None, "--patch-px", help="Tumor patch edge length in pixels."),
     device: str | None = typer.Option(None, "--device", help="Torch device (cuda, cpu)."),
@@ -294,19 +360,23 @@ def cells(
     """Segment cells, cut tumor patches, and classify mitoses."""
     from helios.config.stage_config import load_stage_params
     from helios.data.resolver import StorageRoots
-    from helios.stages._runtime import resolve_datasets
+    from helios.stages._runtime import ParallelConfig, resolve_datasets
     from helios.stages.cells import prep_cells
 
     roots = StorageRoots(
         preprocessing_root=preprocessing_root, features_root=features_root,
         models_root=models_root, results_root=results_root,
     )
+    parallel = ParallelConfig(ray_address=ray_address, max_cpus=max_cpus)
     datasets = resolve_datasets(datasets_arg(dataset), roots=roots)
     overrides = {"patch_px": patch_px, "device": device}
     params = load_stage_params("prep", "cells", config_path=config, overrides=overrides)
     prep_cells(
-        datasets=datasets, roots=roots, force=force,
-        progress=console_progress(results_root or models_root or datasets[0].root), **params,
+        datasets=datasets, roots=roots, parallel=parallel, force=force,
+        progress=console_progress(
+            results_root or models_root or datasets[0].root, log_dir=log_dir, run_tag=run_tag
+        ),
+        **params,
     )
     typer.echo("prep cells: done")
 
@@ -318,25 +388,33 @@ def cell_features(
     features_root: Path | None = FEATURES_ROOT,
     models_root: Path | None = MODELS_ROOT,
     results_root: Path | None = RESULTS_ROOT,
+    log_dir: Path | None = LOG_DIR,
+    run_tag: str | None = RUN_TAG,
+    ray_address: str | None = RAY_ADDRESS,
+    max_cpus: int | None = MAX_CPUS,
     output_root: Path | None = REMOVED_OUTPUT_ROOT,
-    size_mm: str | None = typer.Option(None, "--size-mm", help="Comma list of resolutions."),
+    size_mm: float | None = typer.Option(None, "--size-mm", help="Tile resolution in mm (default: 0.25)."),
     config: Path | None = _CONFIG,
     force: bool = _FORCE,
 ) -> None:
     """Aggregate per-tile cell counts and compute cellular features."""
     from helios.config.stage_config import load_stage_params
     from helios.data.resolver import StorageRoots
-    from helios.stages._runtime import resolve_datasets
+    from helios.stages._runtime import ParallelConfig, resolve_datasets
     from helios.stages.cell_features import prep_cell_features
 
     roots = StorageRoots(
         preprocessing_root=preprocessing_root, features_root=features_root,
         models_root=models_root, results_root=results_root,
     )
+    parallel = ParallelConfig(ray_address=ray_address, max_cpus=max_cpus)
     datasets = resolve_datasets(datasets_arg(dataset), roots=roots)
-    params = load_stage_params("prep", "cell-features", config_path=config, overrides={"size_mm": csv_floats(size_mm)})
+    params = load_stage_params("prep", "cell-features", config_path=config, overrides={"size_mm": size_mm})
     prep_cell_features(
-        datasets=datasets, roots=roots, force=force,
-        progress=console_progress(results_root or models_root or datasets[0].root), **params,
+        datasets=datasets, roots=roots, parallel=parallel, force=force,
+        progress=console_progress(
+            results_root or models_root or datasets[0].root, log_dir=log_dir, run_tag=run_tag
+        ),
+        **params,
     )
     typer.echo("prep cell-features: done")

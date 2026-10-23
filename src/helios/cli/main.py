@@ -16,10 +16,14 @@ import typer
 
 from helios.cli._common import (
     FEATURES_ROOT,
+    LOG_DIR,
+    MAX_CPUS,
     MODELS_ROOT,
     PREPROCESSING_ROOT,
+    RAY_ADDRESS,
     REMOVED_OUTPUT_ROOT,
     RESULTS_ROOT,
+    RUN_TAG,
     console_progress,
     datasets_arg,
 )
@@ -42,6 +46,10 @@ def report(
     features_root: Path | None = FEATURES_ROOT,
     models_root: Path | None = MODELS_ROOT,
     results_root: Path | None = RESULTS_ROOT,
+    log_dir: Path | None = LOG_DIR,
+    run_tag: str | None = RUN_TAG,
+    ray_address: str | None = RAY_ADDRESS,
+    max_cpus: int | None = MAX_CPUS,
     output_root: Path | None = REMOVED_OUTPUT_ROOT,
     no_assets: bool = typer.Option(False, "--no-assets", help="Skip rendering PNG assets."),
     no_summarize: bool = typer.Option(False, "--no-summarize", help="Skip the cohort summary join."),
@@ -51,13 +59,14 @@ def report(
     """Build the per-case reports and cohort summary (web-app data package)."""
     from helios.config.stage_config import load_stage_params
     from helios.data.resolver import StorageRoots
-    from helios.stages._runtime import resolve_datasets
+    from helios.stages._runtime import ParallelConfig, resolve_datasets
     from helios.stages.report import build_report
 
     roots = StorageRoots(
         preprocessing_root=preprocessing_root, features_root=features_root,
         models_root=models_root, results_root=results_root,
     )
+    parallel = ParallelConfig(ray_address=ray_address, max_cpus=max_cpus)
     datasets = resolve_datasets(datasets_arg(dataset), roots=roots)
     overrides = {
         "assets": False if no_assets else None,
@@ -67,8 +76,13 @@ def report(
     build_report(
         datasets=datasets,
         roots=roots,
+        parallel=parallel,
         force=force,
-        progress=console_progress(results_root or models_root or datasets[0].root),
+        progress=console_progress(
+            results_root or models_root or datasets[0].root,
+            log_dir=log_dir,
+            run_tag=run_tag,
+        ),
         **params,
     )
     typer.echo("report: done")

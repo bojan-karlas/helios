@@ -20,7 +20,10 @@ intentionally left to the component that needs it.
 from __future__ import annotations
 
 import json
+import os
 import pickle
+import uuid
+from collections.abc import Mapping
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -35,6 +38,10 @@ from helios.data.resolver import Resolver
 
 def _ensure_parent(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+
+
+def _temp_sibling(path: Path) -> Path:
+    return path.parent / f".{path.name}.{uuid.uuid4().hex}.tmp"
 
 
 def read(path: str | Path, fmt: str) -> Any:
@@ -72,45 +79,52 @@ def write(obj: Any, path: str | Path, fmt: str) -> Path:
     path = Path(path)
     _ensure_parent(path)
     base = fmt.split("/")[0]
-    if base == "csv":
-        _as_frame(obj).to_csv(path, index=False)
-    elif base == "parquet":
-        _as_frame(obj).to_parquet(path, index=False)
-    elif base == "json":
-        path.write_text(json.dumps(obj, indent=2, default=str))
-    elif base == "npy":
-        np.save(path, np.asarray(obj))
-    elif base == "hdf5":
-        import h5py
+    if base == "bundle":
+        return save_bundle(obj, path)
+    if base not in {"csv", "parquet", "json", "npy", "hdf5", "pkl", "txt", "md", "png"}:
+        raise ValueError(f"Unsupported write format: {fmt!r}")
 
-        with h5py.File(path, "w") as h:
-            for k, v in dict(obj).items():
-                h.create_dataset(k, data=np.asarray(v))
-    elif base == "pkl":
-        with path.open("wb") as f:
-            pickle.dump(obj, f)
-    elif base == "bundle":
-        save_bundle(obj, path)
-    elif base in {"txt", "md"}:
-        path.write_text(str(obj))
-    elif base == "png":
-        if isinstance(obj, (bytes, bytearray)):
-            # Preserve already-encoded PNG payloads.
-            with BytesIO(obj) as stream:
+    tmp = _temp_sibling(path)
+    try:
+        if base == "csv":
+            _as_frame(obj).to_csv(tmp, index=False)
+        elif base == "parquet":
+            _as_frame(obj).to_parquet(tmp, index=False)
+        elif base == "json":
+            tmp.write_text(json.dumps(obj, indent=2, default=str))
+        elif base == "npy":
+            with tmp.open("wb") as f:
+                np.save(f, np.asarray(obj))
+        elif base == "hdf5":
+            import h5py
+
+            with h5py.File(tmp, "w") as h:
+                for k, v in dict(obj).items():
+                    h.create_dataset(k, data=np.asarray(v))
+        elif base == "pkl":
+            with tmp.open("wb") as f:
+                pickle.dump(obj, f)
+        elif base in {"txt", "md"}:
+            tmp.write_text(str(obj))
+        elif base == "png":
+            if isinstance(obj, (bytes, bytearray)):
+                with BytesIO(obj) as stream:
+                    from PIL import Image
+
+                    with Image.open(stream) as image:
+                        image.verify()
+                tmp.write_bytes(obj)
+            else:
                 from PIL import Image
 
-                with Image.open(stream) as image:
-                    image.verify()
-            path.write_bytes(obj)
-        else:
-            from PIL import Image
-
-            array = np.asarray(obj)
-            if array.dtype == np.bool_:
-                array = array.astype(np.uint8) * 255
-            Image.fromarray(array).save(path, format="PNG")
-    else:
-        raise ValueError(f"Unsupported write format: {fmt!r}")
+                array = np.asarray(obj)
+                if array.dtype == np.bool_:
+                    array = array.astype(np.uint8) * 255
+                Image.fromarray(array).save(tmp, format="PNG")
+        os.replace(tmp, path)
+    finally:
+        if tmp.exists():
+            tmp.unlink(missing_ok=True)
     return path
 
 
@@ -126,12 +140,12 @@ class ArtifactStore:
     def __init__(self, resolver: Resolver):
         self.resolver = resolver
 
-    def read(self, artifact_id: str, **keys) -> Any:
+    def read(self, artifact_id: str, *, extra_hive: Mapping[str, Any] | None = None, **keys: Any) -> Any:
         artifact = get_artifact(artifact_id)
-        path = self.resolver.path(artifact_id, **keys)
+        path = self.resolver.path(artifact_id, extra_hive=extra_hive, **keys)
         return read(path, artifact.format)
 
-    def path(self, artifact_id: str, **keys) -> Path:
+    def path(self, artifact_id: str, *, extra_hive: Mapping[str, Any] | None = None, **keys: Any) -> Path:
         """Resolve an artifact to its on-disk path WITHOUT reading it.
 
         This is the streaming seam: large random-access artifacts (e.g. an HDF5
@@ -140,16 +154,79 @@ class ArtifactStore:
         a batch needs, rather than having :meth:`read` load the whole array into
         memory. :meth:`read` stays the convenient eager path for small artifacts.
         """
-        return self.resolver.path(artifact_id, **keys)
+        return self.resolver.path(artifact_id, extra_hive=extra_hive, **keys)
 
-    def write(self, artifact_id: str, obj: Any, **keys) -> Path:
+    def write(
+        self,
+        artifact_id: str,
+        obj: Any,
+        *,
+        extra_hive: Mapping[str, Any] | None = None,
+        metadata: Mapping[str, Any] | None = None,
+        **keys: Any,
+    ) -> Path:
         artifact = get_artifact(artifact_id)
-        path = self.resolver.path(artifact_id, **keys)
+        path = self.resolver.path(artifact_id, extra_hive=extra_hive, **keys)
+        if artifact.format.split("/")[0] == "bundle":
+            return save_bundle(obj, path, metadata=metadata)
         return write(obj, path, artifact.format)
 
-    def exists(self, artifact_id: str, **keys) -> bool:
+    def exists(self, artifact_id: str, *, extra_hive: Mapping[str, Any] | None = None, **keys: Any) -> bool:
         artifact = get_artifact(artifact_id)
-        path = self.resolver.path(artifact_id, **keys)
+        path = self.resolver.path(artifact_id, extra_hive=extra_hive, **keys)
         if artifact.format.split("/")[0] == "bundle":
             return is_complete_bundle(path)
         return path.exists()
+
+    def remove(self, artifact_id: str, *, extra_hive: Mapping[str, Any] | None = None, **keys: Any) -> None:
+        path = self.resolver.path(artifact_id, extra_hive=extra_hive, **keys)
+        if path.is_file():
+            path.unlink(missing_ok=True)
+
+    def part_path(
+        self,
+        artifact_id: str,
+        row_id: str,
+        *,
+        extra_hive: Mapping[str, Any] | None = None,
+        **keys: Any,
+    ) -> Path:
+        table_path = self.resolver.path(artifact_id, extra_hive=extra_hive, **keys)
+        return table_path.parent / f"{table_path.name}.parts" / f"{row_id}.csv"
+
+    def part_exists(
+        self,
+        artifact_id: str,
+        row_id: str,
+        *,
+        extra_hive: Mapping[str, Any] | None = None,
+        **keys: Any,
+    ) -> bool:
+        return self.part_path(artifact_id, row_id, extra_hive=extra_hive, **keys).is_file()
+
+    def write_part(
+        self,
+        artifact_id: str,
+        row_id: str,
+        obj: Any,
+        *,
+        extra_hive: Mapping[str, Any] | None = None,
+        **keys: Any,
+    ) -> Path:
+        path = self.part_path(artifact_id, row_id, extra_hive=extra_hive, **keys)
+        return write(obj, path, "csv")
+
+    def read_parts(
+        self,
+        artifact_id: str,
+        row_ids: list[str] | tuple[str, ...],
+        *,
+        extra_hive: Mapping[str, Any] | None = None,
+        **keys: Any,
+    ) -> pd.DataFrame:
+        frames: list[pd.DataFrame] = []
+        for row_id in row_ids:
+            path = self.part_path(artifact_id, row_id, extra_hive=extra_hive, **keys)
+            if path.is_file():
+                frames.append(read(path, "csv"))
+        return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()

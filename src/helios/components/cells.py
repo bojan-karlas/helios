@@ -68,6 +68,8 @@ def segment_cells(
     outdir: str | None = None,
     image_mpp: float | None = None,
     image_magnification: int | None = None,
+    available_cpus: int | None = None,
+    available_memory_mb: int | None = None,
 ) -> pd.DataFrame:
     """Instance-segment and type every cell in ONE slide (CellViT++).
 
@@ -106,22 +108,15 @@ def segment_cells(
     MultiPoint whose points are the individual cell centroids. This function
     explodes those into one row per cell.
     """
-    # Directory name is derived from the slide filename so the output is
-    # findable per slide (e.g. ".../cellvit_SITE-SKCM-P00001-S01-B1-I1") instead
-    # of a random temp suffix. Pass an explicit `outdir` to override.
-    #
-    # Because the name is now fixed rather than unique-per-call, a re-run of the
-    # same slide would otherwise read alongside the previous run's files; when
-    # we own the directory (outdir is None) we clear it first so rglob only ever
-    # sees the current run's output.
+    # Each invocation uses a unique temporary directory when outdir is not
+    # provided, and cleans it up on exit so concurrent slides never collide.
     slide_id = Path(wsi_path).stem
-    if outdir is None:
-        outdir_path = Path(tempfile.gettempdir()) / f"cellvit_{slide_id}"
-        if outdir_path.exists():
-            shutil.rmtree(outdir_path)
+    owns_outdir = outdir is None
+    if owns_outdir:
+        outdir_path = Path(tempfile.mkdtemp(prefix=f"cellvit_{slide_id}_"))
     else:
         outdir_path = Path(outdir)
-    outdir_path.mkdir(parents=True, exist_ok=True)
+        outdir_path.mkdir(parents=True, exist_ok=True)
 
     torch_device = torch.device(device)
     if torch_device.type != "cuda":
@@ -136,6 +131,10 @@ def segment_cells(
         # here or inside CellViT without crossing a CLI subprocess boundary.
         try:
             system_configuration = SystemConfiguration(gpu=gpu_index)
+            if available_cpus is not None and available_cpus > 0:
+                system_configuration.overwrite_available_cpus(max(4, int(available_cpus)))
+            if available_memory_mb is not None and available_memory_mb > 0:
+                system_configuration.overwrite_memory(int(available_memory_mb))
             detector = CellViTInference(
                 model_name="SAM",
                 outdir=outdir_path,
@@ -152,82 +151,86 @@ def segment_cells(
             ray.shutdown()
 
     try:
-        run_inference()
-    except Exception as first_error:
-        if image_mpp is None and image_magnification is None:
-            raise RuntimeError(
-                f"CellViT inference failed for {wsi_path}."
-            ) from first_error
-
-        # CellViT occasionally cannot auto-detect metadata; retry once with
-        # the values supplied by image_metadata.csv.
-        shutil.rmtree(outdir_path, ignore_errors=True)
-        outdir_path.mkdir(parents=True, exist_ok=True)
         try:
-            run_inference(image_mpp, image_magnification)
-        except Exception as fallback_error:
-            raise RuntimeError(
-                f"CellViT inference failed for {wsi_path}, and the retry with "
-                "image_metadata.csv's mpp/magnification fallback also failed."
-            ) from fallback_error
+            run_inference()
+        except Exception as first_error:
+            if image_mpp is None and image_magnification is None:
+                raise RuntimeError(
+                    f"CellViT inference failed for {wsi_path}."
+                ) from first_error
 
-    # CellViT emits several *.geojson files per slide (e.g. tissue vs. detection
-    # layers). We want only the cell-detection output. This pattern matches both
-    # ".../<slide_id>/cell_detection.geojson" and
-    # ".../<slide_id>_cell_detection.geojson".
-    geojson_files = sorted(outdir_path.rglob("*cell_detection.geojson"))
-    if not geojson_files:
-        raise FileNotFoundError(
-            f"No *cell_detection.geojson output found in {outdir_path}"
-        )
+            # CellViT occasionally cannot auto-detect metadata; retry once with
+            # the values supplied by image_metadata.csv.
+            shutil.rmtree(outdir_path, ignore_errors=True)
+            outdir_path.mkdir(parents=True, exist_ok=True)
+            try:
+                run_inference(image_mpp, image_magnification)
+            except Exception as fallback_error:
+                raise RuntimeError(
+                    f"CellViT inference failed for {wsi_path}, and the retry with "
+                    "image_metadata.csv's mpp/magnification fallback also failed."
+                ) from fallback_error
 
-    frames = []
-    for geojson_file in geojson_files:
-        with open(geojson_file) as f:
-            data = json.load(f)
-
-        # Accept a bare list of Features or a FeatureCollection.
-        if isinstance(data, dict) and "features" in data:
-            features = data["features"]
-        elif isinstance(data, list):
-            features = data
-        else:
-            continue
-
-        for feature in features:
-            if not isinstance(feature, dict) or feature.get("type") != "Feature":
-                continue
-
-            props = feature.get("properties") or {}
-            classification = props.get("classification") or {}
-            cell_type = classification.get("name", "unknown")
-
-            geom = feature.get("geometry") or {}
-            if geom.get("type") != "MultiPoint":
-                # This pipeline only emits MultiPoint; skip anything else.
-                continue
-
-            # Vectorized: clean the whole feature's coordinates at once.
-            pts = np.asarray(geom.get("coordinates", []), dtype=np.float64)
-            if pts.ndim != 2 or pts.shape[1] < 2:
-                continue
-            pts = pts[:, :2]                              # drop any z
-            pts = pts[np.isfinite(pts).all(axis=1)]       # drop non-finite rows
-            if pts.shape[0] == 0:
-                continue
-
-            frames.append(
-                pd.DataFrame(
-                    {"x": pts[:, 0], "y": pts[:, 1], "cell_type": cell_type}
-                )
+        # CellViT emits several *.geojson files per slide (e.g. tissue vs. detection
+        # layers). We want only the cell-detection output. This pattern matches both
+        # ".../<slide_id>/cell_detection.geojson" and
+        # ".../<slide_id>_cell_detection.geojson".
+        geojson_files = sorted(outdir_path.rglob("*cell_detection.geojson"))
+        if not geojson_files:
+            raise FileNotFoundError(
+                f"No *cell_detection.geojson output found in {outdir_path}"
             )
 
-    if not frames:
-        return pd.DataFrame(columns=["cell_id", "x", "y", "cell_type"])
+        frames = []
+        for geojson_file in geojson_files:
+            with open(geojson_file) as f:
+                data = json.load(f)
 
-    cells = pd.concat(frames, ignore_index=True)
-    cells.insert(0, "cell_id", cells.index.astype(str))
-    return cells[["cell_id", "x", "y", "cell_type"]]
+            # Accept a bare list of Features or a FeatureCollection.
+            if isinstance(data, dict) and "features" in data:
+                features = data["features"]
+            elif isinstance(data, list):
+                features = data
+            else:
+                continue
+
+            for feature in features:
+                if not isinstance(feature, dict) or feature.get("type") != "Feature":
+                    continue
+
+                props = feature.get("properties") or {}
+                classification = props.get("classification") or {}
+                cell_type = classification.get("name", "unknown")
+
+                geom = feature.get("geometry") or {}
+                if geom.get("type") != "MultiPoint":
+                    # This pipeline only emits MultiPoint; skip anything else.
+                    continue
+
+                # Vectorized: clean the whole feature's coordinates at once.
+                pts = np.asarray(geom.get("coordinates", []), dtype=np.float64)
+                if pts.ndim != 2 or pts.shape[1] < 2:
+                    continue
+                pts = pts[:, :2]                              # drop any z
+                pts = pts[np.isfinite(pts).all(axis=1)]       # drop non-finite rows
+                if pts.shape[0] == 0:
+                    continue
+
+                frames.append(
+                    pd.DataFrame(
+                        {"x": pts[:, 0], "y": pts[:, 1], "cell_type": cell_type}
+                    )
+                )
+
+        if not frames:
+            return pd.DataFrame(columns=["cell_id", "x", "y", "cell_type"])
+
+        cells = pd.concat(frames, ignore_index=True)
+        cells.insert(0, "cell_id", cells.index.astype(str))
+        return cells[["cell_id", "x", "y", "cell_type"]]
+    finally:
+        if owns_outdir:
+            shutil.rmtree(outdir_path, ignore_errors=True)
 
 
 def cluster_based_filtering(
@@ -317,6 +320,8 @@ def extract_tumor_patches(
     patch_px: int = 64,
     tumor_class: str = TUMOR_CLASS,
     level: int = 0,
+    start: int = 0,
+    stop: int | None = None,
 ) -> tuple[pd.DataFrame, np.ndarray]:
     """Cut a fixed-size RGB patch around every tumor cell in ONE slide.
 
@@ -360,6 +365,8 @@ def extract_tumor_patches(
 
     # Keep only tumor cells, preserving order so patch_index aligns with patches.
     tumor = cells[cells["cell_type"] == tumor_class].reset_index(drop=True)
+    if start != 0 or stop is not None:
+        tumor = tumor.iloc[start:stop].reset_index(drop=True)
     n = len(tumor)
 
     # Empty-slide guard: return correctly-shaped empties so callers don't break.

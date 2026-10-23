@@ -7,6 +7,8 @@ report build; ``--no-assets`` / ``--no-summarize`` trim optional outputs.
 """
 from __future__ import annotations
 
+from typing import Any
+
 import pandas as pd
 
 from helios.components.report import (
@@ -19,11 +21,13 @@ from helios.data.io import ArtifactStore
 from helios.progress import DEFAULT_PROGRESS, Progress
 from helios.stages._runtime import (
     DatasetArgs,
+    ParallelConfig,
     StorageRoots,
     cohort_store,
     resolve_datasets,
     select_image_ids,
 )
+from helios.stages.cell_features import DEFAULT_SIZE_MM as DEFAULT_CELLULAR_SIZE_MM
 
 # -- configurable defaults (source of truth for configs/default.yaml) ----------
 DEFAULT_ASSETS: bool = True
@@ -55,8 +59,10 @@ def build_report(
     *,
     datasets: DatasetArgs,
     roots: StorageRoots | None = None,
+    parallel: ParallelConfig | None = None,
     assets: bool = DEFAULT_ASSETS,
     summarize: bool = DEFAULT_SUMMARIZE,
+    cellular_size_mm: float = DEFAULT_CELLULAR_SIZE_MM,
     image_ids: list[str] | None = None,
     force: bool = False,
     progress: Progress = DEFAULT_PROGRESS,
@@ -72,7 +78,7 @@ def build_report(
     for ds in resolved:
         store = cohort_store(ds, roots)
         ids = select_image_ids(ds, store, image_ids)
-        tables = _read_tables(store, _CASE_TABLES)
+        tables = _read_tables(store, _CASE_TABLES, cellular_size_mm)
 
         for image_id in progress.task(ids, desc=f"report {ds.name}"):
             if not force and store.exists("case_report_md", image_id=image_id):
@@ -94,15 +100,25 @@ def build_report(
 
         if summarize:
             summary = summarize_cohort(
-                {**_read_tables(store, _SUMMARY_TABLES), "image_metadata": store.read("image_metadata")}
+                {
+                    **_read_tables(store, _SUMMARY_TABLES, cellular_size_mm),
+                    "image_metadata": store.read("image_metadata"),
+                }
             )
             store.write("cohort_summary", summary)
             progress.log(f"wrote cohort_summary {ds.name}")
 
 
-def _read_tables(store: ArtifactStore, names: tuple[str, ...]) -> dict[str, pd.DataFrame]:
+def _read_tables(
+    store: ArtifactStore, names: tuple[str, ...], cellular_size_mm: float
+) -> dict[str, pd.DataFrame]:
     """Read each cohort-level result table that exists (optional inputs may be absent)."""
-    return {name: store.read(name) for name in names if store.exists(name)}
+    keys: dict[str, dict[str, Any]] = {"cellular_features": {"size_mm": cellular_size_mm}}
+    return {
+        name: store.read(name, **keys.get(name, {}))
+        for name in names
+        if store.exists(name, **keys.get(name, {}))
+    }
 
 
 def _slice(table: pd.DataFrame, image_id: str) -> pd.DataFrame:

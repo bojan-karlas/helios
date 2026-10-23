@@ -122,7 +122,7 @@ def test_tiling_preserves_background_masks_for_each_size(tmp_path: Path) -> None
     paths = []
     for size in sizes:
         path = store.path("background_mask", size_mm=size, image_id="slide")
-        assert path == tmp_path / "debug" / "background_mask" / f"size_mm={size}" / "slide.png"
+        assert path == tmp_path / "preprocessing" / "background_mask" / f"size_mm={size}" / "slide.png"
         paths.append(path)
         flags, expected_mask = detect_background(
             image, store.read("tile_metadata", size_mm=size, image_id="slide")
@@ -135,4 +135,4 @@ def test_tiling_preserves_background_masks_for_each_size(tmp_path: Path) -> None
         )
     assert len(set(paths)) == len(sizes)
     assert all(path.is_file() for path in paths)
-    assert not (tmp_path / "debug" / "background_mask" / "slide.png").exists()
+    assert not (tmp_path / "preprocessing" / "background_mask" / "slide.png").exists()

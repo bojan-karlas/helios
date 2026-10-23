@@ -21,7 +21,7 @@ artifacts:
     - image_id
     - fold
     format: csv
-    path: metadata/cv_splits.csv
+    path: cv_splits.csv
     role: preprocessing
   background_mask:
     title: Background Mask (Debug)
@@ -29,7 +29,7 @@ artifacts:
     - size_mm
     - image_id
     format: png
-    path: debug/background_mask/size_mm={size_mm}/{image_id}.png
+    path: background_mask/size_mm={size_mm}/{image_id}.png
     role: preprocessing
   tile_metadata:
     title: Tile Metadata
@@ -38,7 +38,7 @@ artifacts:
     - image_id
     - tile_id
     format: parquet
-    path: metadata/tile_metadata/size_mm={size_mm}/{image_id}.parquet
+    path: tile_metadata/size_mm={size_mm}/{image_id}.parquet
     role: preprocessing
   tiles:
     title: Tile Images
@@ -56,7 +56,7 @@ artifacts:
     - image_id
     - tile_id
     format: parquet
-    path: preprocessing/tile_background/size_mm={size_mm}/{image_id}.parquet
+    path: tile_background/size_mm={size_mm}/{image_id}.parquet
     role: preprocessing
   tile_features:
     title: Tile (Patch) Embeddings
@@ -66,28 +66,32 @@ artifacts:
     - image_id
     - tile_id
     format: hdf5
-    path: preprocessing/tile_features/size_mm={size_mm}/{model}/{image_id}/{image_id}.hdf5
+    path: tile_features/size_mm={size_mm}/model={model}/{image_id}/{image_id}.hdf5
     role: features
   tile_augmentation:
     title: Stain-Augmented Tiles
     key:
+    - method
+    - source
     - target
     - size_mm
     - image_id
     - tile_id
     format: hdf5
-    path: preprocessing/tile_augmentation/target={target}/size_mm={size_mm}/{image_id}/{image_id}.hdf5
+    path: tile_augmentation/method={method}/source={source}/target={target}/size_mm={size_mm}/{image_id}/{image_id}.hdf5
     role: preprocessing
   tile_augmentation_features:
     title: Stain-Augmented Tile Embeddings
     key:
+    - method
+    - source
     - target
     - size_mm
     - model
     - image_id
     - tile_id
     format: hdf5
-    path: preprocessing/tile_augmentation_features/target={target}/size_mm={size_mm}/{model}/{image_id}/{image_id}.hdf5
+    path: tile_augmentation_features/method={method}/source={source}/target={target}/size_mm={size_mm}/model={model}/{image_id}/{image_id}.hdf5
     role: features
   thumbnail:
     title: Slide Thumbnail
@@ -169,42 +173,43 @@ artifacts:
     - fold
     - image_id
     format: csv
-    path: mil/fold={fold}/whole_image_risk_score.csv
+    path: mil/risk_score/fold={fold}/whole_image_risk_score.csv
     role: results
   whole_image_risk_score_ensemble:
     title: Whole-Image Risk Score (Ensemble)
     key:
     - image_id
     format: csv
-    path: results/whole_image_risk_score.csv
+    path: mil/risk_score/whole_image_risk_score.csv
     role: results
   cellular_features:
     title: Cellular Composition Features
     key:
+    - size_mm
     - image_id
     format: csv
-    path: results/cellular_features.csv
-    role: results
+    path: cells/cellular_features/size_mm={size_mm}/cellular_features.csv
+    role: preprocessing
   cellular_risk_score:
     title: Cellular Composition Risk Score
     key:
     - image_id
     format: csv
-    path: results/cellular_risk_score.csv
+    path: cellular/cellular_risk_score.csv
     role: results
   path_concept_predictions:
     title: Concept Predictions
     key:
     - image_id
     format: csv
-    path: results/path_concept_predictions.csv
+    path: concepts/path_concept_predictions.csv
     role: results
   path_concept_risk_score:
     title: Concept-Based Risk Score
     key:
     - image_id
     format: csv
-    path: results/path_concept_risk_score.csv
+    path: concepts/path_concept_risk_score.csv
     role: results
   tile_clusters:
     title: Per-Tile Cluster Assignments
@@ -219,35 +224,35 @@ artifacts:
     key:
     - image_id
     format: csv
-    path: results/patch_morphology_presence.csv
+    path: morphology/patch_morphology_presence.csv
     role: results
   patch_morphology_risk_score:
     title: Patch Morphology Risk Score
     key:
     - image_id
     format: csv
-    path: results/patch_morphology_risk_score.csv
+    path: morphology/patch_morphology_risk_score.csv
     role: results
   staging_risk_score:
     title: Staging Risk Score
     key:
     - image_id
     format: csv
-    path: results/staging_risk_score.csv
+    path: staging/staging_risk_score.csv
     role: results
   clinical_risk_score:
     title: Clinical Risk Score
     key:
     - image_id
     format: csv
-    path: results/clinical_risk_score.csv
+    path: clinical/clinical_risk_score.csv
     role: results
   helios_risk_score:
     title: HELIOS Risk Score
     key:
     - image_id
     format: csv
-    path: results/helios_risk_score.csv
+    path: fusion/helios_risk_score.csv
     role: results
   survival_curve:
     title: Survival Curve
@@ -255,7 +260,7 @@ artifacts:
     - image_id
     - time
     format: csv
-    path: results/survival_curve/{image_id}.csv
+    path: fusion/survival_curve/{image_id}.csv
     role: results
   case_report:
     title: Case Report (JSON)
@@ -291,47 +296,47 @@ artifacts:
     key:
     - fold
     format: bundle
-    path: models/mil/fold={fold}
+    path: mil/fold={fold}
     role: models
   model_concepts:
     title: Concept Models Bundle
     key:
     - fold
     format: bundle
-    path: models/concepts/fold={fold}
+    path: concepts/fold={fold}
     role: models
   model_cellular:
     title: Cellular Composition Risk Model
     key:
     - fold
     format: bundle
-    path: models/cellular/fold={fold}
+    path: cellular/fold={fold}
     role: models
   model_morphology:
     title: Morphology Model Bundle
     key:
     - fold
     format: bundle
-    path: models/morphology/fold={fold}
+    path: morphology/fold={fold}
     role: models
   model_fusion:
     title: HELIOS Risk Model
     key:
     - fold
     format: bundle
-    path: models/fusion/fold={fold}
+    path: fusion/fold={fold}
     role: models
   model_staging:
     title: Staging Risk Model
     key:
     - fold
     format: bundle
-    path: models/staging/fold={fold}
+    path: staging/fold={fold}
     role: models
   model_clinical:
     title: Clinical Risk Model
     key:
     - fold
     format: bundle
-    path: models/clinical/fold={fold}
+    path: clinical/fold={fold}
     role: models

@@ -25,15 +25,18 @@ def test_independent_roots_keep_source_unchanged(tmp_path: Path) -> None:
     store.write("tile_features", {"features": np.zeros((2, 4))}, size_mm=0.25, model="virchow2", image_id="I1")
 
     # Derived artifact lands under the output root, not the source cohort.
-    assert (output / "preprocessing").exists()
-    assert not (source / "preprocessing").exists()
+    assert (output / "tile_features").exists()
+    assert not (source / "features").exists()
     assert store.exists("tile_features", size_mm=0.25, model="virchow2", image_id="I1")
 
 
 def test_role_defaults_are_in_place(tmp_path: Path) -> None:
     roots = Roots.single(tmp_path)
-    for artifact in load_artifacts().values():
-        assert roots.for_role(artifact.role) == tmp_path
+    assert roots.for_role("source") == tmp_path
+    assert roots.for_role("preprocessing") == tmp_path / "preprocessing"
+    assert roots.for_role("features") == tmp_path / "features"
+    assert roots.for_role("models") == tmp_path / "models"
+    assert roots.for_role("results") == tmp_path / "results"
 
 
 def test_all_artifacts_resolve_under_their_declared_roots(tmp_path: Path) -> None:
@@ -52,7 +55,7 @@ def test_all_artifacts_resolve_under_their_declared_roots(tmp_path: Path) -> Non
     assert resolver.role("tile_augmentation") == "preprocessing"
     assert resolver.role("tile_augmentation_features") == "features"
     assert resolver.role("aligned_slide_embedding") == "results"
-    assert resolver.role("cellular_features") == "results"
+    assert resolver.role("cellular_features") == "preprocessing"
     assert resolver.role("model_mil") == "models"
     with pytest.raises(ValueError, match="storage role"):
         storage_role("work")
@@ -79,7 +82,10 @@ def test_results_location_is_independent_of_union_membership(tmp_path: Path) -> 
     assert store.path("whole_image_risk_score_ensemble") == cohort_store(single[0], roots).path(
         "whole_image_risk_score_ensemble"
     )
-    assert store.path("whole_image_risk_score_ensemble") == tmp_path / "run/A/results/whole_image_risk_score.csv"
+    assert (
+        store.path("whole_image_risk_score_ensemble")
+        == tmp_path / "run/A/mil/risk_score/whole_image_risk_score.csv"
+    )
     assert store.path("model_mil", fold=None) == cohort_store(union[1], roots).path("model_mil", fold=None)
 
 
@@ -111,3 +117,122 @@ def test_path_enables_lazy_hdf5_subset_read(tmp_path: Path) -> None:
         subset = dset[10:13]  # read just 3 rows
     assert subset.shape == (3, 4)
     np.testing.assert_array_equal(subset, tiles[10:13])
+
+
+def test_scan_hive_parses_key_value_dirs_and_skips_parts(tmp_path: Path) -> None:
+    from helios.data.io import write
+    from helios.data.resolver import scan_hive
+
+    f1 = tmp_path / "size_mm=0.25" / "model=virchow2" / "scores.csv"
+    f2 = tmp_path / "size_mm=0.125" / "model=uni" / "scores.csv"
+    part = tmp_path / "size_mm=0.25" / "model=virchow2" / "scores.csv.parts" / "I1.csv"
+    write([{"image_id": "I1", "score": 0.8}], f1, "csv")
+    write([{"image_id": "I2", "score": 0.4}], f2, "csv")
+    write([{"image_id": "I1", "score": 0.8}], part, "csv")
+
+    df = scan_hive(tmp_path, "scores.csv")
+    assert len(df) == 2
+    assert set(df["image_id"]) == {"I1", "I2"}
+    assert set(df["size_mm"]) == {0.25, 0.125}
+    assert set(df["model"]) == {"virchow2", "uni"}
+
+
+def test_union_cohort_rejects_duplicate_image_ids_and_augments_per_dataset(tmp_path: Path) -> None:
+    import yaml
+
+    from helios.data.cohort import load_cohort_spec
+    from tests.fixtures import make_cohort
+
+    c1 = make_cohort(tmp_path / "COHORT1", n_images=2, n_patients=2)
+    c2 = make_cohort(tmp_path / "COHORT2", n_images=2, n_patients=2)
+    manifest = tmp_path / "union.yaml"
+    manifest.write_text(
+        yaml.safe_dump(
+            {
+                "name": "TRAIN_COHORT",
+                "datasets": [
+                    {
+                        "source_root": str(c1),
+                        "augmentations": [
+                            {"method": "cyclegan", "source": "COHORT1", "target": "COHORT2"}
+                        ],
+                    },
+                    {"source_root": str(c2)},
+                ],
+            }
+        )
+    )
+    spec = load_cohort_spec(manifest)
+    assert spec.datasets[0].augmentations[0].key_values() == {
+        "method": "cyclegan",
+        "source": "COHORT1",
+        "target": "COHORT2",
+    }
+    assert spec.splits_file == tmp_path / "union.splits.csv"
+    with pytest.raises(ValueError, match="duplicate image_ids"):
+        resolve_datasets([manifest], roots=StorageRoots(models_root=tmp_path / "models"))
+
+
+def test_atomic_writes_parts_bundle_provenance_and_run_logging(tmp_path: Path) -> None:
+    import yaml
+
+    from helios.data.bundle import COHORT_NAME, CONFIG_NAME, MANIFEST_NAME, is_complete_bundle
+    from helios.progress import Progress, ProgressReporter, create_run_log_dir, normalize_run_tag
+    from helios.stages._ray import ParallelConfig, StageExecutionError, run_work_units
+
+    store = ArtifactStore(Resolver(Roots.single(tmp_path)))
+    store.write_part("whole_image_risk_score", "I1", [{"image_id": "I1", "risk_score": 0.25, "fold": 0}], fold=0)
+    store.write_part("whole_image_risk_score", "I2", [{"image_id": "I2", "risk_score": 0.75, "fold": 0}], fold=0)
+    assert store.part_exists("whole_image_risk_score", "I1", fold=0)
+    reduced = store.read_parts("whole_image_risk_score", ["I1", "I2"], fold=0)
+    assert reduced["image_id"].tolist() == ["I1", "I2"]
+
+    bundle_meta = {
+        "config": {"fit": {"mil": {"size_mm": 0.25, "model": "virchow2"}}},
+        "cohort": {"name": "TRAIN_COHORT", "datasets": [{"source_root": "/data/COHORT1"}]},
+    }
+    bdir = store.write("model_mil", {"weights": [1, 2, 3]}, metadata=bundle_meta, fold=0)
+    assert is_complete_bundle(bdir)
+    assert yaml.safe_load((bdir / CONFIG_NAME).read_text()) == bundle_meta["config"]
+    assert yaml.safe_load((bdir / COHORT_NAME).read_text()) == bundle_meta["cohort"]
+    manifest = yaml.safe_load((bdir / MANIFEST_NAME).read_text())
+    assert set(manifest["files"]) == {"model.pkl", CONFIG_NAME, COHORT_NAME}
+
+    assert normalize_run_tag("Baseline Run_v1!") == "baseline-run-v1"
+    run_id, run_dir = create_run_log_dir(tmp_path / "logs", "Baseline Run_v1!")
+    assert run_id.endswith("-utc-baseline-run-v1")
+    assert (run_dir / "workers").is_dir()
+
+    reporter = ProgressReporter(run_dir)
+    progress = Progress.console(reporter=reporter)
+    progress.use_tqdm = False
+
+    def _work(item: str, ctx) -> str:
+        ctx.progress.log(f"working on {item}")
+        if item == "bad":
+            raise ValueError("corrupt slide")
+        return "skipped" if item == "ok2" else "completed"
+
+    assert not ParallelConfig().enabled
+    with pytest.raises(StageExecutionError) as exc_info:
+        run_work_units(
+            ["ok1", "bad", "ok2"],
+            _work,
+            stage="tiles COHORT1",
+            progress=progress,
+            parallel=ParallelConfig(),
+        )
+    (failure,) = exc_info.value.failures
+    assert failure.work_id == "bad"
+    assert failure.error == "ValueError: corrupt slide"
+    assert failure.log_path is not None and Path(failure.log_path).is_file()
+    assert "corrupt slide" in Path(failure.log_path).read_text()
+    status = yaml.safe_load(reporter.status_path.read_text())
+    assert status["counts"] == {
+        "total": 3,
+        "queued": 0,
+        "running": 0,
+        "completed": 1,
+        "skipped": 1,
+        "failed": 1,
+    }

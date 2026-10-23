@@ -31,7 +31,7 @@ def test_features_fusion_strips_provenance(cohort: Path) -> None:
         frame = pd.DataFrame({"image_id": ids, sub: range(len(ids))})
         store.write(sub, tag_dataset(frame, cohort))
 
-    features = risk._features("helios", store, ids, "path_stage", [])
+    features = risk._features("helios", store, ids, "path_stage", [], 0.25)
 
     assert "dataset" not in features.columns
     assert "dataset_x" not in features.columns and "dataset_y" not in features.columns
@@ -49,7 +49,7 @@ def test_fit_orders_helios_last(monkeypatch, cohort: Path) -> None:
     def _fake_train(features, targets, *, estimator="sklearn_linear"):
         return {"n": len(features)}
 
-    def _fake_features(kind, store, ids, staging_feature, clinical_features):
+    def _fake_features(kind, store, ids, staging_feature, clinical_features, cellular_size_mm):
         return pd.DataFrame({"image_id": ids, "x": range(len(ids))})
 
     # Capture the order models are written by wrapping store.write.

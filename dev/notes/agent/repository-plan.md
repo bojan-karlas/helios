@@ -24,7 +24,7 @@ Build a repo that: (1) trains all HELIOS pipeline models from datasets placed in
    Real locations via CLI/env/gitignored config. Tests use synthetic fixtures.
 9. Config: **pydantic v2** validation (also defines DatasetSpec).
 
-## Dataset contract (from WASHU/MRV samples + data dictionary)
+## Dataset contract (from sample cohorts + data dictionary) [AMENDED 2026-10-22 -- see "2026-10-22: Coherent 5-role layout, logical cohorts & Hive paths" below]
 - USER PROVIDES (input):
   - `wsi/**/*.svs` -- FLAT set (subfolders like Cases/Controls are cosmetic, ignored).
   - `metadata/image_metadata.csv` -- authoritative per-image table
@@ -36,7 +36,7 @@ Build a repo that: (1) trains all HELIOS pipeline models from datasets placed in
   - preprocessing/tile_background/size_mm=<MPP>/<image_id>.parquet
   - preprocessing/tile_features/size_mm=<MPP>/<model>/<image_id>/<image_id>.hdf5
     (12 foundation models: virchow2,uni,uni2,conch,conch1.5,chief,ctranspath,dino,gigapath,musk,phikon2,resnet-50)
-  - preprocessing/tile_augmentation[...]/target=<STAIN_TARGET>/size_mm=<MPP>/... (e.g. MGB+MRV, VISIOMEL)
+  - preprocessing/tile_augmentation[...]/target=<STAIN_TARGET>/size_mm=<MPP>/... (e.g. COHORT1+COHORT2, COHORT3)
   - thumbnails/<image_id>.png
 - PARTITION DIMENSIONS: size_mm (resolution), foundation model, stain target, image_id (opaque string).
 - Path resolution layer: (stage, image_id, size_mm, model, target) -> path. Keeps code dataset-agnostic.
@@ -60,7 +60,7 @@ Build a repo that: (1) trains all HELIOS pipeline models from datasets placed in
 - Tiling resolver: image_mpp, image_width/height, image_magnification.
 
 
-## Path resolution & split roots (CONFIRMED)
+## Path resolution & split roots (CONFIRMED) [SUPERSEDED 2026-10-22 -- see "2026-10-22: Coherent 5-role layout, logical cohorts & Hive paths" below]
 - Hybrid: each stage checks artifact; present -> consume; missing -> produce. (Make file-target/DAG.)
 - Every artifact explicitly declares one of five storage roles in pipeline-spec.yaml:
   - source: fixed wsi/ and metadata/image_metadata.csv.
@@ -217,7 +217,7 @@ Per-case dir (cases/<image_id>/):
 Web app rendering = two paths: self-render from tile/cell parquet (+attention/clusters)
   OR fallback PNGs.
 
-## Batch tabular aggregation (cohort tables)
+## Batch tabular aggregation (cohort tables) [AMENDED 2026-10-22 -- see "2026-10-22: Atomic publication, .parts/ tables & completion" below]
 - DECISION: per-image SCALARS + short feature-vectors are PRODUCED DIRECTLY as batch CSVs, one CSV per
     producing component, ONE ROW PER image_id, at the SAME level as image_metadata.csv (joinable on image_id).
     Replaces the old "1000s of tiny per-case JSONs + view-builder scan" model. (Resolves prior OPEN question:
@@ -383,3 +383,160 @@ helios/
 - data/ readers.py + writers.py -> data/io.py (read+write together per format)
 - data/spec.py = DatasetSpec input contract; data/resolver.py = path resolver (only layout-aware code);
   data/manifest.py = image index (scan wsi flattened + join image_metadata.csv).
+
+---
+
+## 2026-10-22: Coherent 5-role layout, logical cohorts & Hive paths (SUPERSEDES "Path resolution & split roots"; AMENDS "Dataset contract" and "Cross-validation & folds")
+
+### 1. Five Storage Roles & Direct Role Roots
+Every artifact in [pipeline-spec.yaml](./pipeline-spec.yaml) declares one of five storage roles (`source`, `preprocessing`, `features`, `models`, `results`):
+
+| Role | Default root (when CLI flag omitted) | Explicit root (when `--<role>-root PATH` passed) | Scope in cohort unions |
+|---|---|---|---|
+| `source` | `<source_root>` | `<source_root>` (from `--dataset` or cohort YAML) | Per physical dataset |
+| `preprocessing` | `<source_root>/preprocessing` | `PATH` (single dataset) or per-entry in cohort YAML | Per physical dataset |
+| `features` | `<source_root>/features` | `PATH` (single dataset) or per-entry in cohort YAML | Per physical dataset |
+| `models` | `<source_root>/models` | `PATH` | Shared across pooled training cohort |
+| `results` | `<source_root>/results` | `PATH/<cohort>` | Per logical cohort |
+
+- **Scenario 1 (single-cohort self-contained run, no root flags):** all derived roles resolve under `<source_root>/{preprocessing,features,models,results}/...` with no extra `<cohort>` directory under `results/`.
+- **Scenario 2 (experiments / multi-cohort evaluation with `--models-root /exp1/models --results-root /exp1/results`):** models resolve under `/exp1/models/<stage>/...` and each evaluated cohort resolves side-by-side under `/exp1/results/<cohort>/<stage>/...`.
+
+### 2. Directory Tree Across Roles
+```text
+# 1. source_root (e.g. /data/COHORT1)
+wsi/{image_id}.svs
+metadata/image_metadata.csv
+
+# 2. preprocessing_root (default: <source_root>/preprocessing)
+cv_splits.csv
+thumbnails/{image_id}.png
+background_mask/size_mm={size_mm}/{image_id}.png
+tiles/size_mm={size_mm}/{image_id}/{image_id}.hdf5
+tile_metadata/size_mm={size_mm}/{image_id}.parquet
+tile_background/size_mm={size_mm}/{image_id}.parquet
+tile_augmentation/method={method}/{aug_params}/size_mm={size_mm}/{image_id}/{image_id}.hdf5
+cells/
+  cell_coordinates/{image_id}.parquet
+  tumor_cell_patches/{image_id}.hdf5
+  mitotic/{image_id}.parquet
+  tile_counts/size_mm={size_mm}/{image_id}.parquet
+  cellular_features/size_mm={size_mm}/
+    cellular_features.csv
+    cellular_features.csv.parts/{image_id}.csv
+
+# 3. features_root (default: <source_root>/features)
+tile_features/size_mm={size_mm}/model={model}/{image_id}/{image_id}.hdf5
+tile_augmentation_features/method={method}/{aug_params}/size_mm={size_mm}/model={model}/{image_id}/{image_id}.hdf5
+
+# 4. models_root (default: <source_root>/models, or --models-root /exp1/models)
+mil/fold={fold}
+cellular/fold={fold}
+concepts/fold={fold}
+morphology/fold={fold}
+staging/fold={fold}
+clinical/fold={fold}
+fusion/fold={fold}
+
+# 5. results_root (default: <source_root>/results, or --results-root /exp1/results -> /exp1/results/<cohort>)
+mil/
+  patch_embeddings/fold={fold}/{image_id}.hdf5
+  attention/fold={fold}/{image_id}.parquet
+  slide_embedding/fold={fold}/{image_id}.npy
+  slide_embedding_grad/fold={fold}/{image_id}.npy
+  risk_score/
+    fold={fold}/
+      whole_image_risk_score.csv
+      whole_image_risk_score.csv.parts/{image_id}.csv
+    whole_image_risk_score.csv
+cellular/
+  cellular_risk_score.csv
+concepts/
+  path_concept_predictions.csv
+  path_concept_risk_score.csv
+morphology/
+  clusters/{image_id}.parquet
+  patch_morphology_presence.csv
+  patch_morphology_risk_score.csv
+staging/
+  staging_risk_score.csv
+clinical/
+  clinical_risk_score.csv
+fusion/
+  helios_risk_score.csv
+  survival_curve/{image_id}.csv
+reports/
+  cohort_summary.csv
+  {image_id}/
+    report.json
+    report.md
+    assets/{asset_id}.png
+```
+
+### 3. Logical Cohorts, `cv_splits`, and Hive Partitioning
+- **Logical cohorts:** A cohort is either a single dataset directory (`/data/COHORT1` -> name `COHORT1`) or a cohort YAML (`cohorts/train.yaml` -> name `TRAIN_COHORT`). Multi-dataset union cohorts validate that `image_id`s are unique across constituents.
+- **`cv_splits` resolution:**
+  - Default location for a single dataset: `<preprocessing_root>/cv_splits.csv`.
+  - Default location for a cohort YAML (`cohorts/train.yaml`): `cohorts/train.splits.csv` (or `splits:` in the YAML).
+  - Overridable via `--splits-file`. `fit` and `predict` log the resolved splits file path (or log ensemble fallback when absent on `predict`).
+- **Hive `key=value` directories & `scan_hive()`:**
+  - All partition segments in paths use `key=value` (`size_mm={size_mm}`, `model={model}`, `method={method}`, `fold={fold}`).
+  - Numbers are canonicalized (`0.250` -> `0.25`); list values join with `+`.
+  - Non-default parameter variants on `prep splits` or `prep cell-features` nest sorted `key=value/` segments before the filename.
+  - `scan_hive()` collects matching CSV/Parquet files (skipping `.parts/`), parses all `key=value` path segments into columns, and returns a unified DataFrame.
+
+### 4. Pluggable Tile Augmentation & Per-Dataset Cohort Attachment
+- **Pluggable transform interface (`helios.components.augmentation`):**
+  - Uses a general `method={method}/{aug_params}` Hive path interface so augmentation is not locked to a single `target` string. Currently only `cyclegan` (`method=cyclegan` with optional `source` and required `target`) is implemented; other methods (e.g. combined HSV/blur) are deferred until needed.
+- **Storage layout:**
+  - Augmented tiles: `<preprocessing_root>/tile_augmentation/method={method}/{aug_params}/size_mm={size_mm}/{image_id}/{image_id}.hdf5`
+  - Augmented features: `<features_root>/tile_augmentation_features/method={method}/{aug_params}/size_mm={size_mm}/model={model}/{image_id}/{image_id}.hdf5`
+- **Single specification in Cohort YAML (materialized by `prep augment`, consumed by `fit mil`):**
+  - Each dataset entry in a cohort YAML may declare an `augmentations:` list of augmentation specs:
+    ```yaml
+    name: TRAIN_COHORT
+    datasets:
+      - source_root: /data/COHORT1
+        augmentations:
+          - method: cyclegan
+            source: COHORT1
+            target: COHORT2
+            checkpoint: /path/to/c1_to_c2/latest_net_G_A.pth
+      - source_root: /data/COHORT2
+        augmentations:
+          - method: cyclegan
+            source: COHORT2
+            target: COHORT1
+            checkpoint: /path/to/c2_to_c1/latest_net_G_A.pth
+    ```
+  - Stages that do not use augmentations (`prep thumbnails`, `prep tiles`, `prep tile-features`, `prep cells`) ignore the `augmentations:` field.
+  - `helios prep augment --dataset cohorts/train.yaml` reads each constituent's `augmentations:` list and generates the corresponding `tile_augmentation` and `tile_augmentation_features` artifacts under that constituent's `preprocessing_root` and `features_root`.
+  - `helios fit mil --dataset cohorts/train.yaml` resolves all configured `augmentations:` for each slide into `SlideFeatureRef.aug_features_paths: tuple[Path, ...]`, verifies they exist on disk, and merges them with the original slide features via per-tile swapping (`aug_mode="replace"`, sampling across the slide's attached augmentations with probability `aug_swap_prob`) or bag pooling (`aug_mode="augment"`).
+
+## 2026-10-22: Atomic publication, `.parts/` tables & completion (AMENDS "Batch tabular aggregation")
+
+- **Atomic writes:** Every file write uses a sibling temp file (`.<name>.<uuid>.tmp`) + `os.replace()`. Model bundles write `model.pkl` via a temp file and atomically replace `manifest.json` last (removing any prior `manifest.json` first when overwriting).
+- **Re-runnable model provenance:** Alongside `model.pkl` and `manifest.json`, each model bundle writes `config.yaml` (the exact `fit.<noun>` parameter block accepted by `--config`) and `cohort.yaml` (the resolved cohort definition accepted by `--dataset`), so training can be reproduced directly via `helios fit <noun> --dataset <bundle>/cohort.yaml --config <bundle>/config.yaml`.
+- **`.parts/` tables:** Slide-by-slide tabular stages (`prep cell-features` with single `size_mm: float = 0.25`, and per-fold `predict mil`) write `<table.csv>.parts/{image_id}.csv` per slide and deterministically reduce the cohort's parts into `<table.csv>`. Vectorized cohort-wide stages (`predict concept`, `predict morphology`, `predict risk`, `report` summary) write their CSVs atomically without `.parts/`.
+- **Completion & input guards:** Multi-output work units (`prep tiles`, `prep cells`, `predict mil`) are skipped only if all outputs of the unit exist. `segment_cells` uses a unique temp directory per call (`tempfile.mkdtemp(prefix=f"cellvit_{slide_id}_")`). `fit` stages verify all training slides have complete input artifacts before training.
+
+## 2026-10-22: Run-scoped logging & worker status aggregation (AMENDS "Output/report contract")
+
+- Each CLI run creates `<log_dir>/<run_id>/` where `<run_id>` is `YYYY-MM-DD-HH-MM-SS.ffffff-utc[-<kebab-tag>]` (`--log-dir`, `--run-tag`).
+- Contains `run.log` (combined lifecycle + error tracebacks), `status.json` (atomic snapshot), `events.jsonl` (append-only events), and `workers/<worker-id>.log` (per-worker detailed logs).
+- Workers send throttled status events to a Ray reporting actor; the CLI process drains events, treats Ray task results/exceptions as authoritative for completion/failure, and renders one console progress display.
+
+## 2026-10-22: Parallel execution, Ray workers & SLURM (NEW)
+
+- **Serial by default (CONFIRMED 2026-10-23):** Without `--ray-address` or `--max-cpus > 1`, every stage runs single-process in the CLI process; Ray is never started. Execution settings travel as a separate `ParallelConfig` runtime seam (`parallel=`), not inside `StorageRoots` (which stays a pure location object: role roots + `splits_file`).
+- **Ray lifecycle (opt-in):** With `--max-cpus N` (N > 1) and no `--ray-address`, starts a local Ray instance respecting `CUDA_VISIBLE_DEVICES` and `--max-cpus`, shutting it down on exit. With `--ray-address`, attaches to the existing cluster and leaves it running on exit so bash scripts (or a future GUI) can run multiple `helios` commands sequentially or in parallel (`&` + `wait`) on the shared pool. Dataset roots, role roots and the run log dir are made absolute at the CLI boundary so workers with a different cwd/node resolve the same paths. `RAY_ENABLE_UV_RUN_RUNTIME_ENV` defaults to off (set in `helios/__init__.py`) so `uv run` never ships the working directory to workers.
+- **Work units:** `run_work_units(units, fn, ...)` calls `fn(unit, ctx: WorkContext)`; `ctx.progress` is a worker-local `Progress` whose events relay to the coordinator's status actor (workers never write `status.json`/`events.jsonl` directly), and `ctx.log_path` is that worker's `workers/<worker-id>.log`. Workers return a structured `WorkResult` (status, worker id, log path, error, traceback) rather than raising; the coordinator keeps a per-unit state machine (`queued -> running -> completed|skipped|failed`) from which `status.json` counts are derived.
+- **`.parts/` reduce:** The reduce step always reads the parts of the whole cohort population (not just the current `--image-id`/filter selection) so partial re-runs never shrink the reduced table.
+- **Cellular table selection:** `fit risk`, `predict risk` and `report` read `cellular_features` for exactly one `cellular_size_mm` (default `0.25`, shared with `prep cell-features`); no cross-partition globbing.
+- **Workers:**
+  - CPU tasks (`thumbnails`, `tiles`, `cell-features`) with optional `(start, stop)` slice bounds for future single-slide chunking.
+  - Persistent 1-per-GPU lookup-or-create actors (`tile-features`, `augment`, `predict mil`) with slice-ready signatures.
+  - Isolated per-GPU subprocess worker for `prep cells` (CellViT) with `CUDA_VISIBLE_DEVICES` pinned to that GPU and `SystemConfiguration` CPU/memory bounded to `cpus_per_slide`; the same CPU share is reserved from Ray (`num_cpus`) so slides never oversubscribe, and CellViT stdout/stderr are appended to the worker log. In serial mode CellViT runs in-process with the same CPU bound (CellViT's internal Ray pool is its own and cannot be disabled).
+  - Parallel fold tasks for `fit` stages (1 GPU per fold for `fit mil`, CPU fold tasks for `concept`, `morphology`, `risk`).
+- **Failures:** Slide tasks continue on remaining slides when one fails, log tracebacks, and exit nonzero at stage end.
+- **SLURM scripts:** Provide both fixed multi-node allocation (`ray-cluster.sbatch`) and dynamic job-array worker pool (`ray-array-workers.sbatch`).

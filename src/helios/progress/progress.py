@@ -16,13 +16,22 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable, Iterator
-from typing import TypeVar
-
-from helios.progress.reporter import ProgressReporter
+from typing import Any, Protocol, TypeVar
 
 T = TypeVar("T")
 
 _LOG = logging.getLogger("helios")
+
+
+class EventSink(Protocol):
+    """Where a :class:`Progress` forwards its events.
+
+    :class:`~helios.progress.reporter.ProgressReporter` is the coordinator's sink
+    (``status.json`` + ``events.jsonl``); parallel workers use a sink that relays
+    events to the coordinator instead of touching those files directly.
+    """
+
+    def event(self, kind: str, **fields: Any) -> None: ...
 
 
 class Progress:
@@ -31,8 +40,8 @@ class Progress:
     Parameters
     ----------
     reporter:
-        Optional :class:`ProgressReporter`; when set, ``log`` and task lifecycle
-        events are also appended to ``events.jsonl`` / rolled into ``status.json``.
+        Optional :class:`EventSink`; when set, ``log`` and task lifecycle events
+        are also forwarded to it (e.g. appended to ``events.jsonl``).
     use_tqdm:
         Render a tqdm bar for :meth:`task`. Disable for non-interactive runs.
     logger:
@@ -44,7 +53,7 @@ class Progress:
     def __init__(
         self,
         *,
-        reporter: ProgressReporter | None = None,
+        reporter: EventSink | None = None,
         use_tqdm: bool = True,
         logger: logging.Logger | None = None,
         enabled: bool = True,
@@ -57,7 +66,7 @@ class Progress:
     # -- constructors ---------------------------------------------------------
 
     @classmethod
-    def console(cls, *, reporter: ProgressReporter | None = None) -> Progress:
+    def console(cls, *, reporter: EventSink | None = None) -> Progress:
         """A visible, console-backed progress (tqdm bar + logging)."""
         return cls(reporter=reporter, use_tqdm=True, enabled=True)
 

@@ -17,7 +17,9 @@ from helios.data.io import ArtifactStore
 from helios.progress import DEFAULT_PROGRESS, Progress
 from helios.stages._runtime import (
     DatasetArgs,
+    ParallelConfig,
     StorageRoots,
+    build_bundle_metadata,
     cohort_store,
     folds_across,
     model_folds,
@@ -44,6 +46,7 @@ def fit_morphology(
     *,
     datasets: DatasetArgs,
     roots: StorageRoots | None = None,
+    parallel: ParallelConfig | None = None,
     target: str = DEFAULT_TARGET,
     attention_cutoff: float = DEFAULT_ATTENTION_CUTOFF,
     n_pca: int = DEFAULT_N_PCA,
@@ -68,7 +71,7 @@ def fit_morphology(
     resolved = resolve_datasets(datasets, roots=roots, require_models=True)
     stores = [cohort_store(ds, roots) for ds in resolved]
     out = stores[0]
-    folds = folds_across(stores)
+    folds = folds_across(resolved, roots)
 
     for fold in progress.task(folds, desc="fit morphology"):
         if not force and out.exists("model_morphology", fold=fold):
@@ -79,11 +82,23 @@ def fit_morphology(
         labels: list[pd.DataFrame] = []
         for ds, store in zip(resolved, stores, strict=True):
             meta = ds.dataset().image_metadata.set_index("image_id")
-            ids = train_ids(store, fold, where=ds.where)
+            ids = train_ids(ds, fold, where=ds.where, roots=roots)
+            missing_meta = [i for i in ids if i not in meta.index]
+            if missing_meta:
+                raise ValueError(f"Missing image_metadata rows for training slides in {ds.name}: {missing_meta[:5]}")
             for image_id in ids:
-                paths[image_id] = store.path("aligned_patch_embeddings", fold=fold, image_id=image_id)
+                emb_path = store.path("aligned_patch_embeddings", fold=fold, image_id=image_id)
+                if not emb_path.exists():
+                    raise FileNotFoundError(
+                        f"Missing aligned_patch_embeddings for training slide {image_id!r} (fold={fold}) in {ds.name}"
+                    )
+                if not store.exists("patch_attention", fold=fold, image_id=image_id):
+                    raise FileNotFoundError(
+                        f"Missing patch_attention for training slide {image_id!r} (fold={fold}) in {ds.name}"
+                    )
+                paths[image_id] = emb_path
                 attention.append(store.read("patch_attention", fold=fold, image_id=image_id).assign(image_id=image_id))
-            labels.append(meta.loc[[i for i in ids if i in meta.index]].reset_index())
+            labels.append(meta.loc[ids].reset_index())
         bundle = train_morphology(
             paths,
             pd.concat(attention, ignore_index=True) if attention else pd.DataFrame(),
@@ -98,7 +113,24 @@ def fit_morphology(
             estimator=estimator,
             seed=seed,
         )
-        out.write("model_morphology", bundle, fold=fold)
+        meta = build_bundle_metadata(
+            "morphology",
+            {
+                "target": target,
+                "attention_cutoff": attention_cutoff,
+                "n_pca": n_pca,
+                "k_micro": k_micro,
+                "k_neighbors": k_neighbors,
+                "resolution": resolution,
+                "significance_alpha": significance_alpha,
+                "estimator": estimator,
+                "seed": seed,
+            },
+            resolved,
+            roots,
+            fold=fold,
+        )
+        out.write("model_morphology", bundle, metadata=meta, fold=fold)
         progress.log(f"wrote model_morphology fold={fold}")
 
 
@@ -106,6 +138,7 @@ def predict_morphology(
     *,
     datasets: DatasetArgs,
     roots: StorageRoots | None = None,
+    parallel: ParallelConfig | None = None,
     image_ids: list[str] | None = None,
     force: bool = False,
     progress: Progress = DEFAULT_PROGRESS,
@@ -137,7 +170,7 @@ def predict_morphology(
             fold: _stack_attention(store, fold, ids) for fold in folds
         }
         clusters, presence, risk_score = infer_morphology(
-            models, paths, attention, read_cv_splits(store)
+            models, paths, attention, read_cv_splits(ds, roots, progress=progress)
         )
         for image_id, group in clusters.groupby("image_id"):
             store.write("tile_clusters", group, image_id=str(image_id))
