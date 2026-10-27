@@ -6,7 +6,7 @@ it groups one or more components into a unit of work you can run on its own
 (``from helios.stages.tile_features import prep_tile_features``).
 
 Unlike components, stages are NOT pure: they own all artifact-store I/O, the
-dataset / partition / fold loops, per-unit skip logic (``--force``), selector
+dataset / partition / fold loops, per-unit skip logic (``--overwrite``), selector
 validation, and Progress wiring.
 
 Modules are organised by *noun* (domain area); functions are named ``verb_noun``
@@ -18,7 +18,7 @@ configurable the moment it is registered.
 Each stage's keyword parameters with defaults are the single source of truth for
 its configuration: ``scripts/gen_configs.py`` introspects them to generate
 ``configs/default.yaml`` (run ``make configs`` after changing a default).
-Framework seams (``datasets``, ``roots``, ``parallel``, ``image_ids``, ``force``,
+Framework seams (``datasets``, ``roots``, ``parallel``, ``image_ids``, ``overwrite``,
 ``progress``) are runtime arguments, not config keys.
 """
 from __future__ import annotations

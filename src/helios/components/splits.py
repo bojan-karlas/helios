@@ -3,7 +3,7 @@
 Pure assignment of each image to one of ``n_folds`` folds, optionally grouped by
 patient (to prevent leakage) and stratified by one or more label columns. The
 owning stage (:mod:`helios.stages.splits`) reads ``image_metadata`` and writes
-the resulting ``cv_splits`` table; this function only computes the assignment.
+the resulting ``splits`` table; this function only computes the assignment.
 
 Ported from ``fold_assignment.ipynb``: ``StratifiedKFold(n_splits=5,
 shuffle=True, random_state=seed)`` on the recurrence outcome column, assigning
@@ -42,7 +42,7 @@ VAL = "val"
 TEST = "test"
 
 
-def generate_cv_splits(
+def generate_splits(
     image_metadata: pd.DataFrame,
     *,
     n_folds: int = 5,
@@ -88,7 +88,7 @@ def generate_cv_splits(
 
     n_splits = min(n_folds, n)
     if n_splits < 2:
-        raise ValueError(f"generate_cv_splits needs at least 2 images to split; got {n}.")
+        raise ValueError(f"generate_splits needs at least 2 images to split; got {n}.")
 
     image_ids = image_metadata[IMAGE_ID].astype(str).to_numpy()
     y = _composite_key(image_metadata, stratify_by) if stratify_by else np.zeros(n, dtype=int)

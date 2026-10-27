@@ -53,7 +53,7 @@ def test_all_artifacts_resolve_under_their_declared_roots(tmp_path: Path) -> Non
     keys = dict(image_id="I1", tile_id=0, cell_id=0, fold=1, model="uni", target="lab", size_mm=0.25, asset_id="a")
     for artifact in load_artifacts().values():
         assert resolver.path(artifact.id, **keys).is_relative_to(roots.for_role(artifact.role))
-    assert resolver.role("cv_splits") == "preprocessing"
+    assert resolver.role("splits") == "preprocessing"
     assert resolver.role("tile_augmentation") == "preprocessing"
     assert resolver.role("tile_features") == "preprocessing"
     assert resolver.role("tile_augmentation_features") == "preprocessing"

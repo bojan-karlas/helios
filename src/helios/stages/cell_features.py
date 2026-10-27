@@ -74,7 +74,7 @@ def prep_cell_features(
     lymph_frac_threshold: float = DEFAULT_LYMPH_FRAC_THRESHOLD,
     mitosis_min_count: int = DEFAULT_MITOSIS_MIN_COUNT,
     image_ids: list[str] | None = None,
-    force: bool = False,
+    overwrite: bool = False,
     progress: Progress = DEFAULT_PROGRESS,
 ) -> None:
     """Aggregate per-tile cell counts and compute per-slide cellular features.
@@ -103,7 +103,7 @@ def prep_cell_features(
         store = cohort_store(ds, roots)
         run_work_units(
             select_image_ids(ds, store, image_ids),
-            partial(_cell_features, store=store, table_keys=table_keys, thresholds=thresholds, force=force),
+            partial(_cell_features, store=store, table_keys=table_keys, thresholds=thresholds, overwrite=overwrite),
             stage=f"cell-features {ds.name}",
             progress=progress,
             parallel=parallel,
@@ -124,14 +124,14 @@ def _cell_features(
     store: ArtifactStore,
     table_keys: dict[str, Any],
     thresholds: dict[str, Any],
-    force: bool,
+    overwrite: bool,
 ) -> str:
     size_mm = table_keys["size_mm"]
     counts_ok = store.exists("tile_cell_counts", size_mm=size_mm, image_id=image_id)
-    if not force and counts_ok and store.part_exists("cellular_features", image_id, **table_keys):
+    if not overwrite and counts_ok and store.part_exists("cellular_features", image_id, **table_keys):
         ctx.progress.log(f"skip cell-features image={image_id} (exists)")
         return "skipped"
-    if force or not counts_ok:
+    if overwrite or not counts_ok:
         cells = store.read("cells", image_id=image_id)
         mitotic = store.read("mitotic_cells", image_id=image_id)
         tile_meta = store.read("tile_metadata", size_mm=size_mm, image_id=image_id)

@@ -64,7 +64,7 @@ def build_report(
     summarize: bool = DEFAULT_SUMMARIZE,
     cellular_size_mm: float = DEFAULT_CELLULAR_SIZE_MM,
     image_ids: list[str] | None = None,
-    force: bool = False,
+    overwrite: bool = False,
     progress: Progress = DEFAULT_PROGRESS,
 ) -> None:
     """Assemble per-case reports and the cohort summary for each cohort.
@@ -81,7 +81,7 @@ def build_report(
         tables = _read_tables(store, _CASE_TABLES, cellular_size_mm)
 
         for image_id in progress.task(ids, desc=f"report {ds.name}"):
-            if not force and store.exists("case_report_md", image_id=image_id):
+            if not overwrite and store.exists("case_report_md", image_id=image_id):
                 progress.log(f"skip report image={image_id} (exists)")
                 continue
             case_inputs = {name: _slice(table, image_id) for name, table in tables.items()}

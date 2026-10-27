@@ -8,7 +8,7 @@ import pandas as pd
 import pytest
 from sklearn.model_selection import StratifiedKFold
 
-from helios.components.splits import generate_cv_splits
+from helios.components.splits import generate_splits
 from tests.fixtures import make_cohort
 
 
@@ -19,7 +19,7 @@ def image_metadata(tmp_path: Path) -> pd.DataFrame:
 
 
 def test_long_format_one_test_row_per_image_per_fold(image_metadata: pd.DataFrame) -> None:
-    splits = generate_cv_splits(image_metadata, n_folds=4, seed=0)
+    splits = generate_splits(image_metadata, n_folds=4, seed=0)
     assert set(splits.columns) == {"image_id", "fold", "split"}
     assert len(splits) == len(image_metadata) * 4
 
@@ -31,7 +31,7 @@ def test_long_format_one_test_row_per_image_per_fold(image_metadata: pd.DataFram
 
 def test_stratified_matches_plain_stratifiedkfold(image_metadata: pd.DataFrame) -> None:
     """No group_by: reproduces a plain StratifiedKFold(...).split(zeros, y) exactly."""
-    splits = generate_cv_splits(
+    splits = generate_splits(
         image_metadata, n_folds=4, stratify_by=["disease_pfs_recurred"], group_by=None, seed=42
     )
     got_test_fold = (
@@ -55,7 +55,7 @@ def test_group_by_keeps_patient_slides_in_one_fold() -> None:
             rows.append({"image_id": f"P{p}-{s}", "patient_id": f"P{p}", "label": (p + s) % 2})
     meta = pd.DataFrame(rows)
 
-    splits = generate_cv_splits(meta, n_folds=3, group_by="patient_id", seed=0)
+    splits = generate_splits(meta, n_folds=3, group_by="patient_id", seed=0)
     test_fold_by_image = splits[splits["split"] == "test"].set_index("image_id")["fold"]
 
     for p in range(3):
@@ -65,7 +65,7 @@ def test_group_by_keeps_patient_slides_in_one_fold() -> None:
 
 
 def test_val_fraction_carves_out_val_without_touching_test(image_metadata: pd.DataFrame) -> None:
-    splits = generate_cv_splits(image_metadata, n_folds=3, val_fraction=0.3, seed=0)
+    splits = generate_splits(image_metadata, n_folds=3, val_fraction=0.3, seed=0)
     for _fold, group in splits.groupby("fold"):
         assert set(group["image_id"]) == set(image_metadata["image_id"].astype(str))
         assert (group["split"] == "val").sum() > 0
@@ -79,7 +79,7 @@ def test_group_by_val_fraction_carves_whole_groups() -> None:
             rows.append({"image_id": f"P{p}-{s}", "patient_id": f"P{p}", "label": p % 2})
     meta = pd.DataFrame(rows)
 
-    splits = generate_cv_splits(meta, n_folds=3, val_fraction=0.4, group_by="patient_id", seed=0)
+    splits = generate_splits(meta, n_folds=3, val_fraction=0.4, group_by="patient_id", seed=0)
     for fold, group in splits.groupby("fold"):
         by_patient = group.assign(patient_id=group["image_id"].str.split("-").str[0])
         for patient_id, patient_rows in by_patient.groupby("patient_id"):
@@ -91,7 +91,7 @@ def test_group_by_val_fraction_carves_whole_groups() -> None:
 
 def test_empty_metadata_returns_empty_frame() -> None:
     empty = pd.DataFrame(columns=["image_id"])
-    splits = generate_cv_splits(empty, n_folds=5)
+    splits = generate_splits(empty, n_folds=5)
     assert splits.empty
     assert list(splits.columns) == ["image_id", "fold", "split"]
 
@@ -99,5 +99,5 @@ def test_empty_metadata_returns_empty_frame() -> None:
 def test_n_folds_clipped_to_cohort_size() -> None:
     # No stratify_by: n_splits is only bounded by sample count, not per-class counts.
     meta = pd.DataFrame({"image_id": ["A", "B", "C"]})
-    splits = generate_cv_splits(meta, n_folds=10, seed=0)
+    splits = generate_splits(meta, n_folds=10, seed=0)
     assert splits["fold"].nunique() == 3

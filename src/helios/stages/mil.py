@@ -24,7 +24,7 @@ from helios.stages._runtime import (
     cohort_store,
     folds_across,
     model_folds,
-    read_cv_splits,
+    read_splits,
     resolve_datasets,
     select_image_ids,
     tag_dataset,
@@ -72,7 +72,7 @@ def fit_mil(
     val_frac: float = DEFAULT_VAL_FRAC,
     seed: int = DEFAULT_SEED,
     device: str = DEFAULT_DEVICE,
-    force: bool = False,
+    overwrite: bool = False,
     progress: Progress = DEFAULT_PROGRESS,
 ) -> None:
     """Train one A-MIL model per fold over the pooled training cohorts.
@@ -95,7 +95,7 @@ def fit_mil(
     slides_by_fold: dict[int | None, list[SlideFeatureRef]] = {}
     validated: set[tuple[Path, Path]] = set()
     for fold in folds:
-        if not force and out.exists("model_mil", fold=fold):
+        if not overwrite and out.exists("model_mil", fold=fold):
             progress.log(f"skip model_mil fold={fold} (exists)")
             continue
         slides: list[SlideFeatureRef] = []
@@ -196,7 +196,7 @@ def predict_mil(
     model: str = DEFAULT_MODEL,
     device: str = DEFAULT_DEVICE,
     image_ids: list[str] | None = None,
-    force: bool = False,
+    overwrite: bool = False,
     progress: Progress = DEFAULT_PROGRESS,
 ) -> None:
     """Score every image with each fold's A-MIL model, then reduce whole-image risk.
@@ -226,7 +226,7 @@ def predict_mil(
                     and store.exists("aligned_slide_embedding_grad", fold=fold, image_id=image_id)
                     and store.part_exists("whole_image_risk_score", image_id, fold=fold)
                 )
-                if not force and complete:
+                if not overwrite and complete:
                     continue
                 out = infer_mil(
                     mil_model,
@@ -259,7 +259,7 @@ def predict_mil(
 
         ensemble = reduce_whole_image_risk(
             pd.concat(per_fold_scores, ignore_index=True) if per_fold_scores else pd.DataFrame(),
-            read_cv_splits(ds, roots, progress=progress),
+            read_splits(ds, roots, progress=progress),
         )
         store.write("whole_image_risk_score_ensemble", tag_dataset(ensemble, ds.name))
         progress.log(f"wrote whole_image_risk_score_ensemble {ds.name}")

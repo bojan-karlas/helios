@@ -54,7 +54,7 @@ def test_predict_concept_writes_reduced_outputs(monkeypatch, tmp_path: Path) -> 
     root, store = _prepared_cohort(tmp_path)
     store.write("model_concepts", {"fitted": True}, fold=None)
 
-    def fake_infer(models, embeddings, risk, cv_splits):
+    def fake_infer(models, embeddings, risk, splits):
         assert risk[None]["image_id"].tolist() == IMAGE_IDS
         predictions = pd.DataFrame({"image_id": IMAGE_IDS, "path_thickness": range(4)})
         scores = pd.DataFrame({"image_id": IMAGE_IDS, "risk_score": np.linspace(0.1, 0.4, 4)})

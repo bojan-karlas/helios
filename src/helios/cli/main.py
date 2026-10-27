@@ -98,7 +98,7 @@ def report(
     no_assets: bool = typer.Option(False, "--no-assets", help="Skip rendering PNG assets."),
     no_summarize: bool = typer.Option(False, "--no-summarize", help="Skip the cohort summary join."),
     config: Path | None = typer.Option(None, "--config", "-c", help="Override config YAML."),
-    force: bool = typer.Option(False, "--force", help="Re-render even if reports exist."),
+    overwrite: bool = typer.Option(False, "--overwrite", help="Re-render even if reports exist."),
 ) -> None:
     """Build the per-case reports and cohort summary (web-app data package)."""
     from helios.config.stage_config import load_stage_params
@@ -121,7 +121,7 @@ def report(
         datasets=datasets,
         roots=roots,
         parallel=parallel,
-        force=force,
+        overwrite=overwrite,
         progress=console_progress(
             results_root or models_root or datasets[0].root,
             log_dir=log_dir,

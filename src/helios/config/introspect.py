@@ -9,7 +9,7 @@ serializes. Run ``make configs`` to regenerate the committed file.
 The config mirrors the CLI shape: ``{verb: {noun: {param: default}}}``.
 
 Framework seams are runtime arguments, not configuration, and are excluded:
-``datasets``, ``roots``, ``parallel``, ``image_ids``, ``force``, ``progress``.
+``datasets``, ``roots``, ``parallel``, ``image_ids``, ``overwrite``, ``progress``.
 """
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ from helios.stages import STAGES
 
 #: Parameters that are runtime seams, never emitted to config.
 RUNTIME_PARAMS = frozenset(
-    {"datasets", "roots", "parallel", "image_ids", "force", "progress"}
+    {"datasets", "roots", "parallel", "image_ids", "overwrite", "progress"}
 )
 
 

@@ -35,7 +35,7 @@ def cohort(tmp_path: Path) -> Path:
             rows.append(
                 {"image_id": image_id, "fold": fold, "split": "train" if in_train else "test"}
             )
-    store.write("cv_splits", pd.DataFrame(rows))
+    store.write("splits", pd.DataFrame(rows))
     for image_id in IMAGE_IDS:
         store.write(
             "tile_features",
@@ -105,7 +105,7 @@ def test_predict_scores_each_fold_then_reduces(monkeypatch, cohort: Path) -> Non
             risk_score=0.5,
         )
 
-    def _fake_reduce(per_fold_scores, cv_splits):
+    def _fake_reduce(per_fold_scores, splits):
         return per_fold_scores.groupby("image_id", as_index=False)["risk_score"].mean()
 
     monkeypatch.setattr("helios.stages.mil.infer_mil", _fake_infer)

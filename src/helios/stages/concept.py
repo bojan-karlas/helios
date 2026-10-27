@@ -22,7 +22,7 @@ from helios.stages._runtime import (
     cohort_store,
     folds_across,
     model_folds,
-    read_cv_splits,
+    read_splits,
     resolve_datasets,
     select_image_ids,
     tag_dataset,
@@ -39,7 +39,7 @@ def fit_concept(
     roots: StorageRoots | None = None,
     parallel: ParallelConfig | None = None,
     n_bootstrap: int = DEFAULT_N_BOOTSTRAP,
-    force: bool = False,
+    overwrite: bool = False,
     progress: Progress = DEFAULT_PROGRESS,
 ) -> None:
     """Train per-fold concept models over the pooled concept cohorts.
@@ -56,7 +56,7 @@ def fit_concept(
     folds = folds_across(resolved, roots)
 
     for fold in progress.task(folds, desc="fit concept"):
-        if not force and out.exists("model_concepts", fold=fold):
+        if not overwrite and out.exists("model_concepts", fold=fold):
             progress.log(f"skip model_concepts fold={fold} (exists)")
             continue
         embeddings: list[NDArray[np.float32]] = []
@@ -91,7 +91,7 @@ def predict_concept(
     roots: StorageRoots | None = None,
     parallel: ParallelConfig | None = None,
     image_ids: list[str] | None = None,
-    force: bool = False,
+    overwrite: bool = False,
     progress: Progress = DEFAULT_PROGRESS,
 ) -> None:
     """Predict concepts + concept risk for each cohort (K folds reduced internally).
@@ -107,7 +107,7 @@ def predict_concept(
         folds = model_folds(store, "model_concepts")
         if not folds:
             raise FileNotFoundError(f"No model_concepts bundle found under {ds.name}.")
-        if not force and store.exists("path_concept_risk_score"):
+        if not overwrite and store.exists("path_concept_risk_score"):
             progress.log(f"skip concept predictions {ds.name} (exists)")
             continue
 
@@ -118,7 +118,7 @@ def predict_concept(
             for fold in folds
         }
         predictions, risk_score = infer_concepts(
-            models, embeddings, risk, read_cv_splits(ds, roots, progress=progress)
+            models, embeddings, risk, read_splits(ds, roots, progress=progress)
         )
         store.write("path_concept_predictions", tag_dataset(predictions, ds.name))
         store.write("path_concept_risk_score", tag_dataset(risk_score, ds.name))

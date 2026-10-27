@@ -71,7 +71,7 @@ area): `thumbnails.py`, `tiling.py`, `features.py`, `cells.py`, `mil.py`,
 
 A **stage** is one `verb noun` cell (e.g. `prep thumbnails`, `fit mil`). Unlike
 components, stages are **not** pure: they own all artifact-store I/O, the
-dataset / partition / fold loops, per-unit skip logic (`--force`), selector
+dataset / partition / fold loops, per-unit skip logic (`--overwrite`), selector
 validation, and `Progress` wiring. A stage loads inputs from the store, calls
 its component(s) once per work unit, and writes the outputs back.
 
@@ -155,7 +155,7 @@ owns the loop and the store I/O:
 
 ```python
 for image_id in progress.task(ids, desc=f"thumbnails {Path(dataset).name}"):
-    if not force and store.exists("thumbnail", image_id=image_id):
+    if not overwrite and store.exists("thumbnail", image_id=image_id):
         continue
     thumb = extract_thumbnail(str(cohort.slides[image_id]), max_size=max_size)
     store.write("thumbnail", thumb, image_id=image_id)
@@ -174,7 +174,7 @@ config.
 Mirror [`tests/test_stage_tile_features.py`](tests/test_stage_tile_features.py):
 build a synthetic cohort with `tests/fixtures.py::make_cohort`, monkeypatch the
 component to a deterministic stand-in, and assert the stage writes the expected
-artifacts and respects skip / `--force`. Run `make lint && make test`.
+artifacts and respects skip / `--overwrite`. Run `make lint && make test`.
 
 ### Adding a brand-new stage or artifact
 

@@ -106,7 +106,7 @@ def infer_concepts(
     models: dict[int | None, Model],
     slide_embeddings: dict[int | None, NDArray[np.float32]],
     whole_image_risk: dict[int | None, pd.DataFrame],
-    cv_splits: pd.DataFrame | None,
+    splits: pd.DataFrame | None,
     *,
     overrides: pd.DataFrame | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -147,8 +147,8 @@ def infer_concepts(
         }))
 
     return (
-        _reduce_folds(pd.concat(fold_predictions, ignore_index=True), cv_splits),
-        _reduce_folds(pd.concat(fold_risks, ignore_index=True), cv_splits),
+        _reduce_folds(pd.concat(fold_predictions, ignore_index=True), splits),
+        _reduce_folds(pd.concat(fold_risks, ignore_index=True), splits),
     )
 
 
@@ -271,19 +271,19 @@ def _apply_overrides(
     return result.reset_index()
 
 
-def _reduce_folds(frame: pd.DataFrame, cv_splits: pd.DataFrame | None) -> pd.DataFrame:
-    if cv_splits is None:
+def _reduce_folds(frame: pd.DataFrame, splits: pd.DataFrame | None) -> pd.DataFrame:
+    if splits is None:
         numeric = [c for c in frame.columns if c not in {_ID, "fold"}]
         reduced = frame.groupby(_ID, sort=False)[numeric].mean().reset_index()
         reduced["fold"] = None
         return reduced
     required = {_ID, "fold", "split"}
-    if not required <= set(cv_splits.columns):
-        raise ValueError(f"cv_splits must contain {sorted(required)}.")
-    test = cv_splits.loc[cv_splits["split"] == "test", [_ID, "fold"]]
+    if not required <= set(splits.columns):
+        raise ValueError(f"splits must contain {sorted(required)}.")
+    test = splits.loc[splits["split"] == "test", [_ID, "fold"]]
     reduced = frame.merge(test, on=[_ID, "fold"], how="inner")
     if reduced[_ID].duplicated().any():
-        raise ValueError("cv_splits defines multiple test-fold predictions for an image.")
+        raise ValueError("splits defines multiple test-fold predictions for an image.")
     return reduced.reset_index(drop=True)
 
 

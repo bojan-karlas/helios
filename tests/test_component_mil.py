@@ -142,14 +142,14 @@ def test_reduce_whole_image_risk_cv_takes_test_fold_score() -> None:
             "risk_score": [0.1, 0.9, 0.2, 0.8],
         }
     )
-    cv_splits = pd.DataFrame(
+    splits = pd.DataFrame(
         {
             "image_id": ["A", "A", "B", "B"],
             "fold": [0, 1, 0, 1],
             "split": ["train", "test", "test", "train"],
         }
     )
-    reduced = reduce_whole_image_risk(per_fold_scores, cv_splits)
+    reduced = reduce_whole_image_risk(per_fold_scores, splits)
     reduced = reduced.set_index("image_id")
     assert reduced.loc["A", "risk_score"] == pytest.approx(0.9)
     assert reduced.loc["A", "fold"] == 1

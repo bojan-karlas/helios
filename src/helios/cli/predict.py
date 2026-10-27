@@ -34,7 +34,7 @@ _DATASET = typer.Option(
     ..., "--dataset", help="Cohort root(s) or cohort file(s) to score; repeatable or comma-separated."
 )
 _CONFIG = typer.Option(None, "--config", "-c", help="Override config YAML.")
-_FORCE = typer.Option(False, "--force", help="Re-score even if outputs exist.")
+_OVERWRITE = typer.Option(False, "--overwrite", help="Re-score even if outputs exist.")
 _FILTER = typer.Option(
     None, "--filter", help="pandas-query over image_metadata to subset scored images."
 )
@@ -58,7 +58,7 @@ def mil(
     device: str | None = typer.Option(None, "--device", help="Torch device (cuda, cpu)."),
     filter: str | None = _FILTER,
     config: Path | None = _CONFIG,
-    force: bool = _FORCE,
+    overwrite: bool = _OVERWRITE,
 ) -> None:
     """Score whole-slide A-MIL and reduce whole-image risk."""
     from helios.config.stage_config import load_stage_params
@@ -76,7 +76,7 @@ def mil(
     overrides = {"size_mm": size_mm, "model": model, "device": device}
     params = load_stage_params("predict", "mil", config_path=config, overrides=overrides)
     predict_mil(
-        datasets=datasets, roots=roots, parallel=parallel, force=force,
+        datasets=datasets, roots=roots, parallel=parallel, overwrite=overwrite,
         progress=console_progress(
             results_root or models_root or datasets[0].root, log_dir=log_dir, run_tag=run_tag
         ),
@@ -100,7 +100,7 @@ def concept(
     output_root: Path | None = REMOVED_OUTPUT_ROOT,
     filter: str | None = _FILTER,
     config: Path | None = _CONFIG,
-    force: bool = _FORCE,
+    overwrite: bool = _OVERWRITE,
 ) -> None:
     """Predict concepts and the concept-based risk score."""
     from helios.config.stage_config import load_stage_params
@@ -117,7 +117,7 @@ def concept(
     datasets = resolve_datasets(datasets_arg(dataset), where=filter, roots=roots)
     params = load_stage_params("predict", "concept", config_path=config)
     predict_concept(
-        datasets=datasets, roots=roots, parallel=parallel, force=force,
+        datasets=datasets, roots=roots, parallel=parallel, overwrite=overwrite,
         progress=console_progress(
             results_root or models_root or datasets[0].root, log_dir=log_dir, run_tag=run_tag
         ),
@@ -141,7 +141,7 @@ def morphology(
     output_root: Path | None = REMOVED_OUTPUT_ROOT,
     filter: str | None = _FILTER,
     config: Path | None = _CONFIG,
-    force: bool = _FORCE,
+    overwrite: bool = _OVERWRITE,
 ) -> None:
     """Assign clusters, score cluster presence, and produce morphology risk."""
     from helios.config.stage_config import load_stage_params
@@ -158,7 +158,7 @@ def morphology(
     datasets = resolve_datasets(datasets_arg(dataset), where=filter, roots=roots)
     params = load_stage_params("predict", "morphology", config_path=config)
     predict_morphology(
-        datasets=datasets, roots=roots, parallel=parallel, force=force,
+        datasets=datasets, roots=roots, parallel=parallel, overwrite=overwrite,
         progress=console_progress(
             results_root or models_root or datasets[0].root, log_dir=log_dir, run_tag=run_tag
         ),
@@ -185,7 +185,7 @@ def risk(
     ),
     filter: str | None = _FILTER,
     config: Path | None = _CONFIG,
-    force: bool = _FORCE,
+    overwrite: bool = _OVERWRITE,
 ) -> None:
     """Score the simple risk sub-models (and HELIOS fusion + survival)."""
     from helios.config.stage_config import load_stage_params
@@ -202,7 +202,7 @@ def risk(
     datasets = resolve_datasets(datasets_arg(dataset), where=filter, roots=roots)
     params = load_stage_params("predict", "risk", config_path=config, overrides={"risk": csv(risk)})
     predict_risk(
-        datasets=datasets, roots=roots, parallel=parallel, force=force,
+        datasets=datasets, roots=roots, parallel=parallel, overwrite=overwrite,
         progress=console_progress(
             results_root or models_root or datasets[0].root, log_dir=log_dir, run_tag=run_tag
         ),

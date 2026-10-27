@@ -31,7 +31,7 @@ fit_app = typer.Typer(add_completion=False, help="Train models (per-fold bundles
 
 _DATASET = typer.Option(..., "--dataset", help="Training cohort root(s) or cohort file(s); pooled across folds.")
 _CONFIG = typer.Option(None, "--config", "-c", help="Override config YAML.")
-_FORCE = typer.Option(False, "--force", help="Re-fit even if a model bundle exists.")
+_OVERWRITE = typer.Option(False, "--overwrite", help="Re-fit even if a model bundle exists.")
 _FILTER = typer.Option(None, "--filter", help="pandas-query over image_metadata to subset training rows.")
 
 
@@ -88,7 +88,7 @@ def mil(
     device: str | None = typer.Option(None, "--device", help="Torch device (cuda, cpu)."),
     filter: str | None = _FILTER,
     config: Path | None = _CONFIG,
-    force: bool = _FORCE,
+    overwrite: bool = _OVERWRITE,
 ) -> None:
     """Train the whole-slide A-MIL model."""
     from helios.config.stage_config import load_stage_params
@@ -126,7 +126,7 @@ def mil(
     }
     params = load_stage_params("fit", "mil", config_path=config, overrides=overrides)
     fit_mil(
-        datasets=datasets, roots=roots, parallel=parallel, force=force,
+        datasets=datasets, roots=roots, parallel=parallel, overwrite=overwrite,
         progress=console_progress(
             results_root or models_root or datasets[0].root, log_dir=log_dir, run_tag=run_tag
         ),
@@ -151,7 +151,7 @@ def concept(
     n_bootstrap: int | None = typer.Option(None, "--n-bootstrap", help="Bootstrap replicas per concept."),
     filter: str | None = _FILTER,
     config: Path | None = _CONFIG,
-    force: bool = _FORCE,
+    overwrite: bool = _OVERWRITE,
 ) -> None:
     """Train per-concept probes (+ concept risk + residual correction)."""
     from helios.config.stage_config import load_stage_params
@@ -168,7 +168,7 @@ def concept(
     datasets = resolve_datasets(datasets_arg(dataset), where=filter, roots=roots, require_models=True)
     params = load_stage_params("fit", "concept", config_path=config, overrides={"n_bootstrap": n_bootstrap})
     fit_concept(
-        datasets=datasets, roots=roots, parallel=parallel, force=force,
+        datasets=datasets, roots=roots, parallel=parallel, overwrite=overwrite,
         progress=console_progress(
             results_root or models_root or datasets[0].root, log_dir=log_dir, run_tag=run_tag
         ),
@@ -205,7 +205,7 @@ def morphology(
     seed: int | None = typer.Option(None, "--seed", help="Random seed."),
     filter: str | None = _FILTER,
     config: Path | None = _CONFIG,
-    force: bool = _FORCE,
+    overwrite: bool = _OVERWRITE,
 ) -> None:
     """Train the patch-morphology clustering risk model."""
     from helios.config.stage_config import load_stage_params
@@ -233,7 +233,7 @@ def morphology(
     }
     params = load_stage_params("fit", "morphology", config_path=config, overrides=overrides)
     fit_morphology(
-        datasets=datasets, roots=roots, parallel=parallel, force=force,
+        datasets=datasets, roots=roots, parallel=parallel, overwrite=overwrite,
         progress=console_progress(
             results_root or models_root or datasets[0].root, log_dir=log_dir, run_tag=run_tag
         ),
@@ -262,7 +262,7 @@ def risk(
     estimator: str | None = typer.Option(None, "--estimator", help="Simple estimator to fit."),
     filter: str | None = _FILTER,
     config: Path | None = _CONFIG,
-    force: bool = _FORCE,
+    overwrite: bool = _OVERWRITE,
 ) -> None:
     """Train the simple risk sub-models (and HELIOS fusion)."""
     from helios.config.stage_config import load_stage_params
@@ -280,7 +280,7 @@ def risk(
     overrides = {"risk": csv(risk), "target": target, "estimator": estimator}
     params = load_stage_params("fit", "risk", config_path=config, overrides=overrides)
     fit_risk(
-        datasets=datasets, roots=roots, parallel=parallel, force=force,
+        datasets=datasets, roots=roots, parallel=parallel, overwrite=overwrite,
         progress=console_progress(
             results_root or models_root or datasets[0].root, log_dir=log_dir, run_tag=run_tag
         ),

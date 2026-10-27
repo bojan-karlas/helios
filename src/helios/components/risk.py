@@ -52,13 +52,13 @@ def train_risk_model(
 def infer_risk_model(
     models: dict[int | None, Model],
     features: pd.DataFrame,
-    cv_splits: pd.DataFrame | None,
+    splits: pd.DataFrame | None,
 ) -> pd.DataFrame:
     """Score a feature table with the K fold models and reduce to one row per image.
 
     GRAIN: the scored cohort per call. The feature table is fold-independent;
     only the model differs per fold. Reduction is out-of-fold (test-fold model)
-    on a CV cohort / ensemble-average on deploy (``cv_splits is None``).
+    on a CV cohort / ensemble-average on deploy (``splits is None``).
 
     Returns one row per image: ``image_id, risk_score`` (+ a ``fold`` provenance
     column).

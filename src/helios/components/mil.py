@@ -571,23 +571,23 @@ def infer_mil(
 
 def reduce_whole_image_risk(
     per_fold_scores: pd.DataFrame,
-    cv_splits: pd.DataFrame | None,
+    splits: pd.DataFrame | None,
 ) -> pd.DataFrame:
     """Collapse K per-fold whole-image scores to one row per image.
 
     Out-of-fold (each image scored by its test-fold model) on a CV cohort;
-    ensemble-average when ``cv_splits`` is ``None`` (deploy). Emits a ``fold``
+    ensemble-average when ``splits`` is ``None`` (deploy). Emits a ``fold``
     provenance column (test fold; null on deploy).
     """
     if per_fold_scores.empty:
         return pd.DataFrame(columns=["image_id", "risk_score", "fold"])
 
-    if cv_splits is None:
+    if splits is None:
         reduced = per_fold_scores.groupby("image_id", as_index=False)["risk_score"].mean()
         reduced["fold"] = None
         return reduced
 
-    test_rows = cv_splits.loc[cv_splits["split"] == "test", ["image_id", "fold"]]
+    test_rows = splits.loc[splits["split"] == "test", ["image_id", "fold"]]
     reduced = test_rows.merge(per_fold_scores, on=["image_id", "fold"], how="left")
     return reduced[["image_id", "risk_score", "fold"]]
 

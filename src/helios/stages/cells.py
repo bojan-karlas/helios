@@ -66,7 +66,7 @@ def prep_cells(
     patch_px: int = DEFAULT_PATCH_PX,
     device: str = DEFAULT_DEVICE,
     image_ids: list[str] | None = None,
-    force: bool = False,
+    overwrite: bool = False,
     progress: Progress = DEFAULT_PROGRESS,
 ) -> None:
     """Segment cells, cut tumor patches, and classify mitoses for every slide.
@@ -96,7 +96,7 @@ def prep_cells(
                 patch_px=patch_px,
                 device=device,
                 cpus=cpus_per_slide,
-                force=force,
+                overwrite=overwrite,
             ),
             stage=f"cells {ds.name}",
             progress=progress,
@@ -116,10 +116,10 @@ def _cells(
     patch_px: int,
     device: str,
     cpus: int,
-    force: bool,
+    overwrite: bool,
 ) -> str:
     wsi_path = str(slides[image_id])
-    if not force and all(store.exists(a, image_id=image_id) for a in CELL_OUTPUTS):
+    if not overwrite and all(store.exists(a, image_id=image_id) for a in CELL_OUTPUTS):
         ctx.progress.log(f"skip cells image={image_id} (exists)")
         return "skipped"
     # The last output doubles as the unit's completion marker: clear it before recomputing.

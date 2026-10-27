@@ -122,7 +122,7 @@ def test_infer_morphology_deploy_ensembles_across_folds(cohort: dict) -> None:
     paths = {0: cohort["paths"], 1: cohort["paths"]}
     attention = {0: cohort["attention"], 1: cohort["attention"]}
 
-    tile_clusters, presence, risk = infer_morphology(models, paths, attention, cv_splits=None)
+    tile_clusters, presence, risk = infer_morphology(models, paths, attention, splits=None)
 
     assert set(risk["image_id"]) == set(cohort["paths"].keys())
     assert risk["fold"].isna().all()
@@ -137,7 +137,7 @@ def test_infer_morphology_cv_selects_test_fold(cohort: dict) -> None:
     )
     image_ids = list(cohort["paths"].keys())
     half = len(image_ids) // 2
-    cv_splits = pd.DataFrame(
+    splits = pd.DataFrame(
         [{"image_id": i, "fold": 0, "split": "test" if idx < half else "train"} for idx, i in enumerate(image_ids)]
         + [{"image_id": i, "fold": 1, "split": "test" if idx >= half else "train"} for idx, i in enumerate(image_ids)]
     )
@@ -145,7 +145,7 @@ def test_infer_morphology_cv_selects_test_fold(cohort: dict) -> None:
     paths = {0: cohort["paths"], 1: cohort["paths"]}
     attention = {0: cohort["attention"], 1: cohort["attention"]}
 
-    _tile_clusters, _presence, risk = infer_morphology(models, paths, attention, cv_splits=cv_splits)
+    _tile_clusters, _presence, risk = infer_morphology(models, paths, attention, splits=splits)
 
     risk = risk.set_index("image_id")
     for idx, image_id in enumerate(image_ids):

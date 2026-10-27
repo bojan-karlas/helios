@@ -49,10 +49,10 @@ def prep_augment(
     augmentation_batch_size: int = DEFAULT_AUGMENTATION_BATCH_SIZE,
     device: str = DEFAULT_DEVICE,
     image_ids: list[str] | None = None,
-    force: bool = False,
+    overwrite: bool = False,
     progress: Progress = DEFAULT_PROGRESS,
 ) -> None:
-    """Prepare tiles and features; existing artifacts are skipped unless forced."""
+    """Prepare tiles and features; existing artifacts are skipped unless overwritten."""
     resolved = resolve_datasets(datasets, roots=roots)
     if output_dir is not None and (len(resolved) != 1 or len(target) != 1):
         raise ValueError("output_dir requires exactly one dataset and one explicit target.")
@@ -84,7 +84,8 @@ def prep_augment(
                 if previous != definition:
                     progress.log(
                         f"Reusing {definition.root} with changed settings; "
-                        "existing outputs are skipped unless force=True. Mixed outputs are the user's responsibility.",
+                        "existing outputs are skipped unless overwrite=True. "
+                        "Mixed outputs are the user's responsibility.",
                         level=logging.WARNING,
                     )
             definition.save()
@@ -92,7 +93,7 @@ def prep_augment(
             for s, image_id in progress.task(
                 [(s, i) for s in size_mm for i in ids], desc=f"augment {ds.dataset().descriptor.name}",
             ):
-                if force or not aug_store.exists("tile_augmentation", size_mm=s, image_id=image_id):
+                if overwrite or not aug_store.exists("tile_augmentation", size_mm=s, image_id=image_id):
                     tiles = _tiles_array(store.read("tiles", size_mm=s, image_id=image_id))
                     tile_ids, coords = _tile_index(store, size_mm=s, image_id=image_id, n_tiles=len(tiles))
                     augmented = augment_stains(
@@ -106,13 +107,15 @@ def prep_augment(
                         size_mm=s, image_id=image_id,
                     )
                 for m in model:
-                    if not force and aug_store.exists(
+                    if not overwrite and aug_store.exists(
                         "tile_augmentation_features", size_mm=s, image_id=image_id, model=m,
                     ):
                         continue
                     payload = aug_store.read("tile_augmentation", size_mm=s, image_id=image_id)
                     if not {"tiles", "tile_ids", "coords"} <= payload.keys():
-                        raise ValueError(f"Augmented tiles at {definition.root} lack alignment metadata; use --force.")
+                        raise ValueError(
+                            f"Augmented tiles at {definition.root} lack alignment metadata; use --overwrite."
+                        )
                     embeddings = extract_features(
                         payload["tiles"], model=cast(FeatureModel, m), batch_size=batch_size, device=device,
                         progress=progress,

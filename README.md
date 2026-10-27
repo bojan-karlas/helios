@@ -220,9 +220,9 @@ features/size_mm=0.25/model=virchow2/<image_id>/<image_id>.hdf5
 
 The saved definition records `source_dataset_id`, `method`, `parameters`, and
 the checkpoint path. No opaque variant identifier or checkpoint hash is required.
-Existing files are skipped unless `--force` is supplied. Reusing an output
+Existing files are skipped unless `--overwrite` is supplied. Reusing an output
 directory with a different checkpoint/settings prints a warning but is allowed;
-avoiding mixed old/new outputs is the user's responsibility. `--force` overwrites
+avoiding mixed old/new outputs is the user's responsibility. `--overwrite` overwrites
 the requested slides, sizes, and models only, not every file in the directory.
 The saved definition reflects the most recently requested settings, not a
 per-file history of checkpoint versions.
@@ -242,7 +242,7 @@ dataset's descriptor. Unmatched/ambiguous associations fail; YAML-attached paths
 must also agree with their dataset's ID.
 
 Fit errors on missing features; it never runs prep automatically, even with
-`--force`. It checks tile counts, embedding widths, tile IDs/order, and coordinates
+`--overwrite`. It checks tile counts, embedding widths, tile IDs/order, and coordinates
 against the original features before training. Augmented tiles may be deleted
 once features exist. Rebuilding missing features from cached augmented tiles
 requires the saved alignment metadata. Selected legacy embeddings without
@@ -470,14 +470,63 @@ can also:
 
 ### Cross-validation folds
 
-Cross-validation is optional and driven by a `cv_splits` table (produced by
+Cross-validation is optional and driven by a `splits` table (produced by
 `helios prep splits`), which assigns each `image_id` to a fold and train/test
 split. With splits present, `fit` trains **one model per fold** in a single
 invocation, and `predict` reduces the per-fold scores out-of-fold on the CV
-cohort. With no `cv_splits`, the same code path trains a single fold-free model
+cohort. With no `splits`, the same code path trains a single fold-free model
 and ensembles at inference -- exactly what you want when deploying to a fresh
 cohort. Splits are grouped by `patient_id` so a patient's slides never straddle
 the train/test boundary.
+
+Split locations are deterministic:
+
+- A cohort YAML uses `<yaml_stem>.splits.csv` beside the YAML, including
+  single-dataset cohorts.
+- A bare dataset uses `<preprocessing_root>/splits.csv`.
+- YAML `splits: path/to/file.csv` selects a path relative to the YAML.
+- `--splits-file PATH` overrides either location and means that exact file
+  for both preparation and consumption.
+
+Only `prep splits` accepts `--n-folds`. Other commands read fold assignments
+from the file. Changing the fold count, seed, or stratification does not add
+parameter directories to the destination:
+
+```bash
+helios prep splits --dataset cohorts/example.yaml --n-folds 3
+helios fit mil --dataset cohorts/example.yaml
+
+helios prep splits --dataset /data/example --n-folds 3 \
+  --splits-file /experiments/run_a/splits.csv
+helios fit mil --dataset /data/example \
+  --splits-file /experiments/run_a/splits.csv
+```
+
+If the implicit default is absent, fit trains one fold-free model on the entire
+selected cohort, honoring filters. A missing explicitly selected file is an
+error: no other location is substituted.
+
+### Overwrite and resume behavior
+
+All output-producing CLI commands use `--overwrite` (Python stages:
+`overwrite=True`); `--force` is no longer accepted. By default, batch commands
+skip completed work units and regenerate incomplete units together, which may
+replace their partial files. Aggregate tables are rebuilt normally. With
+`--overwrite`, all units selected by the invocation are regenerated; unrelated
+slides, sizes, models, and upstream prerequisites are not regenerated.
+
+`prep splits` produces one file per logical cohort. An existing destination
+raises an error unless `--overwrite` is supplied. All split destinations are
+checked before any are written, preventing an existing-file conflict from
+partially executing a multi-cohort preparation.
+
+Migration: rename dataset-local `cv_splits.csv` to `splits.csv`, or explicitly
+select the existing file. For cohort YAML, move/select the intended assignments
+at the YAML-adjacent destination rather than relying on dataset-local fallback.
+Parameter-partitioned legacy files remain usable through explicit paths but
+are no longer automatically produced. Python callers should use `read_splits`,
+`generate_splits`, and artifact ID `splits` instead of the former CV-prefixed
+names.
 
 ### Pathological concept modeling
 
@@ -511,7 +560,7 @@ helios predict concept \
 ```
 
 Use the same `--results-root` used for `helios predict mil`. The prediction stage
-reduces fold outputs out-of-fold when `cv_splits` exists and averages the fold
+reduces fold outputs out-of-fold when `splits` exists and averages the fold
 models for deployment cohorts without splits. Programmatic callers may pass a
 pathologist correction table to `infer_concepts`; non-null values keyed by
 `image_id` replace the corresponding predicted concepts before risk scoring.

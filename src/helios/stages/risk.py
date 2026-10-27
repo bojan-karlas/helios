@@ -27,7 +27,7 @@ from helios.stages._runtime import (
     drop_provenance,
     folds_across,
     model_folds,
-    read_cv_splits,
+    read_splits,
     resolve_datasets,
     select_image_ids,
     tag_dataset,
@@ -75,7 +75,7 @@ def fit_risk(
     clinical_features: list[str] = DEFAULT_CLINICAL_FEATURES,
     estimator: str = DEFAULT_ESTIMATOR,
     cellular_size_mm: float = DEFAULT_CELLULAR_SIZE_MM,
-    force: bool = False,
+    overwrite: bool = False,
     progress: Progress = DEFAULT_PROGRESS,
 ) -> None:
     """Train the selected risk sub-models, one model per fold each.
@@ -94,7 +94,7 @@ def fit_risk(
     for kind in _ordered(risk):
         model_id, _ = _ARTIFACTS[kind]
         for fold in progress.task(folds, desc=f"fit risk {kind}"):
-            if not force and out.exists(model_id, fold=fold):
+            if not overwrite and out.exists(model_id, fold=fold):
                 progress.log(f"skip {model_id} fold={fold} (exists)")
                 continue
             features: list[pd.DataFrame] = []
@@ -144,7 +144,7 @@ def predict_risk(
     clinical_features: list[str] = DEFAULT_CLINICAL_FEATURES,
     cellular_size_mm: float = DEFAULT_CELLULAR_SIZE_MM,
     image_ids: list[str] | None = None,
-    force: bool = False,
+    overwrite: bool = False,
     progress: Progress = DEFAULT_PROGRESS,
 ) -> None:
     """Score the selected risk sub-models for each cohort (K folds reduced internally).
@@ -164,12 +164,12 @@ def predict_risk(
             folds = model_folds(store, model_id)
             if not folds:
                 raise FileNotFoundError(f"No {model_id} bundle found under {ds.name}.")
-            if not force and store.exists(score_id):
+            if not overwrite and store.exists(score_id):
                 progress.log(f"skip {score_id} {ds.name} (exists)")
                 continue
             models = {fold: store.read(model_id, fold=fold) for fold in folds}
             features = _features(kind, store, ids, staging_feature, clinical_features, cellular_size_mm)
-            scores = infer_risk_model(models, features, read_cv_splits(ds, roots, progress=progress))
+            scores = infer_risk_model(models, features, read_splits(ds, roots, progress=progress))
             store.write(score_id, tag_dataset(scores, ds.name))
             progress.log(f"wrote {score_id} {ds.name}")
             if kind == "helios":

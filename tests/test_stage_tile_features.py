@@ -53,7 +53,7 @@ def test_stage_extracts_and_writes(monkeypatch, cohort: Path) -> None:
         assert out["features"].shape == (5, EMBED_DIM)
 
 
-def test_stage_skips_existing_unless_forced(monkeypatch, cohort: Path) -> None:
+def test_stage_skips_existing_unless_overwritten(monkeypatch, cohort: Path) -> None:
     calls = {"n": 0}
 
     def _counting(tiles, **kw):
@@ -68,8 +68,8 @@ def test_stage_skips_existing_unless_forced(monkeypatch, cohort: Path) -> None:
     assert calls["n"] == 2
     prep_tile_features(datasets=[cohort], size_mm=[0.25], model=["virchow2"])
     assert calls["n"] == 2, "second run should skip existing artifacts"
-    prep_tile_features(datasets=[cohort], size_mm=[0.25], model=["virchow2"], force=True)
-    assert calls["n"] == 4, "--force should re-extract"
+    prep_tile_features(datasets=[cohort], size_mm=[0.25], model=["virchow2"], overwrite=True)
+    assert calls["n"] == 4, "--overwrite should re-extract"
 
 
 def test_stage_rejects_unknown_model(cohort: Path) -> None:

@@ -144,7 +144,7 @@ def test_prep_fit_discovery_and_saved_selection(monkeypatch, tmp_path):
     assert row["feature_files"] == {"features/size_mm=0.25/model=virchow2": 2}
     for path in (output / "tiles").rglob("*.hdf5"):
         path.unlink()
-    mil.fit_mil(datasets=[root], augmentations=[str(output)], force=True)
+    mil.fit_mil(datasets=[root], augmentations=[str(output)], overwrite=True)
     assert len(seen) == 4
 
 
@@ -270,7 +270,7 @@ def test_resume_definition_and_warn_on_changed_checkpoint(monkeypatch, tmp_path,
         path.unlink()
     augment.prep_augment(datasets=[replace(ds, augmentations=(output,))])
     assert len(calls) == 1
-    augment.prep_augment(datasets=[replace(ds, augmentations=(output,))], force=True)
+    augment.prep_augment(datasets=[replace(ds, augmentations=(output,))], overwrite=True)
     assert len(calls) == 2
     assert calls[-1]["checkpoint"].endswith("second.pth")
 

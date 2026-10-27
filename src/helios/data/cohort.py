@@ -118,10 +118,7 @@ def load_cohort_spec(path: str | Path) -> CohortSpec:
     splits_file: Path | None = None
     if data.get("splits") is not None:
         splits_file = location(data["splits"])
-    else:
-        default_splits = cohort_path.with_suffix(".splits.csv")
-        if len(entries) > 1 or default_splits.exists():
-            splits_file = default_splits
+    # Constituents retain only explicit selections; implicit absence permits no-CV training.
 
     resolved: list[ResolvedDataset] = []
     for entry in entries:
@@ -165,7 +162,7 @@ def load_cohort_spec(path: str | Path) -> CohortSpec:
         name=cohort_name,
         datasets=tuple(resolved),
         filter=data.get("filter"),
-        splits_file=splits_file,
+        splits_file=splits_file if splits_file is not None else cohort_path.with_suffix(".splits.csv"),
         cohort_file=cohort_path,
     )
 

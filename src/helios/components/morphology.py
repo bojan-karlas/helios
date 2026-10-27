@@ -191,7 +191,7 @@ def infer_morphology(
     models: dict[int | None, Model],
     patch_embedding_paths: dict[int | None, dict[str, Path]],
     attention: dict[int | None, pd.DataFrame],
-    cv_splits: pd.DataFrame | None,
+    splits: pd.DataFrame | None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Assign clusters, score cluster presence, and produce morphology risk.
 
@@ -203,7 +203,7 @@ def infer_morphology(
     score is a comparable scalar across folds:
 
     * ``tile_clusters`` / ``patch_morphology_presence`` -- OOF-select the
-      image's test-fold assignment on a CV cohort; on deploy (``cv_splits`` is
+      image's test-fold assignment on a CV cohort; on deploy (``splits`` is
       ``None``, no test-fold concept) fall back to the first fold's model as
       the single canonical clustering.
     * ``patch_morphology_risk_score`` -- OOF-select the test-fold score on a CV
@@ -249,9 +249,9 @@ def infer_morphology(
         risk_rows.extend(fold_risk)
 
     risk_df = pd.DataFrame(risk_rows)
-    risk_reduced = _reduce_risk(risk_df, cv_splits)
+    risk_reduced = _reduce_risk(risk_df, splits)
 
-    canonical_fold = _oof_fold_map(image_ids, cv_splits) if cv_splits is not None else None
+    canonical_fold = _oof_fold_map(image_ids, splits) if splits is not None else None
     tile_clusters = _select_canonical(clusters_per_fold, image_ids, canonical_fold, id_col="image_id")
     presence = _select_canonical(presence_per_fold, image_ids, canonical_fold, id_col="image_id")
 
@@ -692,20 +692,20 @@ def _make_estimator(name: str, *, seed: int) -> tuple[Any, bool]:
     raise ValueError(f"Unknown estimator {name!r}. Available: {list(MORPHOLOGY_ESTIMATORS)}.")
 
 
-def _reduce_risk(risk_df: pd.DataFrame, cv_splits: pd.DataFrame | None) -> pd.DataFrame:
+def _reduce_risk(risk_df: pd.DataFrame, splits: pd.DataFrame | None) -> pd.DataFrame:
     if risk_df.empty:
         return pd.DataFrame(columns=["image_id", "risk_score", "fold"])
-    if cv_splits is None:
+    if splits is None:
         reduced = risk_df.groupby("image_id", as_index=False)["risk_score"].mean()
         reduced["fold"] = None
         return reduced
-    test_rows = cv_splits.loc[cv_splits["split"] == "test", ["image_id", "fold"]]
+    test_rows = splits.loc[splits["split"] == "test", ["image_id", "fold"]]
     reduced = test_rows.merge(risk_df, on=["image_id", "fold"], how="left")
     return reduced[["image_id", "risk_score", "fold"]]
 
 
-def _oof_fold_map(image_ids: list[str], cv_splits: pd.DataFrame) -> dict[str, int]:
-    test_rows = cv_splits.loc[cv_splits["split"] == "test", ["image_id", "fold"]]
+def _oof_fold_map(image_ids: list[str], splits: pd.DataFrame) -> dict[str, int]:
+    test_rows = splits.loc[splits["split"] == "test", ["image_id", "fold"]]
     return dict(zip(test_rows["image_id"], test_rows["fold"], strict=False))
 
 

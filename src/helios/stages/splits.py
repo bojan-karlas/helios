@@ -1,13 +1,13 @@
 """Stage: cross-validation split generation (``helios prep splits``).
 
-Reads a cohort's ``image_metadata`` and writes its ``cv_splits`` table. Train-only
+Reads a cohort's ``image_metadata`` and writes its ``splits`` table. Train-only
 and fold-free (it *creates* the folds), so it runs once per training cohort.
 """
 from __future__ import annotations
 
 import pandas as pd
 
-from helios.components.splits import generate_cv_splits
+from helios.components.splits import generate_splits
 from helios.data.io import write
 from helios.progress import DEFAULT_PROGRESS, Progress
 from helios.stages._runtime import (
@@ -29,28 +29,6 @@ DEFAULT_GROUP_BY: str | None = "patient_id"
 DEFAULT_SEED: int = 0
 
 
-def _non_default_hive(
-    *,
-    n_folds: int,
-    val_fraction: float,
-    stratify_by: list[str],
-    group_by: str | None,
-    seed: int,
-) -> dict[str, object]:
-    extra: dict[str, object] = {}
-    if n_folds != DEFAULT_N_FOLDS:
-        extra["n_folds"] = n_folds
-    if val_fraction != DEFAULT_VAL_FRACTION:
-        extra["val_fraction"] = val_fraction
-    if stratify_by != DEFAULT_STRATIFY_BY:
-        extra["stratify_by"] = stratify_by
-    if group_by != DEFAULT_GROUP_BY:
-        extra["group_by"] = group_by if group_by is not None else "none"
-    if seed != DEFAULT_SEED:
-        extra["seed"] = seed
-    return extra
-
-
 def prep_splits(
     *,
     datasets: DatasetArgs,
@@ -61,22 +39,15 @@ def prep_splits(
     stratify_by: list[str] = DEFAULT_STRATIFY_BY,
     group_by: str | None = DEFAULT_GROUP_BY,
     seed: int = DEFAULT_SEED,
-    force: bool = False,
+    overwrite: bool = False,
     progress: Progress = DEFAULT_PROGRESS,
 ) -> None:
-    """Generate ``cv_splits`` for each logical training cohort.
+    """Generate ``splits`` for each logical training cohort.
 
     GRAIN CONTRACT: one logical cohort per work unit; constituent metadata tables
     are pooled when ``datasets`` resolves to a named multi-dataset cohort.
     """
     resolved = resolve_datasets(datasets, roots=roots)
-    extra_hive = _non_default_hive(
-        n_folds=n_folds,
-        val_fraction=val_fraction,
-        stratify_by=stratify_by,
-        group_by=group_by,
-        seed=seed,
-    )
 
     groups: list[list[ResolvedDataset]] = []
     seen_cohorts: dict[str, list[ResolvedDataset]] = {}
@@ -90,13 +61,17 @@ def prep_splits(
         else:
             groups.append([ds])
 
-    for group in progress.task(groups, desc="prep splits"):
+    destinations = [resolve_splits_path(group[0], roots) for group in groups]
+    if len(set(path.absolute() for path in destinations)) != len(destinations):
+        raise ValueError("Multiple split preparations select the same destination; use distinct split paths.")
+    if not overwrite:
+        for path in destinations:
+            if path.exists():
+                raise FileExistsError(f"Splits already exist at {path}; use --overwrite to replace them.")
+
+    for group, out_path in progress.task(list(zip(groups, destinations, strict=True)), desc="prep splits"):
         lead = group[0]
         label = lead.logical_name
-        out_path = resolve_splits_path(lead, roots, extra_hive=extra_hive)
-        if not force and out_path.exists():
-            progress.log(f"skip cv_splits {label} (exists at {out_path})")
-            continue
         frames: list[pd.DataFrame] = []
         for ds in group:
             store = cohort_store(ds, roots)
@@ -104,7 +79,7 @@ def prep_splits(
             keep = set(select_image_ids(ds, store, None))
             frames.append(meta[meta["image_id"].astype(str).isin(keep)])
         pooled_meta = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
-        splits = generate_cv_splits(
+        splits = generate_splits(
             pooled_meta,
             n_folds=n_folds,
             val_fraction=val_fraction,
@@ -113,4 +88,4 @@ def prep_splits(
             seed=seed,
         )
         write(splits, out_path, "csv")
-        progress.log(f"wrote cv_splits {label} ({out_path})")
+        progress.log(f"wrote splits {label} ({out_path})")

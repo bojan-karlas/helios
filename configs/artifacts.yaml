@@ -15,13 +15,13 @@ artifacts:
     format: csv
     path: metadata/image_metadata.csv
     role: source
-  cv_splits:
+  splits:
     title: Cross-Validation Splits
     key:
     - image_id
     - fold
     format: csv
-    path: cv_splits.csv
+    path: splits.csv
     role: preprocessing
   background_mask:
     title: Background Mask (Debug)

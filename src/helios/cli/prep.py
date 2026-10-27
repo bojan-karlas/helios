@@ -38,7 +38,7 @@ _DATASET_GROUP = typer.Option(
     help="Cohort root(s) or cohort file(s); repeatable or comma-separated. Required for bare `helios prep`.",
 )
 _CONFIG = typer.Option(None, "--config", "-c", help="Override config YAML.")
-_FORCE = typer.Option(False, "--force", help="Re-derive even if outputs exist.")
+_OVERWRITE = typer.Option(False, "--overwrite", help="Re-derive even if outputs exist.")
 
 
 @prep_app.callback(invoke_without_command=True)
@@ -55,7 +55,7 @@ def prep_all(
     max_cpus: int | None = MAX_CPUS,
     output_root: Path | None = REMOVED_OUTPUT_ROOT,
     config: Path | None = _CONFIG,
-    force: bool = _FORCE,
+    overwrite: bool = _OVERWRITE,
 ) -> None:
     """Run every prep stage in order (deployment-style full prep for a cohort)."""
     if ctx.invoked_subcommand is not None:
@@ -80,7 +80,7 @@ def prep_all(
     )
     for noun, stage in STAGES["prep"].items():
         params = load_stage_params("prep", noun, config_path=config)
-        stage(datasets=datasets, roots=roots, parallel=parallel, force=force, progress=progress, **params)
+        stage(datasets=datasets, roots=roots, parallel=parallel, overwrite=overwrite, progress=progress, **params)
     typer.echo("prep: done")
 
 
@@ -113,7 +113,7 @@ def splits(
     ),
     seed: int | None = typer.Option(None, "--seed", help="RNG seed."),
     config: Path | None = _CONFIG,
-    force: bool = _FORCE,
+    overwrite: bool = _OVERWRITE,
 ) -> None:
     """Generate cross-validation splits for a training cohort."""
     from helios.config.stage_config import load_stage_params
@@ -137,7 +137,7 @@ def splits(
     }
     params = load_stage_params("prep", "splits", config_path=config, overrides=overrides)
     prep_splits(
-        datasets=datasets, roots=roots, parallel=parallel, force=force,
+        datasets=datasets, roots=roots, parallel=parallel, overwrite=overwrite,
         progress=console_progress(
             results_root or models_root or datasets[0].root, log_dir=log_dir, run_tag=run_tag
         ),
@@ -160,7 +160,7 @@ def thumbnails(
     output_root: Path | None = REMOVED_OUTPUT_ROOT,
     max_size: int | None = typer.Option(None, "--max-size", help="Thumbnail longest-edge pixels."),
     config: Path | None = _CONFIG,
-    force: bool = _FORCE,
+    overwrite: bool = _OVERWRITE,
 ) -> None:
     """Extract a low-resolution thumbnail per slide."""
     from helios.config.stage_config import load_stage_params
@@ -176,7 +176,7 @@ def thumbnails(
     datasets = resolve_datasets(datasets_arg(dataset), roots=roots)
     params = load_stage_params("prep", "thumbnails", config_path=config, overrides={"max_size": max_size})
     prep_thumbnails(
-        datasets=datasets, roots=roots, parallel=parallel, force=force,
+        datasets=datasets, roots=roots, parallel=parallel, overwrite=overwrite,
         progress=console_progress(
             results_root or models_root or datasets[0].root, log_dir=log_dir, run_tag=run_tag
         ),
@@ -203,7 +203,7 @@ def tiles(
         None, "--stride-fraction", help="Grid stride as a fraction of tile width (0.5 gives 50% overlap)."
     ),
     config: Path | None = _CONFIG,
-    force: bool = _FORCE,
+    overwrite: bool = _OVERWRITE,
 ) -> None:
     """Tile each slide and flag background tiles."""
     from helios.config.stage_config import load_stage_params
@@ -224,7 +224,7 @@ def tiles(
     }
     params = load_stage_params("prep", "tiles", config_path=config, overrides=overrides)
     prep_tiles(
-        datasets=datasets, roots=roots, parallel=parallel, force=force,
+        datasets=datasets, roots=roots, parallel=parallel, overwrite=overwrite,
         progress=console_progress(
             results_root or models_root or datasets[0].root, log_dir=log_dir, run_tag=run_tag
         ),
@@ -264,7 +264,7 @@ def augment(
     ),
     device: str | None = typer.Option(None, "--device", help="Torch device (cuda, cpu)."),
     config: Path | None = _CONFIG,
-    force: bool = _FORCE,
+    overwrite: bool = _OVERWRITE,
 ) -> None:
     """Stain-augment tiles and extract augmented features."""
     from helios.config.stage_config import load_stage_params
@@ -292,7 +292,7 @@ def augment(
     }
     params = load_stage_params("prep", "augment", config_path=config, overrides=overrides)
     prep_augment(
-        datasets=datasets, roots=roots, parallel=parallel, force=force,
+        datasets=datasets, roots=roots, parallel=parallel, overwrite=overwrite,
         progress=console_progress(
             results_root or models_root or datasets[0].root, log_dir=log_dir, run_tag=run_tag
         ),
@@ -318,7 +318,7 @@ def tile_features(
     batch_size: int | None = typer.Option(None, "--batch-size", help="Tiles per forward pass."),
     device: str | None = typer.Option(None, "--device", help="Torch device (cuda, cpu)."),
     config: Path | None = _CONFIG,
-    force: bool = _FORCE,
+    overwrite: bool = _OVERWRITE,
 ) -> None:
     """Extract foundation tile features for staged tiles."""
     from helios.config.stage_config import load_stage_params
@@ -335,7 +335,7 @@ def tile_features(
     overrides = {"size_mm": csv_floats(size_mm), "model": csv(model), "batch_size": batch_size, "device": device}
     params = load_stage_params("prep", "tile-features", config_path=config, overrides=overrides)
     prep_tile_features(
-        datasets=datasets, roots=roots, parallel=parallel, force=force,
+        datasets=datasets, roots=roots, parallel=parallel, overwrite=overwrite,
         progress=console_progress(
             results_root or models_root or datasets[0].root, log_dir=log_dir, run_tag=run_tag
         ),
@@ -359,7 +359,7 @@ def cells(
     patch_px: int | None = typer.Option(None, "--patch-px", help="Tumor patch edge length in pixels."),
     device: str | None = typer.Option(None, "--device", help="Torch device (cuda, cpu)."),
     config: Path | None = _CONFIG,
-    force: bool = _FORCE,
+    overwrite: bool = _OVERWRITE,
 ) -> None:
     """Segment cells, cut tumor patches, and classify mitoses."""
     from helios.config.stage_config import load_stage_params
@@ -376,7 +376,7 @@ def cells(
     overrides = {"patch_px": patch_px, "device": device}
     params = load_stage_params("prep", "cells", config_path=config, overrides=overrides)
     prep_cells(
-        datasets=datasets, roots=roots, parallel=parallel, force=force,
+        datasets=datasets, roots=roots, parallel=parallel, overwrite=overwrite,
         progress=console_progress(
             results_root or models_root or datasets[0].root, log_dir=log_dir, run_tag=run_tag
         ),
@@ -399,7 +399,7 @@ def cell_features(
     output_root: Path | None = REMOVED_OUTPUT_ROOT,
     size_mm: float | None = typer.Option(None, "--size-mm", help="Tile resolution in mm (default: 0.25)."),
     config: Path | None = _CONFIG,
-    force: bool = _FORCE,
+    overwrite: bool = _OVERWRITE,
 ) -> None:
     """Aggregate per-tile cell counts and compute cellular features."""
     from helios.config.stage_config import load_stage_params
@@ -415,7 +415,7 @@ def cell_features(
     datasets = resolve_datasets(datasets_arg(dataset), roots=roots)
     params = load_stage_params("prep", "cell-features", config_path=config, overrides={"size_mm": size_mm})
     prep_cell_features(
-        datasets=datasets, roots=roots, parallel=parallel, force=force,
+        datasets=datasets, roots=roots, parallel=parallel, overwrite=overwrite,
         progress=console_progress(
             results_root or models_root or datasets[0].root, log_dir=log_dir, run_tag=run_tag
         ),

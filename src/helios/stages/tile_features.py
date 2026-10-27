@@ -44,7 +44,7 @@ def prep_tile_features(
     batch_size: int = DEFAULT_BATCH_SIZE,
     device: str = DEFAULT_DEVICE,
     image_ids: list[str] | None = None,
-    force: bool = False,
+    overwrite: bool = False,
     progress: Progress = DEFAULT_PROGRESS,
 ) -> None:
     """Extract foundation features for every (dataset, size_mm, model, image).
@@ -77,7 +77,7 @@ def prep_tile_features(
     image_ids:
         Restrict to these images (within each dataset); ``None`` processes the
         whole cohort.
-    force:
+    overwrite:
         Re-extract even if a ``tile_features`` artifact already exists.
     progress:
         Progress sink (default: no-op).
@@ -90,7 +90,7 @@ def prep_tile_features(
         ids = select_image_ids(ds, store, image_ids)
         run_work_units(
             [(s, m, i) for s in size_mm for m in model for i in ids],
-            partial(_embed, store=store, batch_size=batch_size, device=device, force=force),
+            partial(_embed, store=store, batch_size=batch_size, device=device, overwrite=overwrite),
             stage=f"tile-features {ds.name}",
             unit_id=_unit_id,
             progress=progress,
@@ -110,10 +110,10 @@ def _embed(
     store: ArtifactStore,
     batch_size: int,
     device: str,
-    force: bool,
+    overwrite: bool,
 ) -> str:
     s, m, image_id = unit
-    if not force and store.exists("tile_features", size_mm=s, model=m, image_id=image_id):
+    if not overwrite and store.exists("tile_features", size_mm=s, model=m, image_id=image_id):
         ctx.progress.log(f"skip tile_features image={image_id} size_mm={s} model={m} (exists)")
         return "skipped"
     tiles = _tiles_array(store.read("tiles", size_mm=s, image_id=image_id))

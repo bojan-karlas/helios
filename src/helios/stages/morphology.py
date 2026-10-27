@@ -23,7 +23,7 @@ from helios.stages._runtime import (
     cohort_store,
     folds_across,
     model_folds,
-    read_cv_splits,
+    read_splits,
     resolve_datasets,
     select_image_ids,
     tag_dataset,
@@ -58,7 +58,7 @@ def fit_morphology(
         DEFAULT_ESTIMATOR  # type: ignore[assignment]
     ),
     seed: int = DEFAULT_SEED,
-    force: bool = False,
+    overwrite: bool = False,
     progress: Progress = DEFAULT_PROGRESS,
 ) -> None:
     """Train one morphology model per fold over the pooled training cohorts.
@@ -74,7 +74,7 @@ def fit_morphology(
     folds = folds_across(resolved, roots)
 
     for fold in progress.task(folds, desc="fit morphology"):
-        if not force and out.exists("model_morphology", fold=fold):
+        if not overwrite and out.exists("model_morphology", fold=fold):
             progress.log(f"skip model_morphology fold={fold} (exists)")
             continue
         paths: dict[str, Path] = {}
@@ -140,7 +140,7 @@ def predict_morphology(
     roots: StorageRoots | None = None,
     parallel: ParallelConfig | None = None,
     image_ids: list[str] | None = None,
-    force: bool = False,
+    overwrite: bool = False,
     progress: Progress = DEFAULT_PROGRESS,
 ) -> None:
     """Cluster, score presence, and produce morphology risk per cohort.
@@ -157,7 +157,7 @@ def predict_morphology(
         folds = model_folds(store, "model_morphology")
         if not folds:
             raise FileNotFoundError(f"No model_morphology bundle found under {ds.name}.")
-        if not force and store.exists("patch_morphology_risk_score"):
+        if not overwrite and store.exists("patch_morphology_risk_score"):
             progress.log(f"skip morphology predictions {ds.name} (exists)")
             continue
 
@@ -170,7 +170,7 @@ def predict_morphology(
             fold: _stack_attention(store, fold, ids) for fold in folds
         }
         clusters, presence, risk_score = infer_morphology(
-            models, paths, attention, read_cv_splits(ds, roots, progress=progress)
+            models, paths, attention, read_splits(ds, roots, progress=progress)
         )
         for image_id, group in clusters.groupby("image_id"):
             store.write("tile_clusters", group, image_id=str(image_id))

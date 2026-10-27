@@ -5,7 +5,7 @@ For every (image, size_mm) this stage cuts the tile grid (``tile_metadata`` +
 + ``background_mask``). Tiling and background detection are chained here because
 background flags are computed against the same grid; features are extracted
 separately (``prep tile-features``) so changing the background algorithm never
-forces re-extraction.
+requests re-extraction.
 """
 
 from __future__ import annotations
@@ -48,7 +48,7 @@ def prep_tiles(
     tile_px: int = DEFAULT_TILE_PX,
     stride_fraction: float = DEFAULT_STRIDE_FRACTION,
     image_ids: list[str] | None = None,
-    force: bool = False,
+    overwrite: bool = False,
     progress: Progress = DEFAULT_PROGRESS,
 ) -> None:
     """Tile each slide at each resolution and flag background tiles.
@@ -70,7 +70,7 @@ def prep_tiles(
                 metadata=cohort.image_metadata.set_index("image_id"),
                 tile_px=tile_px,
                 stride_fraction=stride_fraction,
-                force=force,
+                overwrite=overwrite,
             ),
             stage=f"tiles {ds.name}",
             unit_id=_unit_id,
@@ -92,10 +92,10 @@ def _tile(
     metadata: pd.DataFrame,
     tile_px: int,
     stride_fraction: float,
-    force: bool,
+    overwrite: bool,
 ) -> str:
     s, image_id = unit
-    if not force and all(store.exists(a, size_mm=s, image_id=image_id) for a in TILE_OUTPUTS):
+    if not overwrite and all(store.exists(a, size_mm=s, image_id=image_id) for a in TILE_OUTPUTS):
         ctx.progress.log(f"skip tiles image={image_id} size_mm={s} (exists)")
         return "skipped"
     # The last output doubles as the unit's completion marker: clear it before recomputing.

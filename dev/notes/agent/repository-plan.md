@@ -1,5 +1,26 @@
 # HELIOS Repository -- Planning (workshopping, no code yet)
 
+## 2026-10-26: Deterministic splits and overwrite policy
+
+This amendment supersedes earlier split-path and force-flag descriptions.
+
+- Use the artifact ID `splits`, dataset-local `preprocessing/splits.csv`, and
+  YAML-adjacent `<stem>.splits.csv` for every cohort YAML, irrespective of entry
+  count or existing files.
+- Explicit YAML `splits` and CLI `--splits-file` references select exact files;
+  CLI wins. Missing explicit selections error without fallback. Missing implicit
+  defaults preserve fold-free fitting on the entire filtered cohort.
+- Split generation settings never modify the destination. Only preparation
+  accepts a fold-count option; consumers derive folds from file assignments.
+- `--overwrite` / Python `overwrite` replace HELIOS `--force` / `force`.
+  Completed batch units skip by default; incomplete units may be recomputed and
+  aggregate tables rebuilt. Overwrite regenerates all units in invocation scope,
+  not upstream prerequisites or unrelated artifacts.
+- Split preparation errors on an existing destination unless overwrite is
+  enabled, and checks all destinations before writing any. Distinct independent
+  preparations cannot silently target the same file.
+- Other pooling behavior is unchanged; this is not a pooling redesign.
+
 ## Goal
 Build a repo that: (1) trains all HELIOS pipeline models from datasets placed in folders,
 (2) runs inference producing web-app-consumable predictions + supplementary files,

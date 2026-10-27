@@ -8,11 +8,11 @@ repeats so the orchestration shape stays identical across ``prep``/``fit``/
 * :func:`cohort_store` -- route each constituent's artifacts by storage role.
 * :func:`resolve_datasets` -- validate constituent and run root settings.
 * :func:`folds_of` / :func:`folds_across` --- discover the K cross-validation folds
-  from the optional ``cv_splits`` artifact (``[None]`` == trained without CV).
+  from the optional ``splits`` artifact (``[None]`` == trained without CV).
 * :func:`train_ids` --- the image ids in a fold's *train* split (the rows a
   per-fold ``fit`` component learns from).
 
-The fold model: ``cv_splits`` is an OPTIONAL tidy CSV (``image_id, fold, split``).
+The fold model: ``splits`` is an OPTIONAL tidy CSV (``image_id, fold, split``).
 Absent means a single fold-free model; otherwise there is one model per fold.
 The ``fold`` key is dropped from paths when ``None`` (see
 :data:`helios.data.resolver.OPTIONAL_KEYS`), so the same artifact id addresses
@@ -28,7 +28,7 @@ import pandas as pd
 from helios.data.cohort import DatasetArgs, ResolvedDataset
 from helios.data.cohort import resolve_datasets as resolve_dataset_args
 from helios.data.io import ArtifactStore, read
-from helios.data.resolver import Resolver, Roots, StorageRoots, format_hive_subpath
+from helios.data.resolver import Resolver, Roots, StorageRoots
 from helios.progress import DEFAULT_PROGRESS, Progress
 from helios.stages._ray import (
     ParallelConfig,
@@ -61,7 +61,7 @@ __all__ = [
     "cohort_store",
     "StorageRoots",
     "resolve_splits_path",
-    "read_cv_splits",
+    "read_splits",
     "folds_of",
     "folds_across",
     "train_ids",
@@ -207,59 +207,49 @@ def cohort_store(dataset: str | Path | ResolvedDataset, roots: StorageRoots | No
 def resolve_splits_path(
     dataset: ResolvedDataset | ArtifactStore,
     roots: StorageRoots | None = None,
-    *,
-    extra_hive: dict[str, object] | None = None,
 ) -> Path:
     """Resolve the CV splits CSV path for a dataset or cohort."""
     overrides = roots or StorageRoots()
     if overrides.splits_file is not None:
-        base_path = Path(overrides.splits_file)
+        return Path(overrides.splits_file)
     elif isinstance(dataset, ResolvedDataset) and dataset.splits_file is not None:
-        base_path = dataset.splits_file
+        return dataset.splits_file
+    elif isinstance(dataset, ResolvedDataset) and dataset.cohort_file is not None:
+        return dataset.cohort_file.with_suffix(".splits.csv")
     elif isinstance(dataset, ArtifactStore):
-        return dataset.resolver.path("cv_splits", extra_hive=extra_hive)
+        return dataset.resolver.path("splits")
     else:
         store = cohort_store(dataset, overrides)
-        return store.resolver.path("cv_splits", extra_hive=extra_hive)
-    sub = format_hive_subpath(extra_hive)
-    if sub != Path():
-        return base_path.parent / sub / base_path.name
-    return base_path
+        return store.resolver.path("splits")
 
 
-def read_cv_splits(
+def read_splits(
     store_or_ds: ArtifactStore | ResolvedDataset,
     roots: StorageRoots | None = None,
     *,
     progress: Progress = DEFAULT_PROGRESS,
 ) -> pd.DataFrame | None:
-    """The cohort's ``cv_splits`` table, or ``None`` when it was never produced."""
-    if isinstance(store_or_ds, ResolvedDataset):
-        path = resolve_splits_path(store_or_ds, roots)
-        if path.is_file():
-            progress.log(f"Loaded CV splits from {path}")
-            return read(path, "csv")
-        store = cohort_store(store_or_ds, roots)
-        if store.exists("cv_splits"):
-            fallback = store.path("cv_splits")
-            progress.log(f"Loaded CV splits from {fallback}")
-            return store.read("cv_splits")
+    """Read the selected file; only an absent implicit default permits no CV."""
+    path = resolve_splits_path(store_or_ds, roots)
+    explicit = (
+        (roots is not None and roots.splits_file is not None)
+        or (isinstance(store_or_ds, ResolvedDataset) and store_or_ds.splits_file is not None)
+    )
+    if not path.exists() and not explicit:
+        progress.log(f"No splits at {path}; using the entire selected cohort.")
         return None
-    if roots is not None and roots.splits_file is not None and Path(roots.splits_file).is_file():
-        progress.log(f"Loaded CV splits from {roots.splits_file}")
-        return read(roots.splits_file, "csv")
-    if store_or_ds.exists("cv_splits"):
-        progress.log(f"Loaded CV splits from {store_or_ds.path('cv_splits')}")
-        return store_or_ds.read("cv_splits")
-    return None
+    if not path.is_file():
+        raise FileNotFoundError(f"Selected splits file does not exist or is not a file: {path}")
+    progress.log(f"Loaded splits from {path}")
+    return read(path, "csv")
 
 
 def folds_of(
     store_or_ds: ArtifactStore | ResolvedDataset,
     roots: StorageRoots | None = None,
 ) -> list[int | None]:
-    """Folds defined by a cohort's ``cv_splits`` (``[None]`` if trained without CV)."""
-    splits = read_cv_splits(store_or_ds, roots)
+    """Folds defined by a cohort's ``splits`` (``[None]`` if trained without CV)."""
+    splits = read_splits(store_or_ds, roots)
     if splits is None or FOLD_COLUMN not in splits:
         return [None]
     folds: list[int | None] = [int(f) for f in sorted(splits[FOLD_COLUMN].dropna().unique())]
@@ -293,7 +283,7 @@ def train_ids(
 ) -> list[str]:
     """Image ids in ``fold``'s train split (all images when there is no CV).
 
-    With no ``cv_splits`` (or ``fold is None``) every image is a training row.
+    With no ``splits`` (or ``fold is None``) every image is a training row.
     With splits, return the ids whose ``split == train`` for that fold. An
     optional ``where`` pandas-``query`` further restricts the rows to a metadata
     subpopulation (e.g. ``"path_stage in ['I', 'II']"``), composed *after* the
@@ -303,7 +293,7 @@ def train_ids(
     effective_where = where if where is not None else (
         store_or_ds.where if isinstance(store_or_ds, ResolvedDataset) else None
     )
-    splits = read_cv_splits(store_or_ds, roots)
+    splits = read_splits(store_or_ds, roots)
     all_ids = [str(i) for i in store.read("image_metadata")[IMAGE_ID_COLUMN]]
     if splits is None or fold is None or FOLD_COLUMN not in splits:
         ids = all_ids
@@ -365,12 +355,12 @@ def build_bundle_metadata(
 def model_folds(store: ArtifactStore, model_id: str) -> list[int | None]:
     """Folds an inference stage should score with, enumerated from saved models.
 
-    Inference enumerates folds from the *model* (not ``cv_splits``): a single
+    Inference enumerates folds from the *model* (not ``splits``): a single
     fold-free bundle ⇒ ``[None]`` (deploy / no-CV); otherwise every fold whose
     per-fold bundle actually exists on disk. Folds are discovered by scanning
     the model's own directory (``fold=N`` entries) rather than the scoring
-    cohort's ``cv_splits`` --- a deploy cohort scored with per-fold models
-    trained elsewhere has no ``cv_splits`` of its own, so that would find
+    cohort's ``splits`` --- a deploy cohort scored with per-fold models
+    trained elsewhere has no ``splits`` of its own, so that would find
     nothing even though the fold bundles are right there. Returns ``[]`` when
     no model has been fit yet.
     """

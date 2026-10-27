@@ -33,7 +33,7 @@ def prep_thumbnails(
     parallel: ParallelConfig | None = None,
     max_size: int = DEFAULT_MAX_SIZE,
     image_ids: list[str] | None = None,
-    force: bool = False,
+    overwrite: bool = False,
     progress: Progress = DEFAULT_PROGRESS,
 ) -> None:
     """Extract a thumbnail for every image in each cohort.
@@ -45,7 +45,7 @@ def prep_thumbnails(
         store = cohort_store(ds, roots)
         run_work_units(
             select_image_ids(ds, store, image_ids),
-            partial(_thumbnail, store=store, slides=ds.dataset().slides, max_size=max_size, force=force),
+            partial(_thumbnail, store=store, slides=ds.dataset().slides, max_size=max_size, overwrite=overwrite),
             stage=f"thumbnails {ds.name}",
             progress=progress,
             parallel=parallel,
@@ -59,9 +59,9 @@ def _thumbnail(
     store: ArtifactStore,
     slides: Mapping[str, Path],
     max_size: int,
-    force: bool,
+    overwrite: bool,
 ) -> str:
-    if not force and store.exists("thumbnail", image_id=image_id):
+    if not overwrite and store.exists("thumbnail", image_id=image_id):
         ctx.progress.log(f"skip thumbnail image={image_id} (exists)")
         return "skipped"
     thumb = extract_thumbnail(str(slides[image_id]), max_size=max_size)
