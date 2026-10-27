@@ -25,6 +25,7 @@ from helios.cli._common import (
     console_progress,
     csv,
     datasets_arg,
+    resolved_results_root,
 )
 
 fit_app = typer.Typer(add_completion=False, help="Train models (per-fold bundles).")
@@ -128,7 +129,7 @@ def mil(
     fit_mil(
         datasets=datasets, roots=roots, parallel=parallel, overwrite=overwrite,
         progress=console_progress(
-            results_root or models_root or datasets[0].root, log_dir=log_dir, run_tag=run_tag
+            resolved_results_root(datasets[0], roots), log_dir=log_dir, run_tag=run_tag
         ),
         **params,
     )
@@ -170,7 +171,7 @@ def concept(
     fit_concept(
         datasets=datasets, roots=roots, parallel=parallel, overwrite=overwrite,
         progress=console_progress(
-            results_root or models_root or datasets[0].root, log_dir=log_dir, run_tag=run_tag
+            resolved_results_root(datasets[0], roots), log_dir=log_dir, run_tag=run_tag
         ),
         **params,
     )
@@ -235,7 +236,7 @@ def morphology(
     fit_morphology(
         datasets=datasets, roots=roots, parallel=parallel, overwrite=overwrite,
         progress=console_progress(
-            results_root or models_root or datasets[0].root, log_dir=log_dir, run_tag=run_tag
+            resolved_results_root(datasets[0], roots), log_dir=log_dir, run_tag=run_tag
         ),
         **params,
     )
@@ -282,7 +283,7 @@ def risk(
     fit_risk(
         datasets=datasets, roots=roots, parallel=parallel, overwrite=overwrite,
         progress=console_progress(
-            results_root or models_root or datasets[0].root, log_dir=log_dir, run_tag=run_tag
+            resolved_results_root(datasets[0], roots), log_dir=log_dir, run_tag=run_tag
         ),
         **params,
     )

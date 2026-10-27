@@ -27,6 +27,7 @@ from helios.cli._common import (
     csv,
     csv_floats,
     datasets_arg,
+    resolved_results_root,
 )
 
 prep_app = typer.Typer(add_completion=False, help="Derive data artifacts (no fitting).")
@@ -74,7 +75,7 @@ def prep_all(
     parallel = ParallelConfig(ray_address=ray_address, max_cpus=max_cpus)
     datasets = resolve_datasets(datasets_arg(dataset), roots=roots)
     progress = console_progress(
-        results_root or models_root or datasets[0].root,
+        resolved_results_root(datasets[0], roots),
         log_dir=log_dir,
         run_tag=run_tag,
     )
@@ -139,7 +140,7 @@ def splits(
     prep_splits(
         datasets=datasets, roots=roots, parallel=parallel, overwrite=overwrite,
         progress=console_progress(
-            results_root or models_root or datasets[0].root, log_dir=log_dir, run_tag=run_tag
+            resolved_results_root(datasets[0], roots), log_dir=log_dir, run_tag=run_tag
         ),
         **params,
     )
@@ -178,7 +179,7 @@ def thumbnails(
     prep_thumbnails(
         datasets=datasets, roots=roots, parallel=parallel, overwrite=overwrite,
         progress=console_progress(
-            results_root or models_root or datasets[0].root, log_dir=log_dir, run_tag=run_tag
+            resolved_results_root(datasets[0], roots), log_dir=log_dir, run_tag=run_tag
         ),
         **params,
     )
@@ -226,7 +227,7 @@ def tiles(
     prep_tiles(
         datasets=datasets, roots=roots, parallel=parallel, overwrite=overwrite,
         progress=console_progress(
-            results_root or models_root or datasets[0].root, log_dir=log_dir, run_tag=run_tag
+            resolved_results_root(datasets[0], roots), log_dir=log_dir, run_tag=run_tag
         ),
         **params,
     )
@@ -294,7 +295,7 @@ def augment(
     prep_augment(
         datasets=datasets, roots=roots, parallel=parallel, overwrite=overwrite,
         progress=console_progress(
-            results_root or models_root or datasets[0].root, log_dir=log_dir, run_tag=run_tag
+            resolved_results_root(datasets[0], roots), log_dir=log_dir, run_tag=run_tag
         ),
         **params,
     )
@@ -337,7 +338,7 @@ def tile_features(
     prep_tile_features(
         datasets=datasets, roots=roots, parallel=parallel, overwrite=overwrite,
         progress=console_progress(
-            results_root or models_root or datasets[0].root, log_dir=log_dir, run_tag=run_tag
+            resolved_results_root(datasets[0], roots), log_dir=log_dir, run_tag=run_tag
         ),
         **params,
     )
@@ -378,7 +379,7 @@ def cells(
     prep_cells(
         datasets=datasets, roots=roots, parallel=parallel, overwrite=overwrite,
         progress=console_progress(
-            results_root or models_root or datasets[0].root, log_dir=log_dir, run_tag=run_tag
+            resolved_results_root(datasets[0], roots), log_dir=log_dir, run_tag=run_tag
         ),
         **params,
     )
@@ -417,7 +418,7 @@ def cell_features(
     prep_cell_features(
         datasets=datasets, roots=roots, parallel=parallel, overwrite=overwrite,
         progress=console_progress(
-            results_root or models_root or datasets[0].root, log_dir=log_dir, run_tag=run_tag
+            resolved_results_root(datasets[0], roots), log_dir=log_dir, run_tag=run_tag
         ),
         **params,
     )

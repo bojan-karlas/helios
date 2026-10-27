@@ -26,6 +26,7 @@ from helios.cli._common import (
     RUN_TAG,
     console_progress,
     datasets_arg,
+    resolved_results_root,
 )
 from helios.cli.fit import fit_app
 from helios.cli.predict import predict_app
@@ -123,7 +124,7 @@ def report(
         parallel=parallel,
         overwrite=overwrite,
         progress=console_progress(
-            results_root or models_root or datasets[0].root,
+            resolved_results_root(datasets[0], roots),
             log_dir=log_dir,
             run_tag=run_tag,
         ),

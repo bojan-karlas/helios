@@ -12,6 +12,8 @@ from pathlib import Path
 
 import typer
 
+from helios.data.cohort import ResolvedDataset
+from helios.data.resolver import StorageRoots
 from helios.progress import Progress, configure_logging, create_run_log_dir
 from helios.progress.reporter import ProgressReporter
 
@@ -66,6 +68,13 @@ def datasets_arg(values: list[str] | None) -> list[str]:
     if not out:
         raise ValueError("at least one --dataset is required")
     return out
+
+
+def resolved_results_root(dataset: ResolvedDataset, roots: StorageRoots) -> Path:
+    """Use the same results destination as artifact resolution."""
+    from helios.stages._runtime import cohort_store
+
+    return cohort_store(dataset, roots).resolver.roots.for_role("results")
 
 
 def console_progress(

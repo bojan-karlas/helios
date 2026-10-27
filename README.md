@@ -386,7 +386,12 @@ helios predict mil --dataset /data/COHORT1 \
 
 Run logs are written to `<log_dir>/<run_id>/` (`run.log`, `status.json`,
 `events.jsonl`, `workers/<worker-id>.log`), where `--log-dir` defaults to
-`<results_root>/logs` (or `<models_root>/logs` / `<dataset>/logs`) and
+the resolved results role's `logs/` directory: `<dataset>/results/logs` by
+default, or `<results_root>/<logical_cohort>/logs` with an explicit results root.
+The model root does not affect log placement. `--log-dir` overrides this base.
+For multi-dataset invocations, the coordinator uses the first resolved
+constituent's results destination (shared by members of a named cohort when
+an explicit results root is supplied).
 `--run-tag` appends an optional kebab-case suffix to `<run_id>`.
 
 Stages run serially in a single process by default. Parallel execution is

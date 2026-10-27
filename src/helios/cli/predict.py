@@ -26,6 +26,7 @@ from helios.cli._common import (
     console_progress,
     csv,
     datasets_arg,
+    resolved_results_root,
 )
 
 predict_app = typer.Typer(add_completion=False, help="Run inference (per-cohort).")
@@ -78,7 +79,7 @@ def mil(
     predict_mil(
         datasets=datasets, roots=roots, parallel=parallel, overwrite=overwrite,
         progress=console_progress(
-            results_root or models_root or datasets[0].root, log_dir=log_dir, run_tag=run_tag
+            resolved_results_root(datasets[0], roots), log_dir=log_dir, run_tag=run_tag
         ),
         **params,
     )
@@ -119,7 +120,7 @@ def concept(
     predict_concept(
         datasets=datasets, roots=roots, parallel=parallel, overwrite=overwrite,
         progress=console_progress(
-            results_root or models_root or datasets[0].root, log_dir=log_dir, run_tag=run_tag
+            resolved_results_root(datasets[0], roots), log_dir=log_dir, run_tag=run_tag
         ),
         **params,
     )
@@ -160,7 +161,7 @@ def morphology(
     predict_morphology(
         datasets=datasets, roots=roots, parallel=parallel, overwrite=overwrite,
         progress=console_progress(
-            results_root or models_root or datasets[0].root, log_dir=log_dir, run_tag=run_tag
+            resolved_results_root(datasets[0], roots), log_dir=log_dir, run_tag=run_tag
         ),
         **params,
     )
@@ -204,7 +205,7 @@ def risk(
     predict_risk(
         datasets=datasets, roots=roots, parallel=parallel, overwrite=overwrite,
         progress=console_progress(
-            results_root or models_root or datasets[0].root, log_dir=log_dir, run_tag=run_tag
+            resolved_results_root(datasets[0], roots), log_dir=log_dir, run_tag=run_tag
         ),
         **params,
     )
