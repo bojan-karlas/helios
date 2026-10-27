@@ -1,22 +1,15 @@
-"""Stage: stain augmentation + augmented feature extraction (``helios prep augment``).
-
-For every (target, size_mm, image) this stage stain-augments the slide's tiles
-with a pretrained CycleGAN (``tile_augmentation``) and then embeds the augmented
-tiles with the foundation model(s) (``tile_augmentation_features``). The
-augmented embeddings are what MIL training swaps in for stain robustness.
-"""
+"""Prepare self-described augmentation directories and aligned embeddings."""
 from __future__ import annotations
 
+import logging
 from pathlib import Path
-
-import numpy as np
-from numpy.typing import NDArray
+from typing import cast
 
 from helios.components.augmentation import AUGMENTATION_METHODS, augment_stains
-from helios.components.features import FEATURE_MODELS, extract_features
+from helios.components.features import FEATURE_MODELS, FeatureModel, extract_features
+from helios.data.augmentation import Augmentation
 from helios.progress import DEFAULT_PROGRESS, Progress
 from helios.stages._runtime import (
-    AugmentationSpec,
     DatasetArgs,
     ParallelConfig,
     ResolvedDataset,
@@ -25,8 +18,8 @@ from helios.stages._runtime import (
     resolve_datasets,
     select_image_ids,
 )
+from helios.stages.tile_features import _tile_index, _tiles_array
 
-# -- configurable defaults (source of truth for configs/default.yaml) ----------
 DEFAULT_METHOD: str = "cyclegan"
 DEFAULT_SOURCE: str | None = None
 DEFAULT_TARGETS: list[str] = []
@@ -49,6 +42,7 @@ def prep_augment(
     target: list[str] = DEFAULT_TARGETS,
     checkpoint: list[str] = DEFAULT_CHECKPOINTS,
     stain_model_root: str | Path = DEFAULT_STAIN_MODEL_ROOT,
+    output_dir: str | None = None,
     size_mm: list[float] = DEFAULT_SIZE_MM,
     model: list[str] = DEFAULT_MODELS,
     batch_size: int = DEFAULT_BATCH_SIZE,
@@ -58,127 +52,107 @@ def prep_augment(
     force: bool = False,
     progress: Progress = DEFAULT_PROGRESS,
 ) -> None:
-    """Stain-augment tiles and embed the augmented tiles.
-
-    GRAIN CONTRACT: one (dataset, augmentation_spec, size_mm, image) per
-    augmentation unit; augmented features are then extracted per
-    (augmentation_spec, size_mm, model, image). Requires staged ``tiles``
-    (``prep tiles``).
-    """
+    """Prepare tiles and features; existing artifacts are skipped unless forced."""
     resolved = resolve_datasets(datasets, roots=roots)
-    _validate_models(model)
+    if output_dir is not None and (len(resolved) != 1 or len(target) != 1):
+        raise ValueError("output_dir requires exactly one dataset and one explicit target.")
+    if checkpoint and not target:
+        raise ValueError("Explicit checkpoints require explicit targets.")
+    unknown = [m for m in model if m not in FEATURE_MODELS]
+    if unknown:
+        raise ValueError(f"Unknown feature model(s) {unknown}. Available: {list(FEATURE_MODELS)}.")
 
     for ds in resolved:
-        specs = _specs_for_dataset(
-            ds,
-            method=method,
-            source=source,
-            targets=target,
-            checkpoints=checkpoint,
-            stain_model_root=stain_model_root,
-        )
         store = cohort_store(ds, roots)
-        ids = select_image_ids(ds, store, image_ids)
-        units = [(spec, s, i) for spec in specs for s in size_mm for i in ids]
-
-        for spec, s, image_id in progress.task(units, desc=f"augment {ds.name}"):
-            keys = {**spec.key_values(), "size_mm": s, "image_id": image_id}
-            if force or not store.exists("tile_augmentation", **keys):
-                tiles = _tiles_array(store.read("tiles", size_mm=s, image_id=image_id))
-                augmented = augment_stains(
-                    tiles,
-                    checkpoint=str(spec.checkpoint),
-                    batch_size=augmentation_batch_size,
-                    device=device,
-                )
-                store.write("tile_augmentation", {"tiles": augmented}, **keys)
-                progress.log(
-                    f"wrote tile_augmentation image={image_id} method={spec.method} "
-                    f"source={spec.source} target={spec.target} size_mm={s}"
-                )
-
-            for m in model:
-                feat_keys = {**keys, "model": m}
-                if not force and store.exists("tile_augmentation_features", **feat_keys):
-                    continue
-                aug_tiles = _tiles_array(store.read("tile_augmentation", **keys))
-                embeddings = extract_features(
-                    aug_tiles, model=m, batch_size=batch_size, device=device, progress=progress  # type: ignore[arg-type]
-                )
-                store.write("tile_augmentation_features", {"features": embeddings}, **feat_keys)
-                progress.log(
-                    f"wrote tile_augmentation_features image={image_id} method={spec.method} "
-                    f"source={spec.source} target={spec.target} size_mm={s} model={m}"
-                )
-
-
-def _validate_models(model: list[str]) -> None:
-    unknown_m = [m for m in model if m not in FEATURE_MODELS]
-    if unknown_m:
-        raise ValueError(f"Unknown feature model(s) {unknown_m}. Available: {list(FEATURE_MODELS)}.")
-
-
-def _specs_for_dataset(
-    ds: ResolvedDataset,
-    *,
-    method: str,
-    source: str | None,
-    targets: list[str],
-    checkpoints: list[str],
-    stain_model_root: str | Path,
-) -> list[AugmentationSpec]:
-    if method not in AUGMENTATION_METHODS:
-        raise ValueError(
-            f"Unsupported augmentation method {method!r}. Available: {list(AUGMENTATION_METHODS)}."
+        definitions = _definitions(
+            ds, roots=roots, method=method, source=source, targets=target,
+            checkpoints=checkpoint, stain_model_root=Path(stain_model_root), output_dir=output_dir,
         )
-    if targets:
-        resolved_ckpts = _resolve_checkpoints(targets, checkpoints, stain_model_root)
-        if len(targets) != len(resolved_ckpts):
-            raise ValueError(
-                "target and checkpoint must have the same number of values "
-                "(one user-trained G_A checkpoint per stain target)."
-            )
-        if len(set(targets)) != len(targets):
-            raise ValueError("stain target names must be unique")
-        return [
-            AugmentationSpec(method=method, source=source, target=t, checkpoint=Path(c))
-            for t, c in zip(targets, resolved_ckpts, strict=True)
-        ]
-    if ds.augmentations:
-        out: list[AugmentationSpec] = []
-        root = Path(stain_model_root)
-        for spec in ds.augmentations:
-            if spec.method not in AUGMENTATION_METHODS:
-                raise ValueError(
-                    f"Unsupported augmentation method {spec.method!r}. "
-                    f"Available: {list(AUGMENTATION_METHODS)}."
-                )
-            ckpt = spec.checkpoint or (root / spec.target / "latest_net_G_A.pth")
-            out.append(
-                AugmentationSpec(
-                    method=spec.method,
-                    source=spec.source,
-                    target=spec.target,
-                    checkpoint=Path(ckpt),
-                )
-            )
-        return out
-    return []
+        ids = select_image_ids(ds, store, image_ids)
+        for definition in definitions:
+            if definition.method not in AUGMENTATION_METHODS:
+                raise ValueError(f"Unsupported augmentation method {definition.method!r}.")
+            if definition.source_dataset_id != ds.dataset().descriptor.id:
+                raise ValueError(f"Augmentation {definition.root} belongs to a different dataset.")
+            if definition.checkpoint is None:
+                raise ValueError(f"Augmentation {definition.root} requires a checkpoint for preparation.")
+            manifest = definition.root / "augmentation.yaml"
+            if manifest.exists():
+                previous = Augmentation.load(definition.root)
+                if previous.source_dataset_id != definition.source_dataset_id:
+                    raise ValueError(f"Augmentation {definition.root} belongs to a different dataset.")
+                if previous != definition:
+                    progress.log(
+                        f"Reusing {definition.root} with changed settings; "
+                        "existing outputs are skipped unless force=True. Mixed outputs are the user's responsibility.",
+                        level=logging.WARNING,
+                    )
+            definition.save()
+            aug_store = definition.store()
+            for s, image_id in progress.task(
+                [(s, i) for s in size_mm for i in ids], desc=f"augment {ds.dataset().descriptor.name}",
+            ):
+                if force or not aug_store.exists("tile_augmentation", size_mm=s, image_id=image_id):
+                    tiles = _tiles_array(store.read("tiles", size_mm=s, image_id=image_id))
+                    tile_ids, coords = _tile_index(store, size_mm=s, image_id=image_id, n_tiles=len(tiles))
+                    augmented = augment_stains(
+                        tiles, checkpoint=str(definition.checkpoint),
+                        batch_size=augmentation_batch_size, device=device,
+                    )
+                    if len(augmented) != len(tiles):
+                        raise ValueError("Augmentation changed the number of tiles.")
+                    aug_store.write(
+                        "tile_augmentation", {"tiles": augmented, "tile_ids": tile_ids, "coords": coords},
+                        size_mm=s, image_id=image_id,
+                    )
+                for m in model:
+                    if not force and aug_store.exists(
+                        "tile_augmentation_features", size_mm=s, image_id=image_id, model=m,
+                    ):
+                        continue
+                    payload = aug_store.read("tile_augmentation", size_mm=s, image_id=image_id)
+                    if not {"tiles", "tile_ids", "coords"} <= payload.keys():
+                        raise ValueError(f"Augmented tiles at {definition.root} lack alignment metadata; use --force.")
+                    embeddings = extract_features(
+                        payload["tiles"], model=cast(FeatureModel, m), batch_size=batch_size, device=device,
+                        progress=progress,
+                    )
+                    if len(embeddings) != len(payload["tile_ids"]):
+                        raise ValueError("Feature extraction changed the number of tiles.")
+                    aug_store.write(
+                        "tile_augmentation_features",
+                        {"features": embeddings, "tile_ids": payload["tile_ids"], "coords": payload["coords"]},
+                        size_mm=s, image_id=image_id, model=m,
+                    )
+                progress.log(f"prepared augmentation={definition.root} image={image_id} size_mm={s}")
 
 
-def _resolve_checkpoints(
-    targets: list[str], checkpoints: list[str], stain_model_root: str | Path
-) -> list[str]:
-    """Use explicit paths or the conventional per-target local model path."""
-    if checkpoints:
-        return checkpoints
-    root = Path(stain_model_root)
-    return [str(root / target / "latest_net_G_A.pth") for target in targets]
-
-
-def _tiles_array(tiles: object) -> NDArray[np.uint8]:
-    if isinstance(tiles, dict):
-        if "tiles" not in tiles:
-            raise KeyError("tile artifact has no 'tiles' dataset")
-        tiles = tiles["tiles"]
-    return np.asarray(tiles, dtype=np.uint8)
+def _definitions(
+    ds: ResolvedDataset, *, roots: StorageRoots | None, method: str, source: str | None,
+    targets: list[str], checkpoints: list[str], stain_model_root: Path, output_dir: str | None,
+) -> list[Augmentation]:
+    if not targets:
+        return [Augmentation.load(path) for path in ds.augmentations]
+    if len(set(targets)) != len(targets):
+        raise ValueError("Stain target names must be unique.")
+    if checkpoints and len(checkpoints) != len(targets):
+        raise ValueError("target and checkpoint must have the same number of values.")
+    for value in (method, source, *targets):
+        if value is not None and (not value.strip() or "/" in value or "\\" in value or value in {".", ".."}):
+            raise ValueError(f"Invalid augmentation directory label: {value!r}.")
+    base = cohort_store(ds, roots).resolver.roots.for_role("preprocessing") / "augmentations"
+    parts = [f"method={method}"]
+    if source is not None:
+        parts.append(f"source={source}")
+    return [
+        Augmentation(
+            root=Path(output_dir).absolute() if output_dir is not None else base.joinpath(*parts, f"target={t}"),
+            source_dataset_id=ds.dataset().descriptor.id,
+            method=method,
+            parameters={**({"source": source} if source is not None else {}), "target": t},
+            checkpoint=(
+                Path(checkpoints[i]) if checkpoints else stain_model_root / t / "latest_net_G_A.pth"
+            ).absolute(),
+        )
+        for i, t in enumerate(targets)
+    ]

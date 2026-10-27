@@ -11,9 +11,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from helios.data.augmentation import Augmentation
 from helios.data.io import ArtifactStore
 from helios.data.resolver import Resolver, Roots, StorageRoots
-from helios.stages._runtime import cohort_store
 from helios.stages.augment import prep_augment
 from helios.stages.tile_features import prep_tile_features
 from tests.fixtures import make_cohort
@@ -78,12 +78,17 @@ def test_stage_rejects_unknown_model(cohort: Path) -> None:
 
 
 def test_cached_augmentation_reads_preprocessing_and_writes_features(monkeypatch, cohort: Path, tmp_path: Path) -> None:
-    roots = StorageRoots(preprocessing_root=tmp_path / "pre", features_root=tmp_path / "features")
-    store = cohort_store(cohort, roots)
+    roots = StorageRoots(preprocessing_root=tmp_path / "pre")
+    definition = Augmentation(
+        tmp_path / "pre/augmentations/method=cyclegan/target=lab", cohort.name, "cyclegan",
+        {"target": "lab"},
+    )
+    store = definition.store()
     image_id = "FAKE-SKCM-P00000-S01-B1-I1"
     store.write(
-        "tile_augmentation", {"tiles": np.zeros((3, 4, 4, 3), np.uint8)},
-        target="lab", size_mm=0.25, image_id=image_id,
+        "tile_augmentation",
+        {"tiles": np.zeros((3, 4, 4, 3), np.uint8), "tile_ids": np.arange(3), "coords": np.empty((3, 0))},
+        size_mm=0.25, image_id=image_id,
     )
 
     def unexpected_augmentation(*args, **kwargs):
@@ -95,13 +100,13 @@ def test_cached_augmentation_reads_preprocessing_and_writes_features(monkeypatch
         datasets=[cohort], roots=roots, target=["lab"], model=["virchow2"], image_ids=[image_id],
     )
     assert store.path(
-        "tile_augmentation", target="lab", size_mm=0.25, image_id=image_id
+        "tile_augmentation", size_mm=0.25, image_id=image_id
     ).is_relative_to(tmp_path / "pre")
     feature_path = store.path(
-        "tile_augmentation_features", target="lab", size_mm=0.25, model="virchow2", image_id=image_id
+        "tile_augmentation_features", size_mm=0.25, model="virchow2", image_id=image_id
     )
-    assert feature_path.is_relative_to(tmp_path / "features")
+    assert feature_path.is_relative_to(definition.root / "features")
     assert feature_path.exists()
     assert store.read(
-        "tile_augmentation_features", target="lab", size_mm=0.25, model="virchow2", image_id=image_id
+        "tile_augmentation_features", size_mm=0.25, model="virchow2", image_id=image_id
     )["features"].shape == (3, EMBED_DIM)

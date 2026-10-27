@@ -13,12 +13,12 @@ from pathlib import Path
 import typer
 
 from helios.cli._common import (
-    FEATURES_ROOT,
     LOG_DIR,
     MAX_CPUS,
     MODELS_ROOT,
     PREPROCESSING_ROOT,
     RAY_ADDRESS,
+    REMOVED_FEATURES_ROOT,
     REMOVED_OUTPUT_ROOT,
     RESULTS_ROOT,
     RUN_TAG,
@@ -46,7 +46,7 @@ def prep_all(
     ctx: typer.Context,
     dataset: list[str] = _DATASET_GROUP,
     preprocessing_root: Path | None = PREPROCESSING_ROOT,
-    features_root: Path | None = FEATURES_ROOT,
+    features_root: Path | None = REMOVED_FEATURES_ROOT,
     models_root: Path | None = MODELS_ROOT,
     results_root: Path | None = RESULTS_ROOT,
     log_dir: Path | None = LOG_DIR,
@@ -68,7 +68,7 @@ def prep_all(
     from helios.stages._runtime import ParallelConfig, resolve_datasets
 
     roots = StorageRoots(
-        preprocessing_root=preprocessing_root, features_root=features_root,
+        preprocessing_root=preprocessing_root,
         models_root=models_root, results_root=results_root,
     )
     parallel = ParallelConfig(ray_address=ray_address, max_cpus=max_cpus)
@@ -88,7 +88,7 @@ def prep_all(
 def splits(
     dataset: list[str] = _DATASET,
     preprocessing_root: Path | None = PREPROCESSING_ROOT,
-    features_root: Path | None = FEATURES_ROOT,
+    features_root: Path | None = REMOVED_FEATURES_ROOT,
     models_root: Path | None = MODELS_ROOT,
     results_root: Path | None = RESULTS_ROOT,
     splits_file: Path | None = SPLITS_FILE,
@@ -122,7 +122,7 @@ def splits(
     from helios.stages.splits import prep_splits
 
     roots = StorageRoots(
-        preprocessing_root=preprocessing_root, features_root=features_root,
+        preprocessing_root=preprocessing_root,
         models_root=models_root, results_root=results_root,
         splits_file=splits_file,
     )
@@ -150,7 +150,7 @@ def splits(
 def thumbnails(
     dataset: list[str] = _DATASET,
     preprocessing_root: Path | None = PREPROCESSING_ROOT,
-    features_root: Path | None = FEATURES_ROOT,
+    features_root: Path | None = REMOVED_FEATURES_ROOT,
     models_root: Path | None = MODELS_ROOT,
     results_root: Path | None = RESULTS_ROOT,
     log_dir: Path | None = LOG_DIR,
@@ -169,7 +169,7 @@ def thumbnails(
     from helios.stages.thumbnails import prep_thumbnails
 
     roots = StorageRoots(
-        preprocessing_root=preprocessing_root, features_root=features_root,
+        preprocessing_root=preprocessing_root,
         models_root=models_root, results_root=results_root,
     )
     parallel = ParallelConfig(ray_address=ray_address, max_cpus=max_cpus)
@@ -189,7 +189,7 @@ def thumbnails(
 def tiles(
     dataset: list[str] = _DATASET,
     preprocessing_root: Path | None = PREPROCESSING_ROOT,
-    features_root: Path | None = FEATURES_ROOT,
+    features_root: Path | None = REMOVED_FEATURES_ROOT,
     models_root: Path | None = MODELS_ROOT,
     results_root: Path | None = RESULTS_ROOT,
     log_dir: Path | None = LOG_DIR,
@@ -212,7 +212,7 @@ def tiles(
     from helios.stages.tiles import prep_tiles
 
     roots = StorageRoots(
-        preprocessing_root=preprocessing_root, features_root=features_root,
+        preprocessing_root=preprocessing_root,
         models_root=models_root, results_root=results_root,
     )
     parallel = ParallelConfig(ray_address=ray_address, max_cpus=max_cpus)
@@ -237,7 +237,7 @@ def tiles(
 def augment(
     dataset: list[str] = _DATASET,
     preprocessing_root: Path | None = PREPROCESSING_ROOT,
-    features_root: Path | None = FEATURES_ROOT,
+    features_root: Path | None = REMOVED_FEATURES_ROOT,
     models_root: Path | None = MODELS_ROOT,
     results_root: Path | None = RESULTS_ROOT,
     log_dir: Path | None = LOG_DIR,
@@ -253,6 +253,9 @@ def augment(
     ),
     stain_model_root: Path | None = typer.Option(
         None, "--stain-model-root", help="Root for <target>/latest_net_G_A.pth checkpoint lookup."
+    ),
+    output_dir: Path | None = typer.Option(
+        None, "--output-dir", help="Augmentation directory; requires one dataset and one explicit target."
     ),
     size_mm: str | None = typer.Option(None, "--size-mm", help="Comma list of resolutions."),
     model: str | None = typer.Option(None, "--model", help="Comma list of foundation models."),
@@ -270,7 +273,7 @@ def augment(
     from helios.stages.augment import prep_augment
 
     roots = StorageRoots(
-        preprocessing_root=preprocessing_root, features_root=features_root,
+        preprocessing_root=preprocessing_root,
         models_root=models_root, results_root=results_root,
     )
     parallel = ParallelConfig(ray_address=ray_address, max_cpus=max_cpus)
@@ -281,6 +284,7 @@ def augment(
         "target": csv(target),
         "checkpoint": csv(checkpoint),
         "stain_model_root": stain_model_root,
+        "output_dir": str(output_dir.absolute()) if output_dir is not None else None,
         "size_mm": csv_floats(size_mm),
         "model": csv(model),
         "augmentation_batch_size": augmentation_batch_size,
@@ -301,7 +305,7 @@ def augment(
 def tile_features(
     dataset: list[str] = _DATASET,
     preprocessing_root: Path | None = PREPROCESSING_ROOT,
-    features_root: Path | None = FEATURES_ROOT,
+    features_root: Path | None = REMOVED_FEATURES_ROOT,
     models_root: Path | None = MODELS_ROOT,
     results_root: Path | None = RESULTS_ROOT,
     log_dir: Path | None = LOG_DIR,
@@ -323,7 +327,7 @@ def tile_features(
     from helios.stages.tile_features import prep_tile_features
 
     roots = StorageRoots(
-        preprocessing_root=preprocessing_root, features_root=features_root,
+        preprocessing_root=preprocessing_root,
         models_root=models_root, results_root=results_root,
     )
     parallel = ParallelConfig(ray_address=ray_address, max_cpus=max_cpus)
@@ -344,7 +348,7 @@ def tile_features(
 def cells(
     dataset: list[str] = _DATASET,
     preprocessing_root: Path | None = PREPROCESSING_ROOT,
-    features_root: Path | None = FEATURES_ROOT,
+    features_root: Path | None = REMOVED_FEATURES_ROOT,
     models_root: Path | None = MODELS_ROOT,
     results_root: Path | None = RESULTS_ROOT,
     log_dir: Path | None = LOG_DIR,
@@ -364,7 +368,7 @@ def cells(
     from helios.stages.cells import prep_cells
 
     roots = StorageRoots(
-        preprocessing_root=preprocessing_root, features_root=features_root,
+        preprocessing_root=preprocessing_root,
         models_root=models_root, results_root=results_root,
     )
     parallel = ParallelConfig(ray_address=ray_address, max_cpus=max_cpus)
@@ -385,7 +389,7 @@ def cells(
 def cell_features(
     dataset: list[str] = _DATASET,
     preprocessing_root: Path | None = PREPROCESSING_ROOT,
-    features_root: Path | None = FEATURES_ROOT,
+    features_root: Path | None = REMOVED_FEATURES_ROOT,
     models_root: Path | None = MODELS_ROOT,
     results_root: Path | None = RESULTS_ROOT,
     log_dir: Path | None = LOG_DIR,
@@ -404,7 +408,7 @@ def cell_features(
     from helios.stages.cell_features import prep_cell_features
 
     roots = StorageRoots(
-        preprocessing_root=preprocessing_root, features_root=features_root,
+        preprocessing_root=preprocessing_root,
         models_root=models_root, results_root=results_root,
     )
     parallel = ParallelConfig(ray_address=ray_address, max_cpus=max_cpus)

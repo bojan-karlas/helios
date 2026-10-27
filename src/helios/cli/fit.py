@@ -12,12 +12,12 @@ from pathlib import Path
 import typer
 
 from helios.cli._common import (
-    FEATURES_ROOT,
     LOG_DIR,
     MAX_CPUS,
     MODELS_ROOT,
     PREPROCESSING_ROOT,
     RAY_ADDRESS,
+    REMOVED_FEATURES_ROOT,
     REMOVED_OUTPUT_ROOT,
     RESULTS_ROOT,
     RUN_TAG,
@@ -35,11 +35,18 @@ _FORCE = typer.Option(False, "--force", help="Re-fit even if a model bundle exis
 _FILTER = typer.Option(None, "--filter", help="pandas-query over image_metadata to subset training rows.")
 
 
+def _reject_augmentation_target(value: str | None) -> None:
+    if value is not None:
+        raise typer.BadParameter(
+            "--augmentation-target has been removed. Use --augmentation PATH to select a prepared directory."
+        )
+
+
 @fit_app.command("mil")
 def mil(
     dataset: list[str] = _DATASET,
     preprocessing_root: Path | None = PREPROCESSING_ROOT,
-    features_root: Path | None = FEATURES_ROOT,
+    features_root: Path | None = REMOVED_FEATURES_ROOT,
     models_root: Path | None = MODELS_ROOT,
     results_root: Path | None = RESULTS_ROOT,
     splits_file: Path | None = SPLITS_FILE,
@@ -51,9 +58,13 @@ def mil(
     size_mm: float | None = typer.Option(None, "--size-mm", help="Tile resolution to train on."),
     model: str | None = typer.Option(None, "--model", help="Foundation model providing tile features."),
     target: str | None = typer.Option(None, "--target", help="Outcome column to train against."),
-    augmentation_target: str | None = typer.Option(
-        None, "--augmentation-target", help="Stain target whose augmented tile features are used during MIL training."
+    augmentation: list[str] | None = typer.Option(
+        None, "--augmentation", help="Prepared augmentation directory; repeatable. Replaces YAML selections."
     ),
+    augmentation_target: str | None = typer.Option(
+        None, "--augmentation-target", hidden=True, callback=_reject_augmentation_target,
+    ),
+    no_augmentations: bool = typer.Option(False, "--no-augmentations", help="Disable YAML augmentation selections."),
     aug_swap_prob: float | None = typer.Option(
         None, "--aug-swap-prob", help="Per-tile probability of swapping in the stain-augmented embedding."
     ),
@@ -86,17 +97,19 @@ def mil(
     from helios.stages.mil import fit_mil
 
     roots = StorageRoots(
-        preprocessing_root=preprocessing_root, features_root=features_root,
+        preprocessing_root=preprocessing_root,
         models_root=models_root, results_root=results_root,
         splits_file=splits_file,
     )
     parallel = ParallelConfig(ray_address=ray_address, max_cpus=max_cpus)
     datasets = resolve_datasets(datasets_arg(dataset), where=filter, roots=roots, require_models=True)
+    if no_augmentations and augmentation:
+        raise typer.BadParameter("--augmentation and --no-augmentations are mutually exclusive.")
     overrides = {
         "size_mm": size_mm,
         "model": model,
         "target": target,
-        "augmentation_target": augmentation_target,
+        "augmentations": [] if no_augmentations else augmentation,
         "aug_swap_prob": aug_swap_prob,
         "aug_mode": aug_mode,
         "n_branches": n_branches,
@@ -126,7 +139,7 @@ def mil(
 def concept(
     dataset: list[str] = _DATASET,
     preprocessing_root: Path | None = PREPROCESSING_ROOT,
-    features_root: Path | None = FEATURES_ROOT,
+    features_root: Path | None = REMOVED_FEATURES_ROOT,
     models_root: Path | None = MODELS_ROOT,
     results_root: Path | None = RESULTS_ROOT,
     splits_file: Path | None = SPLITS_FILE,
@@ -147,7 +160,7 @@ def concept(
     from helios.stages.concept import fit_concept
 
     roots = StorageRoots(
-        preprocessing_root=preprocessing_root, features_root=features_root,
+        preprocessing_root=preprocessing_root,
         models_root=models_root, results_root=results_root,
         splits_file=splits_file,
     )
@@ -168,7 +181,7 @@ def concept(
 def morphology(
     dataset: list[str] = _DATASET,
     preprocessing_root: Path | None = PREPROCESSING_ROOT,
-    features_root: Path | None = FEATURES_ROOT,
+    features_root: Path | None = REMOVED_FEATURES_ROOT,
     models_root: Path | None = MODELS_ROOT,
     results_root: Path | None = RESULTS_ROOT,
     splits_file: Path | None = SPLITS_FILE,
@@ -201,7 +214,7 @@ def morphology(
     from helios.stages.morphology import fit_morphology
 
     roots = StorageRoots(
-        preprocessing_root=preprocessing_root, features_root=features_root,
+        preprocessing_root=preprocessing_root,
         models_root=models_root, results_root=results_root,
         splits_file=splits_file,
     )
@@ -233,7 +246,7 @@ def morphology(
 def risk(
     dataset: list[str] = _DATASET,
     preprocessing_root: Path | None = PREPROCESSING_ROOT,
-    features_root: Path | None = FEATURES_ROOT,
+    features_root: Path | None = REMOVED_FEATURES_ROOT,
     models_root: Path | None = MODELS_ROOT,
     results_root: Path | None = RESULTS_ROOT,
     splits_file: Path | None = SPLITS_FILE,
@@ -258,7 +271,7 @@ def risk(
     from helios.stages.risk import fit_risk
 
     roots = StorageRoots(
-        preprocessing_root=preprocessing_root, features_root=features_root,
+        preprocessing_root=preprocessing_root,
         models_root=models_root, results_root=results_root,
         splits_file=splits_file,
     )

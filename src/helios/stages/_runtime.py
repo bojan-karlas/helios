@@ -25,7 +25,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from helios.data.cohort import AugmentationSpec, DatasetArgs, ResolvedDataset
+from helios.data.cohort import DatasetArgs, ResolvedDataset
 from helios.data.cohort import resolve_datasets as resolve_dataset_args
 from helios.data.io import ArtifactStore, read
 from helios.data.resolver import Resolver, Roots, StorageRoots, format_hive_subpath
@@ -42,7 +42,6 @@ from helios.stages._ray import (
 )
 
 __all__ = [
-    "AugmentationSpec",
     "DatasetArgs",
     "ResolvedDataset",
     "ParallelConfig",
@@ -144,9 +143,9 @@ def resolve_datasets(
     resolved = resolve_dataset_args(datasets, where=where)
     overrides = roots or StorageRoots()
     if len(resolved) > 1:
-        if overrides.preprocessing_root is not None or overrides.features_root is not None:
+        if overrides.preprocessing_root is not None:
             raise ValueError(
-                "For multiple datasets, set preprocessing_root and features_root per dataset in the cohort YAML."
+                "For multiple datasets, set preprocessing_root per dataset in the cohort YAML."
             )
         if require_models and overrides.models_root is None:
             raise ValueError("Pooled training requires an explicit models_root (--models-root).")
@@ -200,7 +199,6 @@ def cohort_store(dataset: str | Path | ResolvedDataset, roots: StorageRoots | No
     return ArtifactStore(Resolver(Roots(
         source_root=ds.root,
         preprocessing_root=overrides.preprocessing_root or ds.preprocessing_root,
-        features_root=overrides.features_root or ds.features_root,
         models_root=overrides.models_root,
         results_root=overrides.results_root / ds.logical_name if overrides.results_root is not None else None,
     )))
@@ -329,21 +327,10 @@ def build_cohort_provenance(
     for ds in datasets:
         entry: dict[str, object] = {"source_root": str(ds.root.resolve())}
         pre = (roots.preprocessing_root if roots else None) or ds.preprocessing_root
-        feat = (roots.features_root if roots else None) or ds.features_root
         if pre is not None:
             entry["preprocessing_root"] = str(Path(pre).resolve())
-        if feat is not None:
-            entry["features_root"] = str(Path(feat).resolve())
         if ds.augmentations:
-            entry["augmentations"] = [
-                {
-                    "method": a.method,
-                    **({"source": a.source} if a.source is not None else {}),
-                    "target": a.target,
-                    **({"checkpoint": str(a.checkpoint.resolve())} if a.checkpoint is not None else {}),
-                }
-                for a in ds.augmentations
-            ]
+            entry["augmentations"] = [str(a.absolute()) for a in ds.augmentations]
         entries.append(entry)
     doc: dict[str, object] = {
         "name": lead.logical_name,

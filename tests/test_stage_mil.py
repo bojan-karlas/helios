@@ -130,7 +130,7 @@ def test_union_extract_fit_predict_and_downstream_fit_use_split_roots(monkeypatc
         source = make_cohort(tmp_path / name, n_images=2, n_patients=2)
         originals.update({p: p.read_bytes() for p in source.rglob("*") if p.is_file()})
         ds = ResolvedDataset(
-            source, preprocessing_root=tmp_path / "pre" / name, features_root=tmp_path / "features" / name
+            source, preprocessing_root=tmp_path / "pre" / name
         )
         datasets.append(ds)
         store = cohort_store(ds)
@@ -147,7 +147,7 @@ def test_union_extract_fit_predict_and_downstream_fit_use_split_roots(monkeypatc
     def fake_train(slides, **kwargs):
         assert len(slides) == 4
         for slide in slides:
-            assert slide.features_path.is_relative_to(tmp_path / "features")
+            assert slide.features_path.is_relative_to(tmp_path / "pre")
             assert slide.features_path.exists()
             assert slide.background_path.is_relative_to(tmp_path / "pre")
         return {"trained": True}
@@ -158,7 +158,7 @@ def test_union_extract_fit_predict_and_downstream_fit_use_split_roots(monkeypatc
 
     def fake_infer(model, *, features_path, **kwargs):
         assert model["trained"]
-        assert features_path.is_relative_to(tmp_path / "features")
+        assert features_path.is_relative_to(tmp_path / "pre")
         return MilSlideOutputs(
             patch_embeddings=np.ones((3, 4), np.float32),
             attention=pd.DataFrame({"tile_id": [0, 1, 2], "attention": [0.2, 0.3, 0.5]}),

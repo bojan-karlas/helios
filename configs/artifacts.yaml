@@ -66,33 +66,27 @@ artifacts:
     - image_id
     - tile_id
     format: hdf5
-    path: tile_features/size_mm={size_mm}/model={model}/{image_id}/{image_id}.hdf5
-    role: features
+    path: features/size_mm={size_mm}/model={model}/{image_id}/{image_id}.hdf5
+    role: preprocessing
   tile_augmentation:
     title: Stain-Augmented Tiles
     key:
-    - method
-    - source
-    - target
     - size_mm
     - image_id
     - tile_id
     format: hdf5
-    path: tile_augmentation/method={method}/source={source}/target={target}/size_mm={size_mm}/{image_id}/{image_id}.hdf5
+    path: tiles/size_mm={size_mm}/{image_id}/{image_id}.hdf5
     role: preprocessing
   tile_augmentation_features:
     title: Stain-Augmented Tile Embeddings
     key:
-    - method
-    - source
-    - target
     - size_mm
     - model
     - image_id
     - tile_id
     format: hdf5
-    path: tile_augmentation_features/method={method}/source={source}/target={target}/size_mm={size_mm}/model={model}/{image_id}/{image_id}.hdf5
-    role: features
+    path: features/size_mm={size_mm}/model={model}/{image_id}/{image_id}.hdf5
+    role: preprocessing
   thumbnail:
     title: Slide Thumbnail
     key:

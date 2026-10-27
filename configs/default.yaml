@@ -8,7 +8,7 @@ fit:
   mil:
     aug_mode: replace
     aug_swap_prob: 0.5
-    augmentation_target: null
+    augmentations: null
     device: cuda
     dropout_rate: 0.1
     lambda_div: 0.01
@@ -75,6 +75,7 @@ prep:
     method: cyclegan
     model:
     - virchow2
+    output_dir: null
     size_mm:
     - 0.25
     source: null

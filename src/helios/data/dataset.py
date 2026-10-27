@@ -2,6 +2,7 @@
 
 A HELIOS dataset is, at minimum:
 
+* a ``dataset.yaml`` descriptor with required ``id`` and ``name`` strings,
 * a flat ``wsi/`` set of whole-slide images, and
 * a ``metadata/image_metadata.csv`` conforming to the data dictionary
   (one row per ``image_id``).
@@ -15,13 +16,36 @@ validation belongs to the config/datadict layer.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
 
 import pandas as pd
+import yaml
 
 IMAGE_ID = "image_id"
 WSI_SUFFIXES = (".svs", ".tiff", ".tif", ".ndpi")
+
+
+@dataclass(frozen=True)
+class DatasetDescriptor:
+    id: str
+    name: str
+    description: str | None = None
+
+    @classmethod
+    def load(cls, root: Path) -> DatasetDescriptor:
+        path = root / "dataset.yaml"
+        data = yaml.safe_load(path.read_text())
+        if not isinstance(data, dict):
+            raise ValueError(f"{path} must contain a dataset descriptor mapping.")
+        for key in ("id", "name"):
+            if not isinstance(data.get(key), str) or not data[key].strip():
+                raise ValueError(f"{path} requires a nonempty string '{key}'.")
+        description = data.get("description")
+        if description is not None and not isinstance(description, str):
+            raise ValueError(f"{path}: description must be a string.")
+        return cls(id=data["id"], name=data["name"], description=description)
 
 
 class Dataset:
@@ -42,9 +66,14 @@ class Dataset:
     def image_metadata_path(self) -> Path:
         return self.root / "metadata" / "image_metadata.csv"
 
+    @cached_property
+    def descriptor(self) -> DatasetDescriptor:
+        return DatasetDescriptor.load(self.root)
+
     # -- structural contract ---------------------------------------------------
     def check(self) -> None:
         """Light presence + schema checks; raises on a broken contract."""
+        _ = self.descriptor
         if not self.image_metadata_path.exists():
             raise FileNotFoundError(f"Missing image metadata: {self.image_metadata_path}")
         if not self.wsi_dir.exists():

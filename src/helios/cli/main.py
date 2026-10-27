@@ -15,12 +15,12 @@ from pathlib import Path
 import typer
 
 from helios.cli._common import (
-    FEATURES_ROOT,
     LOG_DIR,
     MAX_CPUS,
     MODELS_ROOT,
     PREPROCESSING_ROOT,
     RAY_ADDRESS,
+    REMOVED_FEATURES_ROOT,
     REMOVED_OUTPUT_ROOT,
     RESULTS_ROOT,
     RUN_TAG,
@@ -35,6 +35,50 @@ app = typer.Typer(add_completion=False, help="HELIOS computational-pathology pip
 app.add_typer(prep_app, name="prep")
 app.add_typer(fit_app, name="fit")
 app.add_typer(predict_app, name="predict")
+list_app = typer.Typer(help="Discover prepared artifacts.", add_completion=False)
+app.add_typer(list_app, name="list")
+
+
+@list_app.command("augmentations")
+def list_augmentations(
+    dataset: list[str] | None = typer.Option(None, "--dataset", help="Dataset roots or cohort YAML files."),
+    root: Path | None = typer.Option(None, "--root", help="Search an explicit augmentation storage directory."),
+    preprocessing_root: Path | None = PREPROCESSING_ROOT,
+) -> None:
+    """List saved definitions and available files, not a guarantee of completeness."""
+    import json
+
+    from helios.data.augmentation import Augmentation, discover_augmentations
+    from helios.data.resolver import StorageRoots
+    from helios.stages._runtime import cohort_store, resolve_datasets
+
+    if not dataset and root is None:
+        raise typer.BadParameter("Supply --dataset or --root.")
+    found: dict[Path, Augmentation] = {}
+    if root is not None:
+        found.update((a.root, a) for a in discover_augmentations(root))
+    if dataset:
+        roots = StorageRoots(preprocessing_root=preprocessing_root)
+        for ds in resolve_datasets(datasets_arg(dataset), roots=roots):
+            base = cohort_store(ds, roots).resolver.roots.for_role("preprocessing") / "augmentations"
+            if base.is_dir():
+                found.update((a.root, a) for a in discover_augmentations(base))
+            for path in ds.augmentations:
+                a = Augmentation.load(path)
+                found[a.root] = a
+    rows = []
+    for a in found.values():
+        features = {}
+        for partition in sorted((a.root / "features").glob("size_mm=*/model=*")):
+            features[str(partition.relative_to(a.root))] = len(list(partition.glob("*/*.hdf5")))
+        rows.append({
+            "path": str(a.root), "source_dataset_id": a.source_dataset_id,
+            "method": a.method, "parameters": a.parameters,
+            "checkpoint": str(a.checkpoint) if a.checkpoint is not None else None,
+            "tile_files": len(list((a.root / "tiles").glob("size_mm=*/*/*.hdf5"))),
+            "feature_files": features,
+        })
+    typer.echo(json.dumps(rows, indent=2))
 
 
 @app.command("report")
@@ -43,7 +87,7 @@ def report(
         ..., "--dataset", help="Cohort root(s) or cohort file(s) to report; repeatable or comma-separated."
     ),
     preprocessing_root: Path | None = PREPROCESSING_ROOT,
-    features_root: Path | None = FEATURES_ROOT,
+    removed_features_root: Path | None = REMOVED_FEATURES_ROOT,
     models_root: Path | None = MODELS_ROOT,
     results_root: Path | None = RESULTS_ROOT,
     log_dir: Path | None = LOG_DIR,
@@ -63,7 +107,7 @@ def report(
     from helios.stages.report import build_report
 
     roots = StorageRoots(
-        preprocessing_root=preprocessing_root, features_root=features_root,
+        preprocessing_root=preprocessing_root,
         models_root=models_root, results_root=results_root,
     )
     parallel = ParallelConfig(ray_address=ray_address, max_cpus=max_cpus)

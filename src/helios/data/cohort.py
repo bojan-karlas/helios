@@ -13,7 +13,6 @@ reused, and version-controlled. It is accepted anywhere ``--dataset`` is::
     datasets:
       - /data/COHORT1
       - source_root: ../cohorts/COHORT2
-        features_root: /feature-store/COHORT2
     filter: "path_stage in ['I', 'II']"   # optional pandas-query over image_metadata
 
 A bare path (``--dataset /data/COHORT1``) is just a single-root cohort with no
@@ -25,10 +24,9 @@ file's ``filter`` and an ad-hoc ``--filter`` both apply).
 """
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
 
 import yaml
 
@@ -38,40 +36,20 @@ COHORT_SUFFIXES = (".yaml", ".yml")
 
 
 @dataclass(frozen=True)
-class AugmentationSpec:
-    """One tile-augmentation specification attached to a dataset."""
-
-    method: str = "cyclegan"
-    source: str | None = None
-    target: str = ""
-    checkpoint: Path | None = None
-
-    def __post_init__(self) -> None:
-        if not self.method or not str(self.method).strip():
-            raise ValueError("Augmentation method must be a nonempty string.")
-        if not self.target or not str(self.target).strip():
-            raise ValueError("Augmentation target must be a nonempty string.")
-
-    def key_values(self) -> dict[str, Any]:
-        return {"method": self.method, "source": self.source, "target": self.target}
-
-
-@dataclass(frozen=True)
 class ResolvedDataset:
     """One physical dataset root plus the row filter selecting its population.
 
     The unit a stage iterates over: ``root`` locates the source on disk, ``where``
     is an optional pandas-``query`` over ``image_metadata`` restricting which
     images participate, and ``name`` (the root directory name) is the provenance
-    label stamped onto result tables. Optional preprocessing and feature roots
-    apply to both reading and writing this constituent's derived data.
+    label stamped onto result tables. An optional preprocessing root applies to
+    this constituent's derived data. Augmentations refer to prepared directories.
     """
 
     root: Path
     where: str | None = None
     preprocessing_root: Path | None = None
-    features_root: Path | None = None
-    augmentations: tuple[AugmentationSpec, ...] = ()
+    augmentations: tuple[Path, ...] = ()
     cohort_name: str | None = None
     cohort_file: Path | None = None
     splits_file: Path | None = None
@@ -112,52 +90,6 @@ def is_cohort_file(arg: str | Path | ResolvedDataset) -> bool:
         return False
     path = Path(arg)
     return path.suffix.lower() in COHORT_SUFFIXES and path.is_file()
-
-
-def _parse_augmentation(entry: object, base: Path, source_file: str | Path) -> AugmentationSpec:
-    if isinstance(entry, AugmentationSpec):
-        return entry
-    if isinstance(entry, str):
-        # Parse a compact string or bare target name (e.g. "COHORT1" or "source=A/target=B").
-        parts = [p.strip() for p in entry.split("/") if p.strip()]
-        if all("=" not in p for p in parts) and len(parts) == 1:
-            return AugmentationSpec(method="cyclegan", target=parts[0])
-        kv: dict[str, str] = {}
-        for part in parts:
-            if "=" not in part:
-                raise ValueError(f"Invalid augmentation spec {entry!r} in {source_file}.")
-            k, v = part.split("=", 1)
-            kv[k.strip()] = v.strip()
-        unknown = set(kv) - {"method", "source", "target", "checkpoint"}
-        if unknown:
-            raise ValueError(f"Unknown augmentation fields in {source_file}: {sorted(unknown)}")
-        ckpt = Path(kv["checkpoint"]) if "checkpoint" in kv else None
-        if ckpt is not None and not ckpt.is_absolute():
-            ckpt = base / ckpt
-        return AugmentationSpec(
-            method=kv.get("method", "cyclegan"),
-            source=kv.get("source"),
-            target=kv.get("target", ""),
-            checkpoint=ckpt,
-        )
-    if isinstance(entry, Mapping):
-        unknown = set(entry) - {"method", "source", "target", "checkpoint"}
-        if unknown:
-            raise ValueError(f"Unknown augmentation fields in {source_file}: {sorted(unknown)}")
-        raw_ckpt = entry.get("checkpoint")
-        ckpt = None
-        if raw_ckpt is not None:
-            if not isinstance(raw_ckpt, str) or not raw_ckpt.strip():
-                raise ValueError(f"Augmentation checkpoint in {source_file} must be a nonempty path string.")
-            p = Path(raw_ckpt)
-            ckpt = p if p.is_absolute() else base / p
-        return AugmentationSpec(
-            method=str(entry.get("method", "cyclegan")),
-            source=str(entry["source"]) if entry.get("source") is not None else None,
-            target=str(entry.get("target", "")),
-            checkpoint=ckpt,
-        )
-    raise ValueError(f"Augmentation entries in {source_file} must be mappings or strings.")
 
 
 def load_cohort_spec(path: str | Path) -> CohortSpec:
@@ -203,17 +135,25 @@ def load_cohort_spec(path: str | Path) -> CohortSpec:
                 )
             )
         elif isinstance(entry, dict):
-            unknown = set(entry) - {"source_root", "preprocessing_root", "features_root", "augmentations"}
+            if "features_root" in entry:
+                raise ValueError(
+                    "features_root has been removed; move embeddings to preprocessing_root/features "
+                    "and use preprocessing_root instead."
+                )
+            unknown = set(entry) - {"source_root", "preprocessing_root", "augmentations"}
             if unknown:
                 raise ValueError(f"Unknown dataset fields in {path}: {sorted(unknown)}")
-            raw_augs = entry.get("augmentations") or []
+            raw_augs = entry.get("augmentations", [])
             if not isinstance(raw_augs, list):
                 raise ValueError(f"Dataset 'augmentations' in {path} must be a list.")
-            augs = tuple(_parse_augmentation(a, base, path) for a in raw_augs)
+            if any(not isinstance(a, str) or not a.strip() for a in raw_augs):
+                raise ValueError(
+                    f"Dataset augmentations in {path} must be directory path strings, not transformation specs."
+                )
+            augs = tuple(dict.fromkeys(location(a) for a in raw_augs))
             resolved.append(ResolvedDataset(
                 root=location(entry.get("source_root")),
                 preprocessing_root=location(entry["preprocessing_root"]) if "preprocessing_root" in entry else None,
-                features_root=location(entry["features_root"]) if "features_root" in entry else None,
                 augmentations=augs,
                 cohort_name=cohort_name,
                 cohort_file=cohort_path,

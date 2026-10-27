@@ -66,10 +66,9 @@ def format_hive_subpath(params: Mapping[str, Any] | None) -> Path:
 
 @dataclass(frozen=True)
 class StorageRoots:
-    """Run overrides; dataset-local preprocessing and features stay independent."""
+    """Run overrides for the supported storage roles."""
 
     preprocessing_root: Path | None = None
-    features_root: Path | None = None
     models_root: Path | None = None
     results_root: Path | None = None
     splits_file: Path | None = None
@@ -81,12 +80,11 @@ class Roots:
 
     source_root: Path
     preprocessing_root: Path | None = None
-    features_root: Path | None = None
     models_root: Path | None = None
     results_root: Path | None = None
 
     def __post_init__(self) -> None:
-        for name in ("source_root", "preprocessing_root", "features_root", "models_root", "results_root"):
+        for name in ("source_root", "preprocessing_root", "models_root", "results_root"):
             value = getattr(self, name)
             if value is not None:
                 object.__setattr__(self, name, Path(value).absolute())
@@ -115,8 +113,6 @@ def render_path(template: str, keys: dict[str, Any], extra_hive: Mapping[str, An
     """
     rendered = template
     norm_keys = dict(keys)
-    if "target" in norm_keys and "method" not in norm_keys:
-        norm_keys["method"] = "cyclegan"
     for opt in OPTIONAL_KEYS:
         if norm_keys.get(opt) is None:
             rendered = re.sub(rf"{opt}=\{{{opt}\}}/", "", rendered)

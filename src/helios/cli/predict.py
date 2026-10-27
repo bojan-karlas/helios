@@ -13,12 +13,12 @@ from pathlib import Path
 import typer
 
 from helios.cli._common import (
-    FEATURES_ROOT,
     LOG_DIR,
     MAX_CPUS,
     MODELS_ROOT,
     PREPROCESSING_ROOT,
     RAY_ADDRESS,
+    REMOVED_FEATURES_ROOT,
     REMOVED_OUTPUT_ROOT,
     RESULTS_ROOT,
     RUN_TAG,
@@ -44,7 +44,7 @@ _FILTER = typer.Option(
 def mil(
     dataset: list[str] = _DATASET,
     preprocessing_root: Path | None = PREPROCESSING_ROOT,
-    features_root: Path | None = FEATURES_ROOT,
+    removed_features_root: Path | None = REMOVED_FEATURES_ROOT,
     models_root: Path | None = MODELS_ROOT,
     results_root: Path | None = RESULTS_ROOT,
     splits_file: Path | None = SPLITS_FILE,
@@ -67,7 +67,7 @@ def mil(
     from helios.stages.mil import predict_mil
 
     roots = StorageRoots(
-        preprocessing_root=preprocessing_root, features_root=features_root,
+        preprocessing_root=preprocessing_root,
         models_root=models_root, results_root=results_root,
         splits_file=splits_file,
     )
@@ -89,7 +89,7 @@ def mil(
 def concept(
     dataset: list[str] = _DATASET,
     preprocessing_root: Path | None = PREPROCESSING_ROOT,
-    features_root: Path | None = FEATURES_ROOT,
+    removed_features_root: Path | None = REMOVED_FEATURES_ROOT,
     models_root: Path | None = MODELS_ROOT,
     results_root: Path | None = RESULTS_ROOT,
     splits_file: Path | None = SPLITS_FILE,
@@ -109,7 +109,7 @@ def concept(
     from helios.stages.concept import predict_concept
 
     roots = StorageRoots(
-        preprocessing_root=preprocessing_root, features_root=features_root,
+        preprocessing_root=preprocessing_root,
         models_root=models_root, results_root=results_root,
         splits_file=splits_file,
     )
@@ -130,7 +130,7 @@ def concept(
 def morphology(
     dataset: list[str] = _DATASET,
     preprocessing_root: Path | None = PREPROCESSING_ROOT,
-    features_root: Path | None = FEATURES_ROOT,
+    removed_features_root: Path | None = REMOVED_FEATURES_ROOT,
     models_root: Path | None = MODELS_ROOT,
     results_root: Path | None = RESULTS_ROOT,
     splits_file: Path | None = SPLITS_FILE,
@@ -150,7 +150,7 @@ def morphology(
     from helios.stages.morphology import predict_morphology
 
     roots = StorageRoots(
-        preprocessing_root=preprocessing_root, features_root=features_root,
+        preprocessing_root=preprocessing_root,
         models_root=models_root, results_root=results_root,
         splits_file=splits_file,
     )
@@ -171,7 +171,7 @@ def morphology(
 def risk(
     dataset: list[str] = _DATASET,
     preprocessing_root: Path | None = PREPROCESSING_ROOT,
-    features_root: Path | None = FEATURES_ROOT,
+    removed_features_root: Path | None = REMOVED_FEATURES_ROOT,
     models_root: Path | None = MODELS_ROOT,
     results_root: Path | None = RESULTS_ROOT,
     splits_file: Path | None = SPLITS_FILE,
@@ -194,7 +194,7 @@ def risk(
     from helios.stages.risk import predict_risk
 
     roots = StorageRoots(
-        preprocessing_root=preprocessing_root, features_root=features_root,
+        preprocessing_root=preprocessing_root,
         models_root=models_root, results_root=results_root,
         splits_file=splits_file,
     )

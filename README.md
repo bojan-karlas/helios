@@ -194,15 +194,59 @@ HELIOS resolves that target to
 persistent/shared storage. Multiple targets and
 explicit checkpoints are comma-separated and positional: the first checkpoint
 belongs to the first target. Target names are user-defined, not built into
-HELIOS. To use one target's augmented embeddings during MIL training:
+HELIOS. Preparation writes tiles and embeddings side by side under
+`<preprocessing_root>/augmentations/method=cyclegan/target=lab-b/`.
+To use those prepared embeddings during MIL training:
 
 ```bash
 helios fit mil \
   --dataset /data/my_cohort \
   --model virchow2 \
-  --augmentation-target lab-b \
+  --augmentation /data/my_cohort/preprocessing/augmentations/method=cyclegan/target=lab-b \
   --aug-swap-prob 0.5
 ```
+
+Use `prep augment --output-dir /prepared/my_augmentation` to choose another
+directory (one dataset and one explicit target). Fit treats this as a directory
+reference; it does not interpret `method=...` or other directory names.
+
+Each prepared directory contains:
+
+```text
+augmentation.yaml
+tiles/size_mm=0.25/<image_id>/<image_id>.hdf5
+features/size_mm=0.25/model=virchow2/<image_id>/<image_id>.hdf5
+```
+
+The saved definition records `source_dataset_id`, `method`, `parameters`, and
+the checkpoint path. No opaque variant identifier or checkpoint hash is required.
+Existing files are skipped unless `--force` is supplied. Reusing an output
+directory with a different checkpoint/settings prints a warning but is allowed;
+avoiding mixed old/new outputs is the user's responsibility. `--force` overwrites
+the requested slides, sizes, and models only, not every file in the directory.
+The saved definition reflects the most recently requested settings, not a
+per-file history of checkpoint versions.
+
+Discover saved directories and available tile/feature file counts with:
+
+```bash
+helios list augmentations --dataset /data/my_cohort
+helios list augmentations --root /prepared
+```
+
+Counts describe availability, not completeness. Repeat `fit mil --augmentation`
+to select multiple directories. Explicit CLI selections replace YAML selections
+for the invocation; `--no-augmentations` disables them. In CLI-based pooling,
+each directory is paired by its `source_dataset_id` with exactly one supplied
+dataset's descriptor. Unmatched/ambiguous associations fail; YAML-attached paths
+must also agree with their dataset's ID.
+
+Fit errors on missing features; it never runs prep automatically, even with
+`--force`. It checks tile counts, embedding widths, tile IDs/order, and coordinates
+against the original features before training. Augmented tiles may be deleted
+once features exist. Rebuilding missing features from cached augmented tiles
+requires the saved alignment metadata. Selected legacy embeddings without
+alignment metadata must be regenerated.
 
 The checkpoint is loaded with the upstream 8-level `unet_256` architecture,
 instance normalization, RGB input/output, and strict state-dict validation.
@@ -236,10 +280,11 @@ helios report --dataset /data/my_cohort
 
 ### Assembling a cohort
 
-A cohort is just a directory with the slides and a metadata table:
+A physical dataset is a directory with a descriptor, slides, and metadata:
 
 ```
 my_cohort/
+  dataset.yaml                          # physical dataset identity and display name
   wsi/                                  # one slide per image_id
     DEMO-SKCM-P00001-S01-B1-I1.svs      # .svs / .tiff / .tif / .ndpi
     DEMO-SKCM-P00002-S01-B1-I1.svs
@@ -247,6 +292,22 @@ my_cohort/
   metadata/
     image_metadata.csv                  # one row per image_id
 ```
+
+The descriptor has required nonempty `id` and `name` strings and an optional
+`description`:
+
+```yaml
+id: example_dataset
+name: "Example Dataset"
+description: "Optional additional context."
+```
+
+The ID is an opaque string, not a hierarchy or path. It associates augmentations
+with their physical source dataset and stays unchanged when the directory moves.
+Display names need not be unique. A logical cohort selects/combines physical
+datasets; its name is separate from their IDs. Existing original-only stage
+calls remain usable without a descriptor; dataset checks and augmentation
+preparation/selection require it.
 
 `image_metadata.csv` needs, at minimum:
 
@@ -271,7 +332,7 @@ see [`tests/fixtures.py`](tests/fixtures.py) (`make_cohort`).
 
 ## The pipeline at a glance
 
-The CLI surface is 16 commands across the four verbs. The whole tree is
+The CLI includes the four pipeline verbs and artifact discovery. The whole tree is
 browsable live with `helios --help` (and `helios <verb> --help`,
 `helios <verb> <noun> --help`):
 
@@ -281,6 +342,7 @@ browsable live with `helios --help` (and `helios <verb> --help`,
 | `fit` | `mil`, `concept`, `morphology`, `risk` |
 | `predict` | `mil`, `concept`, `morphology`, `risk` |
 | `report` | *(single command)* |
+| `list` | `augmentations` |
 
 Bare `helios prep --dataset ...` runs every prep noun in order -- handy for
 prepping a fresh cohort end-to-end.
@@ -305,13 +367,12 @@ Artifacts are grouped by storage role, independently of execution order:
 | Role | Contents | Default root | Explicit `--<role>-root PATH` |
 | --- | --- | --- | --- |
 | `source` | Fixed WSI files and image metadata | `<source_root>` | `<source_root>` |
-| `preprocessing` | Tiles, augmented tiles, tile metadata, CV splits, masks, thumbnails, cells, cellular features | `<source_root>/preprocessing` | `PATH` (per dataset) |
-| `features` | Original and augmented foundation-model tile embeddings | `<source_root>/features` | `PATH` (per dataset) |
+| `preprocessing` | Tiles, augmented tiles, tile metadata, CV splits, masks, thumbnails, cells, cellular features, tile embeddings | `<source_root>/preprocessing` | `PATH` (per dataset) |
 | `models` | Fitted model bundles (`config.yaml` + `cohort.yaml` provenance) | `<source_root>/models` | `PATH` (shared across cohort) |
 | `results` | Stage-organized MIL outputs, predictions, risk scores, reports | `<source_root>/results` | `PATH/<cohort>` (per logical cohort) |
 
 When role flags are omitted on a single dataset, derived artifacts live under
-`<source_root>/{preprocessing,features,models,results}/...`. When explicit role
+`<source_root>/{preprocessing,models,results}/...`. When explicit role
 roots are supplied, `--models-root /runs/exp1/models` writes
 `/runs/exp1/models/<stage>/...` and `--results-root /runs/exp1/results` scopes
 each evaluated cohort under `/runs/exp1/results/<cohort>/<stage>/...`:
@@ -336,6 +397,17 @@ worker launch scripts. Python stages accept `parallel=ParallelConfig(...)`.
 
 `--output-root` has been removed and reports a migration error. Python stages
 accept `roots=StorageRoots(...)` instead of `output_root=...`.
+`--features-root` has also been removed; tile embeddings now live under the
+preprocessing root, so use `--preprocessing-root` to relocate them.
+
+Existing embeddings are not moved automatically: relocate
+`<old_features_root>/tile_features/` to `<preprocessing_root>/features/`.
+The old `tile_augmentation/` and `tile_augmentation_features/` trees must be
+re-prepared in the directory-based layout to retain tile alignment metadata.
+Replace cohort `features_root` fields with a common `preprocessing_root`, and
+replace augmentation transformation mappings with prepared directory paths.
+The removed `--augmentation-target` / `augmentation_target` setting reports
+migration guidance instead of selecting a potentially different artifact.
 
 ### Named, versioned cohorts
 
@@ -363,21 +435,22 @@ name: TRAIN_COHORT
 datasets:
   - source_root: /data/COHORT1
     preprocessing_root: /data/COHORT1/preprocessing
-    features_root: /feature-store/COHORT1
     augmentations:
-      - method: cyclegan
-        source: COHORT1
-        target: COHORT2
-        checkpoint: /models/c1_to_c2/latest_net_G_A.pth
+      - /prepared/example_translation
   - source_root: /data/COHORT2
 ```
 
-Omitted preprocessing and feature roots default to `<source_root>/preprocessing`
-and `<source_root>/features`. All relative paths resolve against the YAML file. A cohort creates no extra
-preprocessing or feature store: extraction writes into each constituent's
-roots, and training reads from them. Single-dataset CLI overrides take
-precedence over manifest values; for unions, set those roots per entry rather
-than using `--preprocessing-root` or `--features-root`.
+An omitted preprocessing root defaults to `<source_root>/preprocessing`. Feature
+artifacts are stored beneath that root. All relative paths resolve against the
+YAML file. A cohort creates no extra preprocessing store: extraction writes into
+each constituent's root, and training reads from it. Single-dataset CLI
+overrides take precedence over manifest values; for unions, set roots per entry
+rather than using `--preprocessing-root`.
+
+Augmentations are directory paths, not transformation definitions. `prep augment`
+without explicit targets can prepare/resume these saved definitions using their
+recorded settings and checkpoint paths. Use explicit prep options to create a
+new definition.
 
 Pooled training requires an explicit `--models-root`. Use that same model base
 for prediction, including on a different dataset. With a shared `--results-root`,

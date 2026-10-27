@@ -7,15 +7,16 @@ whole-image scores to a single shipped value per image.
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Literal
 
 import pandas as pd
 
 from helios.components.features import FEATURE_MODELS
 from helios.components.mil import SlideFeatureRef, infer_mil, reduce_whole_image_risk, train_mil
+from helios.data.augmentation import Augmentation, select_augmentations, validate_feature_alignment
 from helios.progress import DEFAULT_PROGRESS, Progress
 from helios.stages._runtime import (
-    AugmentationSpec,
     DatasetArgs,
     ParallelConfig,
     StorageRoots,
@@ -34,7 +35,6 @@ from helios.stages._runtime import (
 DEFAULT_SIZE_MM: float = 0.25
 DEFAULT_MODEL: str = "virchow2"
 DEFAULT_TARGET: str = "disease_pfs_recurrence_5yfu"
-DEFAULT_AUGMENTATION_TARGET: str | None = None
 DEFAULT_AUG_SWAP_PROB: float = 0.5
 DEFAULT_AUG_MODE: Literal["replace", "augment"] = "replace"
 DEFAULT_N_BRANCHES: int = 4
@@ -58,7 +58,7 @@ def fit_mil(
     size_mm: float = DEFAULT_SIZE_MM,
     model: str = DEFAULT_MODEL,
     target: str = DEFAULT_TARGET,
-    augmentation_target: str | None = DEFAULT_AUGMENTATION_TARGET,
+    augmentations: list[str] | None = None,
     aug_swap_prob: float = DEFAULT_AUG_SWAP_PROB,
     aug_mode: Literal["replace", "augment"] = DEFAULT_AUG_MODE,
     n_branches: int = DEFAULT_N_BRANCHES,
@@ -85,33 +85,32 @@ def fit_mil(
     if model not in FEATURE_MODELS:
         raise ValueError(f"Unknown feature model {model!r}. Available: {list(FEATURE_MODELS)}.")
 
-    resolved = resolve_datasets(datasets, roots=roots, require_models=True)
+    resolved = select_augmentations(
+        resolve_datasets(datasets, roots=roots, require_models=True), augmentations,
+    )
     stores = [cohort_store(ds, roots) for ds in resolved]
     out = stores[0]
     folds = folds_across(resolved, roots)
 
-    for fold in progress.task(folds, desc="fit mil"):
+    slides_by_fold: dict[int | None, list[SlideFeatureRef]] = {}
+    validated: set[tuple[Path, Path]] = set()
+    for fold in folds:
         if not force and out.exists("model_mil", fold=fold):
             progress.log(f"skip model_mil fold={fold} (exists)")
             continue
         slides: list[SlideFeatureRef] = []
         for ds, store in zip(resolved, stores, strict=True):
             labels = ds.dataset().image_metadata.set_index("image_id")
-            aug_specs = (
-                (AugmentationSpec(method="cyclegan", target=augmentation_target),)
-                if augmentation_target is not None
-                else ds.augmentations
-            )
+            aug_stores = [Augmentation.load(path).store() for path in ds.augmentations]
             for image_id in train_ids(ds, fold, where=ds.where, roots=roots):
                 aug_paths = tuple(
-                    store.path(
+                    aug_store.path(
                         "tile_augmentation_features",
-                        **spec.key_values(),
                         size_mm=size_mm,
                         model=model,
                         image_id=image_id,
                     )
-                    for spec in aug_specs
+                    for aug_store in aug_stores
                 )
                 feat_path = store.path(
                     "tile_features", size_mm=size_mm, model=model, image_id=image_id
@@ -125,16 +124,22 @@ def fit_mil(
                         raise FileNotFoundError(
                             f"Missing tile_augmentation_features for training slide {image_id!r} in {ds.name}: {ap}"
                         )
+                    pair = (feat_path, ap)
+                    if pair not in validated:
+                        validate_feature_alignment(feat_path, ap)
+                        validated.add(pair)
                 slides.append(
                     SlideFeatureRef(
                         image_id=image_id,
                         features_path=feat_path,
                         background_path=store.path("tile_background", size_mm=size_mm, image_id=image_id),
-                        aug_features_path=aug_paths[0] if len(aug_paths) == 1 else None,
                         aug_features_paths=aug_paths,
                         label=_label(labels, image_id, target),
                     )
                 )
+        slides_by_fold[fold] = slides
+    for fold in progress.task(list(slides_by_fold), desc="fit mil"):
+        slides = slides_by_fold[fold]
         bundle = train_mil(
             slides,
             aug_swap_prob=aug_swap_prob,
@@ -159,7 +164,7 @@ def fit_mil(
                 "size_mm": size_mm,
                 "model": model,
                 "target": target,
-                "augmentation_target": augmentation_target,
+                "augmentations": None,
                 "aug_swap_prob": aug_swap_prob,
                 "aug_mode": aug_mode,
                 "n_branches": n_branches,

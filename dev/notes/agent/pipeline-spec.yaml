@@ -38,14 +38,13 @@
 #                  An empty key ([]) means a singleton artifact (e.g. a model bundle).
 #   - path:        a RELATIVE filepath TEMPLATE (str) with `{field}` placeholders drawn from `key`.
 #                  It is relative to the artifact's role root, resolved at runtime.
-#   - role:        source, preprocessing, features, models, or results.
+#   - role:       source, preprocessing, models, or results.
 #                  source: fixed WSIs and image metadata.
-#                  preprocessing: reusable generated image/data preparation, including cv_splits.
-#                  features: reusable foundation embeddings (original and augmented).
+#                  preprocessing: reusable generated image/data preparation and foundation embeddings.
 #                  models: fitted bundles, shared across a pooled training run.
 #                  results: analysis products, including cellular_features, MIL outputs, scores and reports.
 #                  Roles group storage; they do not impose execution order. Results may feed model training.
-#                  Source/preprocessing/features are constituent-local in cohort unions. Omitted derived
+#                  Source/preprocessing are constituent-local in cohort unions. Omitted derived
 #                  roots default to each dataset directory. An explicit models_root is run-wide.
 #                  An explicit results_root uses <results_root>/<dataset-directory-name>/<path>, even
 #                  for single-dataset calls, so downstream reads do not depend on union membership.
@@ -54,7 +53,7 @@
 #                  combination of those fields); key fields NOT in `path` become the ROWS within each file.
 #                  Hive-style `field={field}/` segments are used for partition-like dirs; the final segment
 #                  is the file (with extension). e.g. tile_features key=[size_mm,model,image_id,tile_id]
-#                  path=preprocessing/tile_features/size_mm={size_mm}/{model}/{image_id}/{image_id}.hdf5
+#                  path=features/size_mm={size_mm}/model={model}/{image_id}/{image_id}.hdf5
 #                  -> one file per (size_mm,model,image_id) with one row per tile_id.
 #                  NOTE: `tile_id` is the positional index of a tile's row within its (row-oriented) file;
 #                        the grid coords `tile_row`, `tile_col` are available as columns alongside it.
@@ -164,11 +163,11 @@ artifacts:
       non-tissue tiles (NOT used to gate feature extraction).
 
   - id: tile_features
-    role: features
+    role: preprocessing
     title: Tile (Patch) Embeddings
     key: [size_mm, model, image_id, tile_id]
     format: hdf5
-    path: tile_features/size_mm={size_mm}/model={model}/{image_id}/{image_id}.hdf5
+    path: features/size_mm={size_mm}/model={model}/{image_id}/{image_id}.hdf5
     description: |
       Foundation-model embedding per tile. model in {virchow2,uni,uni2,conch,conch1.5,chief,
       ctranspath,dino,gigapath,musk,phikon2,resnet-50}.
@@ -176,18 +175,22 @@ artifacts:
   - id: tile_augmentation
     role: preprocessing
     title: Stain-Augmented Tiles
-    key: [method, source, target, size_mm, image_id, tile_id]
+    key: [size_mm, image_id, tile_id]
     format: hdf5
-    path: tile_augmentation/method={method}/source={source}/target={target}/size_mm={size_mm}/{image_id}/{image_id}.hdf5
-    description: Stain-augmented tiles under canonical Hive method/parameter directories.
+    path: tiles/size_mm={size_mm}/{image_id}/{image_id}.hdf5
+    description: |
+      Augmented tiles with tile_ids and coords, resolved relative to a prepared augmentation directory.
+      augmentation.yaml records source_dataset_id and generation settings; directory names are not parsed.
 
   - id: tile_augmentation_features
-    role: features
+    role: preprocessing
     title: Stain-Augmented Tile Embeddings
-    key: [method, source, target, size_mm, model, image_id, tile_id]
+    key: [size_mm, model, image_id, tile_id]
     format: hdf5
-    path: tile_augmentation_features/method={method}/source={source}/target={target}/size_mm={size_mm}/model={model}/{image_id}/{image_id}.hdf5
-    description: Foundation embeddings computed on stain-augmented tiles.
+    path: features/size_mm={size_mm}/model={model}/{image_id}/{image_id}.hdf5
+    description: |
+      Foundation embeddings with tile_ids and coords, resolved relative to a prepared augmentation directory.
+      The preprocessing role includes both original and augmented embeddings.
 
   - id: thumbnail
     role: preprocessing

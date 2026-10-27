@@ -9,12 +9,14 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
+import yaml
 
 
 def make_cohort(root: str | Path, n_images: int = 4, n_patients: int = 2) -> Path:
     root = Path(root)
     (root / "wsi").mkdir(parents=True, exist_ok=True)
     (root / "metadata").mkdir(parents=True, exist_ok=True)
+    (root / "dataset.yaml").write_text(yaml.safe_dump({"id": root.name, "name": f"Example {root.name}"}))
 
     rows = []
     for i in range(n_images):

@@ -50,6 +50,11 @@ def load_stage_params(
 
     if config_path is not None:
         user = _load_yaml(config_path)
+        if verb == "fit" and noun == "mil" and "augmentation_target" in user.get(verb, {}).get(noun, {}):
+            raise ValueError(
+                "augmentation_target has been removed. Use augmentations: [directory, ...] "
+                "to select prepared augmentation directories."
+            )
         params.update(user.get(verb, {}).get(noun, {}))
 
     if overrides:

@@ -19,13 +19,20 @@ from helios.progress.reporter import ProgressReporter
 def reject_output_root(value: Path | None) -> None:
     if value is not None:
         raise typer.BadParameter(
-            "--output-root has been removed. Use --preprocessing-root, --features-root, "
-            "--models-root, and/or --results-root to select artifact destinations."
+            "--output-root has been removed. Use --preprocessing-root, --models-root, "
+            "and/or --results-root to select artifact destinations."
+        )
+
+
+def reject_features_root(value: Path | None) -> None:
+    if value is not None:
+        raise typer.BadParameter(
+            "--features-root has been removed. Feature artifacts are stored under the preprocessing root; "
+            "use --preprocessing-root to select their destination."
         )
 
 
 PREPROCESSING_ROOT = typer.Option(None, "--preprocessing-root", help="Preprocessing base; single dataset only.")
-FEATURES_ROOT = typer.Option(None, "--features-root", help="Feature-store base; single dataset only.")
 MODELS_ROOT = typer.Option(None, "--models-root", help="Shared model base; required for pooled training.")
 RESULTS_ROOT = typer.Option(None, "--results-root", help="Results base; artifacts are grouped by cohort name.")
 SPLITS_FILE = typer.Option(None, "--splits-file", help="Explicit cross-validation splits CSV path.")
@@ -36,6 +43,7 @@ MAX_CPUS = typer.Option(
     None, "--max-cpus", help="CPU budget; values above 1 start a local Ray runtime (default: serial, single process)."
 )
 REMOVED_OUTPUT_ROOT = typer.Option(None, "--output-root", hidden=True, callback=reject_output_root)
+REMOVED_FEATURES_ROOT = typer.Option(None, "--features-root", hidden=True, callback=reject_features_root)
 
 
 def csv(value: str | None) -> list[str] | None:

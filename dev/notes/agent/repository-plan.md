@@ -540,3 +540,40 @@ reports/
   - Parallel fold tasks for `fit` stages (1 GPU per fold for `fit mil`, CPU fold tasks for `concept`, `morphology`, `risk`).
 - **Failures:** Slide tasks continue on remaining slides when one fails, log tracebacks, and exit nonzero at stage end.
 - **SLURM scripts:** Provide both fixed multi-node allocation (`ray-cluster.sbatch`) and dynamic job-array worker pool (`ray-array-workers.sbatch`).
+
+## 2026-10-26: Dataset descriptors and prepared augmentation directories
+
+This amendment supersedes the earlier features storage role and augmentation
+production/selection contract. Other runtime/design concerns remain separate.
+
+- A physical dataset has `dataset.yaml` with required nonempty `id` and `name`
+  strings and optional `description`. IDs have no hierarchy or path semantics.
+  Directory moves do not change identity; logical cohort names remain separate.
+  Original-only stage calls remain compatible without descriptors, but dataset
+  checks and augmentation preparation/selection require them.
+- Four storage roles remain: source, preprocessing, models, results. Embeddings
+  belong to preprocessing under `features/size_mm=.../model=.../`. The removed
+  features-root CLI/YAML options report migration errors; files are not moved
+  or selected from the legacy layout automatically.
+- Augmentations are prepared directories containing `augmentation.yaml`, tiles,
+  and features side by side. The definition records `source_dataset_id`, method,
+  parameters, and checkpoint location. Readable partition names organize output;
+  fit does not parse them or reconstruct transformation settings.
+- Prep retains transformation-specific options and supports an explicit output
+  directory for one dataset/target. Without explicit targets it can resume the
+  saved definitions selected per dataset in cohort YAML.
+- Fit takes repeatable augmentation directory paths, pairs them by dataset ID
+  even for CLI pooling, and rejects absent/ambiguous ownership. YAML can attach
+  paths directly to constituents. Relative YAML paths are YAML-file-relative.
+  CLI paths replace YAML selections; an explicit disable selects original-only
+  training. Effective selections are preserved in bundle cohort provenance.
+- Fit requires prepared features, not retained augmented tiles. It validates
+  shapes, embedding widths, tile IDs/order, and coordinates before training.
+  It does not generate missing prerequisites; force means retrain, not prepare.
+  Prep retains alignment metadata with both augmented tiles and embeddings.
+- Discovery lists saved directories and available tile/feature file counts,
+  without claiming that every required artifact exists.
+- Checkpoint/content hashing and mandatory settings-conflict enforcement are
+  intentionally absent. Reuse with changed settings warns but is permitted.
+  Existing files skip unless forced; force affects only the requested units.
+  Preventing mixed outputs when reusing directories is the user's responsibility.

@@ -19,14 +19,16 @@ from helios.stages._runtime import cohort_store, resolve_datasets
 
 def test_independent_roots_keep_source_unchanged(tmp_path: Path) -> None:
     source = tmp_path / "cohort"
-    output = tmp_path / "features"
-    store = ArtifactStore(Resolver(Roots(source_root=source, features_root=output)))
+    output = tmp_path / "preprocessing"
+    store = ArtifactStore(Resolver(Roots(source_root=source, preprocessing_root=output)))
 
     store.write("tile_features", {"features": np.zeros((2, 4))}, size_mm=0.25, model="virchow2", image_id="I1")
 
     # Derived artifact lands under the output root, not the source cohort.
-    assert (output / "tile_features").exists()
-    assert not (source / "features").exists()
+    assert (
+        output / "features/size_mm=0.25/model=virchow2/I1/I1.hdf5"
+    ).exists()
+    assert not (source / "preprocessing").exists()
     assert store.exists("tile_features", size_mm=0.25, model="virchow2", image_id="I1")
 
 
@@ -34,16 +36,16 @@ def test_role_defaults_are_in_place(tmp_path: Path) -> None:
     roots = Roots.single(tmp_path)
     assert roots.for_role("source") == tmp_path
     assert roots.for_role("preprocessing") == tmp_path / "preprocessing"
-    assert roots.for_role("features") == tmp_path / "features"
     assert roots.for_role("models") == tmp_path / "models"
     assert roots.for_role("results") == tmp_path / "results"
+    with pytest.raises(ValueError, match="storage role"):
+        storage_role("features")
 
 
 def test_all_artifacts_resolve_under_their_declared_roots(tmp_path: Path) -> None:
     roots = Roots(
         source_root=tmp_path / "source",
         preprocessing_root=tmp_path / "pre",
-        features_root=tmp_path / "features",
         models_root=tmp_path / "models",
         results_root=tmp_path / "results",
     )
@@ -53,7 +55,14 @@ def test_all_artifacts_resolve_under_their_declared_roots(tmp_path: Path) -> Non
         assert resolver.path(artifact.id, **keys).is_relative_to(roots.for_role(artifact.role))
     assert resolver.role("cv_splits") == "preprocessing"
     assert resolver.role("tile_augmentation") == "preprocessing"
-    assert resolver.role("tile_augmentation_features") == "features"
+    assert resolver.role("tile_features") == "preprocessing"
+    assert resolver.role("tile_augmentation_features") == "preprocessing"
+    assert resolver.path(
+        "tile_augmentation", size_mm=0.25, image_id="I1"
+    ) == tmp_path / "pre/tiles/size_mm=0.25/I1/I1.hdf5"
+    assert resolver.path(
+        "tile_augmentation_features", size_mm=0.25, model="uni", image_id="I1"
+    ) == tmp_path / "pre/features/size_mm=0.25/model=uni/I1/I1.hdf5"
     assert resolver.role("aligned_slide_embedding") == "results"
     assert resolver.role("cellular_features") == "preprocessing"
     assert resolver.role("model_mil") == "models"
@@ -62,15 +71,13 @@ def test_all_artifacts_resolve_under_their_declared_roots(tmp_path: Path) -> Non
 
 
 def test_constituent_roots_and_single_dataset_overrides(tmp_path: Path) -> None:
-    ds = ResolvedDataset(tmp_path / "A", preprocessing_root=tmp_path / "pre-A", features_root=tmp_path / "feat-A")
+    ds = ResolvedDataset(tmp_path / "A", preprocessing_root=tmp_path / "pre-A")
     defaults = cohort_store(ds).resolver.roots
     assert defaults.for_role("preprocessing") == ds.preprocessing_root
-    assert defaults.for_role("features") == ds.features_root
-    overrides = StorageRoots(preprocessing_root=tmp_path / "pre", features_root=tmp_path / "feat")
+    overrides = StorageRoots(preprocessing_root=tmp_path / "pre")
     configured = cohort_store(ds, overrides).resolver.roots
     assert configured.for_role("source") == ds.root
     assert configured.for_role("preprocessing") == overrides.preprocessing_root
-    assert configured.for_role("features") == overrides.features_root
 
 
 def test_results_location_is_independent_of_union_membership(tmp_path: Path) -> None:
@@ -93,9 +100,8 @@ def test_ambiguous_union_roots_fail_before_io(tmp_path: Path) -> None:
     datasets = [tmp_path / "A", tmp_path / "B"]
     with pytest.raises(ValueError, match="Pooled training"):
         resolve_datasets(datasets, require_models=True)
-    for roots in (StorageRoots(features_root=tmp_path), StorageRoots(preprocessing_root=tmp_path)):
-        with pytest.raises(ValueError, match="per dataset"):
-            resolve_datasets(datasets, roots=roots)
+    with pytest.raises(ValueError, match="per dataset"):
+        resolve_datasets(datasets, roots=StorageRoots(preprocessing_root=tmp_path))
     with pytest.raises(ValueError, match="distinct"):
         resolve_datasets([tmp_path / "one/A", tmp_path / "two/A"], roots=StorageRoots(results_root=tmp_path))
     assert not (tmp_path / "A").exists()
@@ -117,6 +123,13 @@ def test_path_enables_lazy_hdf5_subset_read(tmp_path: Path) -> None:
         subset = dset[10:13]  # read just 3 rows
     assert subset.shape == (3, 4)
     np.testing.assert_array_equal(subset, tiles[10:13])
+
+
+def test_target_does_not_supply_implicit_method() -> None:
+    from helios.data.resolver import render_path
+
+    with pytest.raises(KeyError, match="Missing key values"):
+        render_path("method={method}/target={target}", {"target": "lab"})
 
 
 def test_scan_hive_parses_key_value_dirs_and_skips_parts(tmp_path: Path) -> None:
@@ -153,9 +166,7 @@ def test_union_cohort_rejects_duplicate_image_ids_and_augments_per_dataset(tmp_p
                 "datasets": [
                     {
                         "source_root": str(c1),
-                        "augmentations": [
-                            {"method": "cyclegan", "source": "COHORT1", "target": "COHORT2"}
-                        ],
+                        "augmentations": ["prepared"],
                     },
                     {"source_root": str(c2)},
                 ],
@@ -163,11 +174,7 @@ def test_union_cohort_rejects_duplicate_image_ids_and_augments_per_dataset(tmp_p
         )
     )
     spec = load_cohort_spec(manifest)
-    assert spec.datasets[0].augmentations[0].key_values() == {
-        "method": "cyclegan",
-        "source": "COHORT1",
-        "target": "COHORT2",
-    }
+    assert spec.datasets[0].augmentations == (tmp_path / "prepared",)
     assert spec.splits_file == tmp_path / "union.splits.csv"
     with pytest.raises(ValueError, match="duplicate image_ids"):
         resolve_datasets([manifest], roots=StorageRoots(models_root=tmp_path / "models"))

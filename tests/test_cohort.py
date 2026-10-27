@@ -95,16 +95,15 @@ def test_extended_entries_preserve_constituent_storage_and_filters(tmp_path: Pat
         "name": "union",
         "filter": "a == 1",
         "datasets": [
-            {"source_root": "A", "preprocessing_root": "pre/A", "features_root": "/features/A"},
+            {"source_root": "A", "preprocessing_root": "pre/A"},
             "B",
         ],
     }))
     a, b = resolve_datasets([path], where="b == 2")
     assert a.root == tmp_path / "A"
     assert a.preprocessing_root == tmp_path / "pre/A"
-    assert a.features_root == Path("/features/A")
     assert b.root == tmp_path / "B"
-    assert b.preprocessing_root is None and b.features_root is None
+    assert b.preprocessing_root is None
     assert a.where == b.where == "(a == 1) and (b == 2)"
     assert resolve_datasets([a, b]) == [a, b]
 
@@ -144,14 +143,12 @@ def test_cli_forwards_storage_roots_to_every_stage(monkeypatch, tmp_path: Path) 
 
     roots = StorageRoots(
         preprocessing_root=tmp_path / "pre",
-        features_root=tmp_path / "features",
         models_root=tmp_path / "models",
         results_root=tmp_path / "results",
     )
     options = [
         "--dataset", str(tmp_path / "source"),
         "--preprocessing-root", str(roots.preprocessing_root),
-        "--features-root", str(roots.features_root),
         "--models-root", str(roots.models_root),
         "--results-root", str(roots.results_root),
     ]

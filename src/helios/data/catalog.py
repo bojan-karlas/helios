@@ -18,7 +18,7 @@ from typing import Literal, cast, get_args
 
 import yaml
 
-StorageRole = Literal["source", "preprocessing", "features", "models", "results"]
+StorageRole = Literal["source", "preprocessing", "models", "results"]
 
 
 def storage_role(value: object) -> StorageRole:
