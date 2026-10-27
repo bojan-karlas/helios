@@ -61,6 +61,7 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
 
@@ -377,6 +378,7 @@ class MilAttentionModel(Model):
         return net
 
     def fit(self, inputs: list[SlideFeatureRef], **params: Any) -> MilAttentionModel:
+        _inference_net.cache_clear()
         slides = inputs
         if not slides:
             raise ValueError("train_mil requires at least one training slide.")
@@ -453,8 +455,7 @@ class MilAttentionModel(Model):
         tile_gradients[N], slide_embedding[128], slide_embedding_grad[128])``.
         """
         dev = torch.device(_resolve_device(device or self.device))
-        net = self._build_net().to(dev)
-        net.eval()
+        net = _inference_net(self, str(dev))
         net.zero_grad()
         x = torch.from_numpy(np.asarray(inputs, dtype=np.float32)).to(dev)
         (
@@ -473,6 +474,13 @@ class MilAttentionModel(Model):
             slide_embedding.cpu().numpy(),
             slide_embedding_grad.cpu().numpy(),
         )
+
+
+@lru_cache(maxsize=1)
+def _inference_net(model: MilAttentionModel, device: str) -> _MultiBranchGatedAMIL:
+    net = model._build_net().to(device)
+    net.eval()
+    return net
 
 
 def train_mil(

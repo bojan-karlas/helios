@@ -7,23 +7,28 @@ to one row per image internally.
 """
 from __future__ import annotations
 
+from functools import partial
+
 import numpy as np
 import pandas as pd
 from numpy.typing import NDArray
 
 from helios.components.concepts import infer_concepts, train_concepts
+from helios.data.cohort import ResolvedDataset
 from helios.data.io import ArtifactStore
 from helios.progress import DEFAULT_PROGRESS, Progress
 from helios.stages._runtime import (
     DatasetArgs,
     ParallelConfig,
     StorageRoots,
+    WorkContext,
     build_bundle_metadata,
     cohort_store,
     folds_across,
     model_folds,
     read_splits,
     resolve_datasets,
+    run_work_units,
     select_image_ids,
     tag_dataset,
     train_ids,
@@ -51,38 +56,72 @@ def fit_concept(
     optionally restricts training to a metadata subpopulation.
     """
     resolved = resolve_datasets(datasets, roots=roots, require_models=True)
+    folds = folds_across(resolved, roots)
+    cfg = parallel or ParallelConfig()
+    run_work_units(
+        folds,
+        partial(
+            _fit_concept_fold,
+            resolved=resolved,
+            roots=roots,
+            n_bootstrap=n_bootstrap,
+            overwrite=overwrite,
+        ),
+        stage="fit concept",
+        unit_id=lambda fold: f"fold={fold}",
+        progress=progress,
+        parallel=cfg,
+        num_cpus=1.0,
+        continue_on_error=cfg.enabled,
+    )
+
+
+def _fit_concept_fold(
+    fold: int | None,
+    ctx: WorkContext,
+    *,
+    resolved: list[ResolvedDataset],
+    roots: StorageRoots | None,
+    n_bootstrap: int,
+    overwrite: bool,
+) -> str:
+    """Load, fit, and persist the concept bundle for one fold."""
     stores = [cohort_store(ds, roots) for ds in resolved]
     out = stores[0]
-    folds = folds_across(resolved, roots)
+    if not overwrite and out.exists("model_concepts", fold=fold):
+        ctx.progress.log(f"skip model_concepts fold={fold} (exists)")
+        return "skipped"
 
-    for fold in progress.task(folds, desc="fit concept"):
-        if not overwrite and out.exists("model_concepts", fold=fold):
-            progress.log(f"skip model_concepts fold={fold} (exists)")
-            continue
-        embeddings: list[NDArray[np.float32]] = []
-        labels: list[pd.DataFrame] = []
-        risk: list[pd.DataFrame] = []
-        for ds, store in zip(resolved, stores, strict=True):
-            meta = ds.dataset().image_metadata.set_index("image_id")
-            ids = [image_id for image_id in train_ids(ds, fold, where=ds.where, roots=roots) if image_id in meta.index]
-            embeddings.append(_stack_embeddings(store, fold, ids))
-            labels.append(meta.loc[ids].reset_index())
-            risk.append(_select_risk(store.read("whole_image_risk_score", fold=fold), ids))
-        bundle = train_concepts(
-            np.concatenate(embeddings, axis=0) if embeddings else np.empty((0, 0), np.float32),
-            pd.concat(labels, ignore_index=True),
-            pd.concat(risk, ignore_index=True),
-            n_bootstrap=n_bootstrap,
-        )
-        meta = build_bundle_metadata(
-            "concept",
-            {"n_bootstrap": n_bootstrap},
-            resolved,
-            roots,
-            fold=fold,
-        )
-        out.write("model_concepts", bundle, metadata=meta, fold=fold)
-        progress.log(f"wrote model_concepts fold={fold}")
+    embeddings: list[NDArray[np.float32]] = []
+    labels: list[pd.DataFrame] = []
+    risk: list[pd.DataFrame] = []
+    for ds, store in zip(resolved, stores, strict=True):
+        meta = ds.dataset().image_metadata.set_index("image_id")
+        ids = [
+            image_id
+            for image_id in train_ids(ds, fold, where=ds.where, roots=roots)
+            if image_id in meta.index
+        ]
+        embeddings.append(_stack_embeddings(store, fold, ids))
+        labels.append(meta.loc[ids].reset_index())
+        risk.append(_select_risk(store.read("whole_image_risk_score", fold=fold), ids))
+
+    bundle = train_concepts(
+        np.concatenate(embeddings, axis=0) if embeddings else np.empty((0, 0), np.float32),
+        pd.concat(labels, ignore_index=True),
+        pd.concat(risk, ignore_index=True),
+        n_bootstrap=n_bootstrap,
+    )
+    meta = build_bundle_metadata(
+        "concept",
+        {"n_bootstrap": n_bootstrap},
+        resolved,
+        roots,
+        fold=fold,
+    )
+    out.write("model_concepts", bundle, metadata=meta, fold=fold)
+    ctx.progress.log(f"wrote model_concepts fold={fold}")
+    return "completed"
 
 
 def predict_concept(

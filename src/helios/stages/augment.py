@@ -2,13 +2,16 @@
 from __future__ import annotations
 
 import logging
+from functools import partial
 from pathlib import Path
 from typing import cast
 
 from helios.components.augmentation import AUGMENTATION_METHODS, augment_stains
 from helios.components.features import FEATURE_MODELS, FeatureModel, extract_features
 from helios.data.augmentation import Augmentation
+from helios.data.io import ArtifactStore
 from helios.progress import DEFAULT_PROGRESS, Progress
+from helios.stages._ray import WorkContext, gpu_reservation, run_work_units
 from helios.stages._runtime import (
     DatasetArgs,
     ParallelConfig,
@@ -89,45 +92,86 @@ def prep_augment(
                         level=logging.WARNING,
                     )
             definition.save()
-            aug_store = definition.store()
-            for s, image_id in progress.task(
-                [(s, i) for s in size_mm for i in ids], desc=f"augment {ds.dataset().descriptor.name}",
-            ):
-                if overwrite or not aug_store.exists("tile_augmentation", size_mm=s, image_id=image_id):
-                    tiles = _tiles_array(store.read("tiles", size_mm=s, image_id=image_id))
-                    tile_ids, coords = _tile_index(store, size_mm=s, image_id=image_id, n_tiles=len(tiles))
-                    augmented = augment_stains(
-                        tiles, checkpoint=str(definition.checkpoint),
-                        batch_size=augmentation_batch_size, device=device,
-                    )
-                    if len(augmented) != len(tiles):
-                        raise ValueError("Augmentation changed the number of tiles.")
-                    aug_store.write(
-                        "tile_augmentation", {"tiles": augmented, "tile_ids": tile_ids, "coords": coords},
-                        size_mm=s, image_id=image_id,
-                    )
-                for m in model:
-                    if not overwrite and aug_store.exists(
-                        "tile_augmentation_features", size_mm=s, image_id=image_id, model=m,
-                    ):
-                        continue
-                    payload = aug_store.read("tile_augmentation", size_mm=s, image_id=image_id)
-                    if not {"tiles", "tile_ids", "coords"} <= payload.keys():
-                        raise ValueError(
-                            f"Augmented tiles at {definition.root} lack alignment metadata; use --overwrite."
-                        )
-                    embeddings = extract_features(
-                        payload["tiles"], model=cast(FeatureModel, m), batch_size=batch_size, device=device,
-                        progress=progress,
-                    )
-                    if len(embeddings) != len(payload["tile_ids"]):
-                        raise ValueError("Feature extraction changed the number of tiles.")
-                    aug_store.write(
-                        "tile_augmentation_features",
-                        {"features": embeddings, "tile_ids": payload["tile_ids"], "coords": payload["coords"]},
-                        size_mm=s, image_id=image_id, model=m,
-                    )
-                progress.log(f"prepared augmentation={definition.root} image={image_id} size_mm={s}")
+            run_work_units(
+                [(s, i) for s in size_mm for i in ids],
+                partial(
+                    _augment_slide, store=store, definition=definition,
+                    augmentation_batch_size=augmentation_batch_size, device=device, overwrite=overwrite,
+                ),
+                stage=f"augment {ds.dataset().descriptor.name}",
+                unit_id=_augmentation_unit_id, progress=progress, parallel=parallel,
+                num_gpus=gpu_reservation(device, parallel), persistent_workers=True,
+                continue_on_error=bool(parallel and parallel.enabled),
+            )
+            run_work_units(
+                [(s, m, i) for m in model for s in size_mm for i in ids],
+                partial(
+                    _embed_augmentation, definition=definition, batch_size=batch_size,
+                    device=device, overwrite=overwrite,
+                ),
+                stage=f"augment features {ds.name}", unit_id=_augmentation_feature_id,
+                progress=progress, parallel=parallel,
+                num_gpus=gpu_reservation(device, parallel), persistent_workers=True,
+                continue_on_error=bool(parallel and parallel.enabled),
+            )
+
+
+def _augmentation_unit_id(unit: tuple[float, str]) -> str:
+    return f"size_mm={unit[0]}/{unit[1]}"
+
+
+def _augmentation_feature_id(unit: tuple[float, str, str]) -> str:
+    return f"size_mm={unit[0]}/model={unit[1]}/{unit[2]}"
+
+
+def _augment_slide(
+    unit: tuple[float, str], ctx: WorkContext, *, store: ArtifactStore,
+    definition: Augmentation,
+    augmentation_batch_size: int, device: str, overwrite: bool,
+) -> str:
+    s, image_id = unit
+    aug_store = definition.store()
+    if not overwrite and aug_store.exists("tile_augmentation", size_mm=s, image_id=image_id):
+        return "skipped"
+    if overwrite or not aug_store.exists("tile_augmentation", size_mm=s, image_id=image_id):
+        tiles = _tiles_array(store.read("tiles", size_mm=s, image_id=image_id))
+        tile_ids, coords = _tile_index(store, size_mm=s, image_id=image_id, n_tiles=len(tiles))
+        augmented = augment_stains(
+            tiles, checkpoint=str(definition.checkpoint),
+            batch_size=augmentation_batch_size, device=device,
+        )
+        if len(augmented) != len(tiles):
+            raise ValueError("Augmentation changed the number of tiles.")
+        aug_store.write(
+            "tile_augmentation", {"tiles": augmented, "tile_ids": tile_ids, "coords": coords},
+            size_mm=s, image_id=image_id,
+        )
+    ctx.progress.log(f"prepared augmentation={definition.root} image={image_id} size_mm={s}")
+    return "completed"
+
+
+def _embed_augmentation(
+    unit: tuple[float, str, str], ctx: WorkContext, *, definition: Augmentation,
+    batch_size: int, device: str, overwrite: bool,
+) -> str:
+    s, m, image_id = unit
+    store = definition.store()
+    if not overwrite and store.exists("tile_augmentation_features", size_mm=s, image_id=image_id, model=m):
+        return "skipped"
+    payload = store.read("tile_augmentation", size_mm=s, image_id=image_id)
+    if not {"tiles", "tile_ids", "coords"} <= payload.keys():
+        raise ValueError(f"Augmented tiles at {definition.root} lack alignment metadata; use --overwrite.")
+    embeddings = extract_features(
+        payload["tiles"], model=cast(FeatureModel, m), batch_size=batch_size, device=device, progress=ctx.progress,
+    )
+    if len(embeddings) != len(payload["tile_ids"]):
+        raise ValueError("Feature extraction changed the number of tiles.")
+    store.write(
+        "tile_augmentation_features",
+        {"features": embeddings, "tile_ids": payload["tile_ids"], "coords": payload["coords"]},
+        size_mm=s, image_id=image_id, model=m,
+    )
+    return "completed"
 
 
 def _definitions(

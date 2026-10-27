@@ -9,7 +9,7 @@ Redistributed under the BSD terms in ``LICENSES/multistain-cyclegan.txt``.
 """
 from __future__ import annotations
 
-from functools import cache, partial
+from functools import lru_cache, partial
 from pathlib import Path
 from typing import Any
 
@@ -87,7 +87,7 @@ def augment_stains(
     return np.concatenate(chunks, axis=0) if chunks else np.empty_like(array)
 
 
-@cache
+@lru_cache(maxsize=1)
 def _load_generator(checkpoint: str, device: str):
     path = Path(checkpoint)
     if not path.is_file():

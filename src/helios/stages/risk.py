@@ -8,6 +8,8 @@ OOF/ensemble reduce shape is shared.
 """
 from __future__ import annotations
 
+from functools import partial
+
 import pandas as pd
 
 from helios.components.risk import (
@@ -16,12 +18,14 @@ from helios.components.risk import (
     infer_risk_model,
     train_risk_model,
 )
+from helios.data.cohort import ResolvedDataset
 from helios.data.io import ArtifactStore
 from helios.progress import DEFAULT_PROGRESS, Progress
 from helios.stages._runtime import (
     DatasetArgs,
     ParallelConfig,
     StorageRoots,
+    WorkContext,
     build_bundle_metadata,
     cohort_store,
     drop_provenance,
@@ -29,6 +33,7 @@ from helios.stages._runtime import (
     model_folds,
     read_splits,
     resolve_datasets,
+    run_work_units,
     select_image_ids,
     tag_dataset,
     train_ids,
@@ -87,51 +92,92 @@ def fit_risk(
     """
     _validate(risk)
     resolved = resolve_datasets(datasets, roots=roots, require_models=True)
-    stores = [cohort_store(ds, roots) for ds in resolved]
-    out = stores[0]
     folds = folds_across(resolved, roots)
+    cfg = parallel or ParallelConfig()
 
     for kind in _ordered(risk):
-        model_id, _ = _ARTIFACTS[kind]
-        for fold in progress.task(folds, desc=f"fit risk {kind}"):
-            if not overwrite and out.exists(model_id, fold=fold):
-                progress.log(f"skip {model_id} fold={fold} (exists)")
-                continue
-            features: list[pd.DataFrame] = []
-            targets: list[pd.Series] = []
-            for ds, store in zip(resolved, stores, strict=True):
-                meta = ds.dataset().image_metadata.set_index("image_id")
-                ids = [i for i in train_ids(ds, fold, where=ds.where, roots=roots) if i in meta.index]
-                feat_df = _features(kind, store, ids, staging_feature, clinical_features, cellular_size_mm)
-                present_ids = set(feat_df["image_id"].astype(str))
-                missing_ids = [i for i in ids if str(i) not in present_ids]
-                if missing_ids:
-                    raise ValueError(
-                        f"Missing {kind} training features for image_ids in {ds.name}: {missing_ids[:5]}"
-                    )
-                features.append(feat_df)
-                targets.append(meta.loc[ids, target])
-            bundle = train_risk_model(
-                pd.concat(features, ignore_index=True),
-                pd.concat(targets, ignore_index=True),
+        run_work_units(
+            folds,
+            partial(
+                _fit_risk_fold,
+                resolved=resolved,
+                roots=roots,
+                kind=kind,
+                target=target,
+                staging_feature=staging_feature,
+                clinical_features=clinical_features,
                 estimator=estimator,
+                cellular_size_mm=cellular_size_mm,
+                overwrite=overwrite,
+            ),
+            stage=f"fit risk {kind}",
+            unit_id=lambda fold: f"fold={fold}",
+            progress=progress,
+            parallel=cfg,
+            num_cpus=1.0,
+            continue_on_error=cfg.enabled,
+        )
+
+
+def _fit_risk_fold(
+    fold: int | None,
+    ctx: WorkContext,
+    *,
+    resolved: list[ResolvedDataset],
+    roots: StorageRoots | None,
+    kind: str,
+    target: str,
+    staging_feature: str,
+    clinical_features: list[str],
+    estimator: str,
+    cellular_size_mm: float,
+    overwrite: bool,
+) -> str:
+    """Load, fit, and persist one risk kind for one fold."""
+    model_id, _ = _ARTIFACTS[kind]
+    stores = [cohort_store(ds, roots) for ds in resolved]
+    out = stores[0]
+    if not overwrite and out.exists(model_id, fold=fold):
+        ctx.progress.log(f"skip {model_id} fold={fold} (exists)")
+        return "skipped"
+
+    features: list[pd.DataFrame] = []
+    targets: list[pd.Series] = []
+    for ds, store in zip(resolved, stores, strict=True):
+        meta = ds.dataset().image_metadata.set_index("image_id")
+        ids = [i for i in train_ids(ds, fold, where=ds.where, roots=roots) if i in meta.index]
+        feat_df = _features(kind, store, ids, staging_feature, clinical_features, cellular_size_mm)
+        present_ids = set(feat_df["image_id"].astype(str))
+        missing_ids = [i for i in ids if str(i) not in present_ids]
+        if missing_ids:
+            raise ValueError(
+                f"Missing {kind} training features for image_ids in {ds.name}: {missing_ids[:5]}"
             )
-            meta = build_bundle_metadata(
-                "risk",
-                {
-                    "risk": [kind],
-                    "target": target,
-                    "staging_feature": staging_feature,
-                    "clinical_features": clinical_features,
-                    "estimator": estimator,
-                    "cellular_size_mm": cellular_size_mm,
-                },
-                resolved,
-                roots,
-                fold=fold,
-            )
-            out.write(model_id, bundle, metadata=meta, fold=fold)
-            progress.log(f"wrote {model_id} fold={fold}")
+        features.append(feat_df)
+        targets.append(meta.loc[ids, target])
+
+    bundle = train_risk_model(
+        pd.concat(features, ignore_index=True),
+        pd.concat(targets, ignore_index=True),
+        estimator=estimator,
+    )
+    meta = build_bundle_metadata(
+        "risk",
+        {
+            "risk": [kind],
+            "target": target,
+            "staging_feature": staging_feature,
+            "clinical_features": clinical_features,
+            "estimator": estimator,
+            "cellular_size_mm": cellular_size_mm,
+        },
+        resolved,
+        roots,
+        fold=fold,
+    )
+    out.write(model_id, bundle, metadata=meta, fold=fold)
+    ctx.progress.log(f"wrote {model_id} fold={fold}")
+    return "completed"
 
 
 def predict_risk(

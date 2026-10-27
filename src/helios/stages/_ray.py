@@ -124,6 +124,8 @@ class RunStatusTracker:
         self.states = {wid: "queued" for wid in self.work_ids}
 
     def on_start(self, work_id: str, worker_id: str, log_path: str | None, ts: float | None = None) -> None:
+        if self.states.get(work_id) not in {"queued", "running"}:
+            return
         if self.states.get(work_id) == "queued":
             self.states[work_id] = "running"
         self.active_workers[worker_id] = {
@@ -257,6 +259,25 @@ class _ActorSink:
         )
 
 
+class _WorkActor:
+    """Keep model caches alive while processing one unit at a time."""
+
+    def __init__(self, fn: Callable[..., Any]) -> None:
+        self.fn = fn
+
+    def execute(self, *args: Any) -> WorkResult:
+        return _execute_unit(self.fn, *args)
+
+
+def gpu_reservation(device: str, parallel: ParallelConfig | None) -> float | None:
+    """None requests automatic cluster GPU detection, not driver-only detection."""
+    if not device.startswith("cuda"):
+        return 0.0
+    if parallel is not None and parallel.enabled:
+        return None
+    return 1.0 if available_gpu_count() else 0.0
+
+
 def _execute_unit(
     fn: Callable[[T, WorkContext], str | None],
     item: T,
@@ -293,8 +314,9 @@ def run_work_units(
     progress: Progress = DEFAULT_PROGRESS,
     parallel: ParallelConfig | None = None,
     num_cpus: float = 1.0,
-    num_gpus: float = 0.0,
+    num_gpus: float | None = 0.0,
     continue_on_error: bool = True,
+    persistent_workers: bool = False,
 ) -> list[WorkStatus]:
     """Execute ``units`` inline or across Ray tasks with centralized status & error reporting.
 
@@ -303,9 +325,16 @@ def run_work_units(
     unit should log through. Unit ids must be unique within one call. Failed
     units are collected and raised together as :class:`StageExecutionError`
     after the remaining units finish (unless ``continue_on_error`` is false).
+    ``persistent_workers`` uses a bounded actor pool with one active unit per
+    actor and process-local model caches. Actors live for this call only.
+    ``num_gpus=None`` reserves one GPU per worker if the cluster has GPUs.
     """
     cfg = parallel or ParallelConfig()
+    if num_cpus <= 0 or (num_gpus is not None and num_gpus < 0):
+        raise ValueError("Worker CPU reservations must be positive and GPU reservations nonnegative.")
     work_ids = [unit_id(u) for u in units]
+    if len(set(work_ids)) != len(work_ids):
+        raise ValueError(f"{stage}: work unit IDs must be unique.")
     tracker = RunStatusTracker(stage, work_ids)
     reporter = progress.reporter if isinstance(progress.reporter, ProgressReporter) else None
     run_log_dir = reporter.out_dir if reporter is not None else None
@@ -340,7 +369,7 @@ def run_work_units(
 
     publish("running")
 
-    if not cfg.enabled or len(units) <= 1:
+    if not cfg.enabled or not units:
         worker_id = worker_identity("local")
         with worker_log(run_log_dir, worker_id) as (logger, log_path):
             ctx = WorkContext(progress, worker_id, log_path)
@@ -368,48 +397,88 @@ def run_work_units(
         import ray
 
         actor: Any = ray.remote(_StatusActor).options(num_cpus=0).remote()
-        remote: Any = ray.remote(num_cpus=num_cpus, num_gpus=num_gpus, max_retries=0)(_execute_unit)
-        log_dir_str = str(run_log_dir) if run_log_dir is not None else None
-        refs = {
-            remote.remote(fn, item, wid, stage, log_dir_str, actor, num_cpus): (idx, wid)
-            for idx, (item, wid) in enumerate(zip(units, work_ids, strict=True))
-        }
+        resources = ray.cluster_resources()
+        if num_gpus is None:
+            num_gpus = 1.0 if resources.get("GPU", 0) >= 1 else 0.0
+        cpu_budget = resources.get("CPU", 0)
+        if cfg.max_cpus is not None:
+            cpu_budget = min(cpu_budget, cfg.max_cpus)
+        if cpu_budget < num_cpus or resources.get("GPU", 0) < num_gpus:
+            ray.kill(actor)
+            raise ValueError(f"Cluster cannot satisfy per-worker resources: CPU={num_cpus}, GPU={num_gpus}.")
+        count = min(len(units), int(cpu_budget // num_cpus))
+        if num_gpus:
+            count = min(count, int(resources["GPU"] // num_gpus))
+        workers: list[Any] = []
+        pending: list[Any] = []
+        try:
+            if persistent_workers:
+                remote_actor = ray.remote(_WorkActor).options(
+                    num_cpus=num_cpus, num_gpus=num_gpus, max_restarts=0, max_task_retries=0,
+                )
+                workers = [remote_actor.remote(fn) for _ in range(count)]
+            else:
+                remote: Any = ray.remote(num_cpus=num_cpus, num_gpus=num_gpus, max_retries=0)(_execute_unit)
 
-        def drain() -> None:
-            for ev in ray.get(actor.drain.remote()):
-                kind = ev.get("kind")
-                worker_id = str(ev.get("worker_id", ""))
-                if kind == "start":
-                    tracker.on_start(str(ev.get("work_id", "")), worker_id, ev.get("log_path"), ev.get("ts"))
-                elif kind == "log":
-                    progress.log(f"[{ev.get('work_id')}] {ev.get('message', '')}", level=_level(ev.get("level")))
-                else:
-                    if kind == "task_start":
-                        tracker.on_progress(worker_id, str(ev.get("desc", "running")), ev.get("ts"))
-                    if reporter is not None:
-                        reporter.event(kind, **{k: v for k, v in ev.items() if k not in {"kind", "ts"}})
-            publish()
+            def submit(index: int, *args: Any) -> Any:
+                if persistent_workers:
+                    return workers[index % count].execute.remote(*args)
+                return remote.remote(fn, *args)
+            log_dir_str = str(run_log_dir) if run_log_dir is not None else None
+            queue = iter(enumerate(zip(units, work_ids, strict=True)))
+            refs: dict[Any, tuple[int, str, int]] = {}
 
-        pending = list(refs)
-        for _ in progress.task(range(len(units)), desc=stage):
-            done: list[Any] = []
-            while not done:
-                done, pending = ray.wait(pending, num_returns=1, timeout=0.5)
-                drain()
-            idx, wid = refs[done[0]]
-            try:
-                result = ray.get(done[0])
-            except Exception as exc:
-                # The task body returns failures; reaching here means the worker itself died.
-                first = str(exc).splitlines()[0] if str(exc) else type(exc).__name__
-                result = WorkResult(wid, "ray-worker", "failed", None, f"{type(exc).__name__}: {first}", str(exc))
-            record(idx, result)
-            if result.status == "failed" and not continue_on_error:
-                for ref in pending:
+            def enqueue(slot: int) -> Any | None:
+                next_unit = next(queue, None)
+                if next_unit is None:
+                    return None
+                idx, (item, wid) = next_unit
+                ref = submit(slot, item, wid, stage, log_dir_str, actor, num_cpus)
+                refs[ref] = (idx, wid, slot)
+                return ref
+
+            def drain() -> None:
+                for ev in ray.get(actor.drain.remote()):
+                    kind = ev.get("kind")
+                    worker_id = str(ev.get("worker_id", ""))
+                    if kind == "start":
+                        tracker.on_start(str(ev.get("work_id", "")), worker_id, ev.get("log_path"), ev.get("ts"))
+                    elif kind == "log":
+                        progress.log(f"[{ev.get('work_id')}] {ev.get('message', '')}", level=_level(ev.get("level")))
+                    else:
+                        if kind == "task_start":
+                            tracker.on_progress(worker_id, str(ev.get("desc", "running")), ev.get("ts"))
+                        if reporter is not None:
+                            reporter.event(kind, **{k: v for k, v in ev.items() if k not in {"kind", "ts"}})
+                publish()
+
+            pending = [enqueue(slot) for slot in range(count)]
+            for _ in progress.task(range(len(units)), desc=stage):
+                done: list[Any] = []
+                while not done:
+                    done, pending = ray.wait(pending, num_returns=1, timeout=0.5)
+                    drain()
+                idx, wid, slot = refs[done[0]]
+                try:
+                    result = ray.get(done[0])
+                except Exception as exc:
+                    first = str(exc).splitlines()[0] if str(exc) else type(exc).__name__
+                    result = WorkResult(wid, "ray-worker", "failed", None, f"{type(exc).__name__}: {first}", str(exc))
+                record(idx, result)
+                if result.status == "failed" and not continue_on_error:
+                    return finish()
+                ref = enqueue(slot)
+                if ref is not None:
+                    pending.append(ref)
+            drain()
+            return finish()
+        finally:
+            for ref in pending:
+                if not persistent_workers:
                     ray.cancel(ref, force=True)
-                return finish()
-        drain()
-        return finish()
+            for worker in workers:
+                ray.kill(worker)
+            ray.kill(actor)
 
 
 def run_cellvit_isolated(

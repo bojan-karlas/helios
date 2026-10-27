@@ -14,6 +14,7 @@ import pytest
 from helios.data.augmentation import Augmentation
 from helios.data.io import ArtifactStore
 from helios.data.resolver import Resolver, Roots, StorageRoots
+from helios.stages._ray import ParallelConfig, run_work_units
 from helios.stages.augment import prep_augment
 from helios.stages.tile_features import prep_tile_features
 from tests.fixtures import make_cohort
@@ -77,6 +78,25 @@ def test_stage_rejects_unknown_model(cohort: Path) -> None:
         prep_tile_features(datasets=[cohort], model=["not-a-model"])
 
 
+def test_extraction_requests_reusable_workers(monkeypatch, cohort: Path) -> None:
+    config = ParallelConfig(max_cpus=2)
+    calls = []
+
+    def dispatch(units, fn, **kwargs):
+        calls.append(kwargs)
+        assert kwargs.pop("parallel") is config
+        return run_work_units(units, fn, **kwargs)
+
+    monkeypatch.setattr("helios.stages.tile_features.extract_features", _fake_extract)
+    monkeypatch.setattr("helios.stages.tile_features.run_work_units", dispatch)
+    image_ids = ["FAKE-SKCM-P00000-S01-B1-I1", "FAKE-SKCM-P00001-S01-B1-I1"]
+    _stage_tiles(cohort, image_ids)
+    prep_tile_features(datasets=[cohort], parallel=config)
+    assert len(calls) == 1
+    assert calls[0]["persistent_workers"] is True
+    assert calls[0]["num_gpus"] is None
+
+
 def test_cached_augmentation_reads_preprocessing_and_writes_features(monkeypatch, cohort: Path, tmp_path: Path) -> None:
     roots = StorageRoots(preprocessing_root=tmp_path / "pre")
     definition = Augmentation(
@@ -110,3 +130,25 @@ def test_cached_augmentation_reads_preprocessing_and_writes_features(monkeypatch
     assert store.read(
         "tile_augmentation_features", size_mm=0.25, model="virchow2", image_id=image_id
     )["features"].shape == (3, EMBED_DIM)
+
+
+def test_augmentation_separates_generator_and_encoder_work(monkeypatch, cohort: Path) -> None:
+    config = ParallelConfig(max_cpus=2)
+    calls = []
+
+    def dispatch(units, fn, **kwargs):
+        calls.append((list(units), kwargs))
+        assert kwargs.pop("parallel") is config
+        return run_work_units(units, fn, **kwargs)
+
+    monkeypatch.setattr("helios.stages.augment.run_work_units", dispatch)
+    monkeypatch.setattr("helios.stages.augment.augment_stains", lambda tiles, **kwargs: tiles)
+    monkeypatch.setattr("helios.stages.augment.extract_features", _fake_extract)
+    image_ids = ["FAKE-SKCM-P00000-S01-B1-I1", "FAKE-SKCM-P00001-S01-B1-I1"]
+    _stage_tiles(cohort, image_ids)
+    prep_augment(datasets=[cohort], target=["example"], parallel=config, model=["virchow2", "uni"])
+    generation, embeddings = calls
+    assert len(generation[0]) == 2
+    assert len(embeddings[0]) == 4
+    assert [unit[1] for unit in embeddings[0]] == ["virchow2", "virchow2", "uni", "uni"]
+    assert all(options["persistent_workers"] and options["num_gpus"] is None for _, options in calls)

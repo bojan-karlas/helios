@@ -7,24 +7,28 @@ reducing the K fold models internally.
 """
 from __future__ import annotations
 
+from functools import partial
 from pathlib import Path
 from typing import Literal
 
 import pandas as pd
 
 from helios.components.morphology import infer_morphology, train_morphology
+from helios.data.cohort import ResolvedDataset
 from helios.data.io import ArtifactStore
 from helios.progress import DEFAULT_PROGRESS, Progress
 from helios.stages._runtime import (
     DatasetArgs,
     ParallelConfig,
     StorageRoots,
+    WorkContext,
     build_bundle_metadata,
     cohort_store,
     folds_across,
     model_folds,
     read_splits,
     resolve_datasets,
+    run_work_units,
     select_image_ids,
     tag_dataset,
     train_ids,
@@ -69,40 +73,14 @@ def fit_morphology(
     optionally restricts training to a metadata subpopulation.
     """
     resolved = resolve_datasets(datasets, roots=roots, require_models=True)
-    stores = [cohort_store(ds, roots) for ds in resolved]
-    out = stores[0]
     folds = folds_across(resolved, roots)
-
-    for fold in progress.task(folds, desc="fit morphology"):
-        if not overwrite and out.exists("model_morphology", fold=fold):
-            progress.log(f"skip model_morphology fold={fold} (exists)")
-            continue
-        paths: dict[str, Path] = {}
-        attention: list[pd.DataFrame] = []
-        labels: list[pd.DataFrame] = []
-        for ds, store in zip(resolved, stores, strict=True):
-            meta = ds.dataset().image_metadata.set_index("image_id")
-            ids = train_ids(ds, fold, where=ds.where, roots=roots)
-            missing_meta = [i for i in ids if i not in meta.index]
-            if missing_meta:
-                raise ValueError(f"Missing image_metadata rows for training slides in {ds.name}: {missing_meta[:5]}")
-            for image_id in ids:
-                emb_path = store.path("aligned_patch_embeddings", fold=fold, image_id=image_id)
-                if not emb_path.exists():
-                    raise FileNotFoundError(
-                        f"Missing aligned_patch_embeddings for training slide {image_id!r} (fold={fold}) in {ds.name}"
-                    )
-                if not store.exists("patch_attention", fold=fold, image_id=image_id):
-                    raise FileNotFoundError(
-                        f"Missing patch_attention for training slide {image_id!r} (fold={fold}) in {ds.name}"
-                    )
-                paths[image_id] = emb_path
-                attention.append(store.read("patch_attention", fold=fold, image_id=image_id).assign(image_id=image_id))
-            labels.append(meta.loc[ids].reset_index())
-        bundle = train_morphology(
-            paths,
-            pd.concat(attention, ignore_index=True) if attention else pd.DataFrame(),
-            pd.concat(labels, ignore_index=True),
+    cfg = parallel or ParallelConfig()
+    run_work_units(
+        folds,
+        partial(
+            _fit_morphology_fold,
+            resolved=resolved,
+            roots=roots,
             target=target,
             attention_cutoff=attention_cutoff,
             n_pca=n_pca,
@@ -112,26 +90,98 @@ def fit_morphology(
             significance_alpha=significance_alpha,
             estimator=estimator,
             seed=seed,
-        )
-        meta = build_bundle_metadata(
-            "morphology",
-            {
-                "target": target,
-                "attention_cutoff": attention_cutoff,
-                "n_pca": n_pca,
-                "k_micro": k_micro,
-                "k_neighbors": k_neighbors,
-                "resolution": resolution,
-                "significance_alpha": significance_alpha,
-                "estimator": estimator,
-                "seed": seed,
-            },
-            resolved,
-            roots,
-            fold=fold,
-        )
-        out.write("model_morphology", bundle, metadata=meta, fold=fold)
-        progress.log(f"wrote model_morphology fold={fold}")
+            overwrite=overwrite,
+        ),
+        stage="fit morphology",
+        unit_id=lambda fold: f"fold={fold}",
+        progress=progress,
+        parallel=cfg,
+        num_cpus=1.0,
+        continue_on_error=cfg.enabled,
+    )
+
+
+def _fit_morphology_fold(
+    fold: int | None,
+    ctx: WorkContext,
+    *,
+    resolved: list[ResolvedDataset],
+    roots: StorageRoots | None,
+    target: str,
+    attention_cutoff: float,
+    n_pca: int,
+    k_micro: int,
+    k_neighbors: int,
+    resolution: float,
+    significance_alpha: float,
+    estimator: Literal["random_forest", "logreg_l2", "logreg_l1", "elasticnet", "gradient_boosting"],
+    seed: int,
+    overwrite: bool,
+) -> str:
+    """Load, fit, and persist the morphology bundle for one fold."""
+    stores = [cohort_store(ds, roots) for ds in resolved]
+    out = stores[0]
+    if not overwrite and out.exists("model_morphology", fold=fold):
+        ctx.progress.log(f"skip model_morphology fold={fold} (exists)")
+        return "skipped"
+
+    paths: dict[str, Path] = {}
+    attention: list[pd.DataFrame] = []
+    labels: list[pd.DataFrame] = []
+    for ds, store in zip(resolved, stores, strict=True):
+        meta = ds.dataset().image_metadata.set_index("image_id")
+        ids = train_ids(ds, fold, where=ds.where, roots=roots)
+        missing_meta = [i for i in ids if i not in meta.index]
+        if missing_meta:
+            raise ValueError(f"Missing image_metadata rows for training slides in {ds.name}: {missing_meta[:5]}")
+        for image_id in ids:
+            emb_path = store.path("aligned_patch_embeddings", fold=fold, image_id=image_id)
+            if not emb_path.exists():
+                raise FileNotFoundError(
+                    f"Missing aligned_patch_embeddings for training slide {image_id!r} (fold={fold}) in {ds.name}"
+                )
+            if not store.exists("patch_attention", fold=fold, image_id=image_id):
+                raise FileNotFoundError(
+                    f"Missing patch_attention for training slide {image_id!r} (fold={fold}) in {ds.name}"
+                )
+            paths[image_id] = emb_path
+            attention.append(store.read("patch_attention", fold=fold, image_id=image_id).assign(image_id=image_id))
+        labels.append(meta.loc[ids].reset_index())
+
+    bundle = train_morphology(
+        paths,
+        pd.concat(attention, ignore_index=True) if attention else pd.DataFrame(),
+        pd.concat(labels, ignore_index=True),
+        target=target,
+        attention_cutoff=attention_cutoff,
+        n_pca=n_pca,
+        k_micro=k_micro,
+        k_neighbors=k_neighbors,
+        resolution=resolution,
+        significance_alpha=significance_alpha,
+        estimator=estimator,
+        seed=seed,
+    )
+    meta = build_bundle_metadata(
+        "morphology",
+        {
+            "target": target,
+            "attention_cutoff": attention_cutoff,
+            "n_pca": n_pca,
+            "k_micro": k_micro,
+            "k_neighbors": k_neighbors,
+            "resolution": resolution,
+            "significance_alpha": significance_alpha,
+            "estimator": estimator,
+            "seed": seed,
+        },
+        resolved,
+        roots,
+        fold=fold,
+    )
+    out.write("model_morphology", bundle, metadata=meta, fold=fold)
+    ctx.progress.log(f"wrote model_morphology fold={fold}")
+    return "completed"
 
 
 def predict_morphology(

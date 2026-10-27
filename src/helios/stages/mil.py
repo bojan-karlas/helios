@@ -7,15 +7,20 @@ whole-image scores to a single shipped value per image.
 """
 from __future__ import annotations
 
+from functools import lru_cache, partial
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import pandas as pd
 
 from helios.components.features import FEATURE_MODELS
 from helios.components.mil import SlideFeatureRef, infer_mil, reduce_whole_image_risk, train_mil
 from helios.data.augmentation import Augmentation, select_augmentations, validate_feature_alignment
+from helios.data.bundle import load_bundle
+from helios.data.cohort import ResolvedDataset
+from helios.data.io import ArtifactStore
 from helios.progress import DEFAULT_PROGRESS, Progress
+from helios.stages._ray import WorkContext, gpu_reservation, run_work_units
 from helios.stages._runtime import (
     DatasetArgs,
     ParallelConfig,
@@ -138,53 +143,46 @@ def fit_mil(
                     )
                 )
         slides_by_fold[fold] = slides
-    for fold in progress.task(list(slides_by_fold), desc="fit mil"):
-        slides = slides_by_fold[fold]
-        bundle = train_mil(
-            slides,
-            aug_swap_prob=aug_swap_prob,
-            aug_mode=aug_mode,
-            n_branches=n_branches,
-            num_heads=num_heads,
-            dropout_rate=dropout_rate,
-            lambda_div=lambda_div,
-            lr=lr,
-            weight_decay=weight_decay,
-            max_epochs=max_epochs,
-            patience=patience,
-            val_frac=val_frac,
-            seed=seed,
-            device=device,
-            progress=progress,
-            fold=fold,
-        )
-        meta = build_bundle_metadata(
-            "mil",
-            {
-                "size_mm": size_mm,
-                "model": model,
-                "target": target,
-                "augmentations": None,
-                "aug_swap_prob": aug_swap_prob,
-                "aug_mode": aug_mode,
-                "n_branches": n_branches,
-                "num_heads": num_heads,
-                "dropout_rate": dropout_rate,
-                "lambda_div": lambda_div,
-                "lr": lr,
-                "weight_decay": weight_decay,
-                "max_epochs": max_epochs,
-                "patience": patience,
-                "val_frac": val_frac,
-                "seed": seed,
-                "device": device,
-            },
-            resolved,
-            roots,
-            fold=fold,
-        )
-        out.write("model_mil", bundle, metadata=meta, fold=fold)
-        progress.log(f"wrote model_mil fold={fold} (n_train={len(slides)})")
+    params = {
+        "size_mm": size_mm,
+        "model": model,
+        "target": target,
+        "augmentations": None,
+        "aug_swap_prob": aug_swap_prob,
+        "aug_mode": aug_mode,
+        "n_branches": n_branches,
+        "num_heads": num_heads,
+        "dropout_rate": dropout_rate,
+        "lambda_div": lambda_div,
+        "lr": lr,
+        "weight_decay": weight_decay,
+        "max_epochs": max_epochs,
+        "patience": patience,
+        "val_frac": val_frac,
+        "seed": seed,
+        "device": device,
+    }
+    run_work_units(
+        list(slides_by_fold),
+        partial(_fit_fold, slides_by_fold=slides_by_fold, out=out, params=params, resolved=resolved, roots=roots),
+        stage="fit mil", progress=progress, parallel=parallel,
+        num_gpus=gpu_reservation(device, parallel), continue_on_error=bool(parallel and parallel.enabled),
+    )
+
+
+def _fit_fold(
+    fold: int | None, ctx: WorkContext, *, slides_by_fold: dict[int | None, list[SlideFeatureRef]],
+    out: ArtifactStore, params: dict[str, Any], resolved: list[ResolvedDataset], roots: StorageRoots | None,
+) -> str:
+    slides = slides_by_fold[fold]
+    training = {
+        key: value for key, value in params.items() if key not in {"size_mm", "model", "target", "augmentations"}
+    }
+    bundle = train_mil(slides, **training, progress=ctx.progress, fold=fold)
+    meta = build_bundle_metadata("mil", params, resolved, roots, fold=fold)
+    out.write("model_mil", bundle, metadata=meta, fold=fold)
+    ctx.progress.log(f"wrote model_mil fold={fold} (n_train={len(slides)})")
+    return "completed"
 
 
 def predict_mil(
@@ -217,40 +215,15 @@ def predict_mil(
 
         per_fold_scores: list[pd.DataFrame] = []
         for fold in folds:
-            mil_model = store.read("model_mil", fold=fold)
-            for image_id in progress.task(ids, desc=f"mil infer fold={fold} {ds.name}"):
-                complete = (
-                    store.exists("aligned_patch_embeddings", fold=fold, image_id=image_id)
-                    and store.exists("patch_attention", fold=fold, image_id=image_id)
-                    and store.exists("aligned_slide_embedding", fold=fold, image_id=image_id)
-                    and store.exists("aligned_slide_embedding_grad", fold=fold, image_id=image_id)
-                    and store.part_exists("whole_image_risk_score", image_id, fold=fold)
-                )
-                if not overwrite and complete:
-                    continue
-                out = infer_mil(
-                    mil_model,
-                    features_path=store.path("tile_features", size_mm=size_mm, model=model, image_id=image_id),
-                    background_path=store.path("tile_background", size_mm=size_mm, image_id=image_id),
-                    device=device,
-                )
-                store.write(
-                    "aligned_patch_embeddings",
-                    {"embeddings": out.patch_embeddings},
-                    fold=fold,
-                    image_id=image_id,
-                )
-                store.write("patch_attention", out.attention, fold=fold, image_id=image_id)
-                store.write("aligned_slide_embedding", out.slide_embedding, fold=fold, image_id=image_id)
-                store.write(
-                    "aligned_slide_embedding_grad", out.slide_embedding_grad, fold=fold, image_id=image_id
-                )
-                store.write_part(
-                    "whole_image_risk_score",
-                    image_id,
-                    [{"image_id": image_id, "risk_score": out.risk_score, "fold": fold}],
-                    fold=fold,
-                )
+            _load_inference_bundle.cache_clear()
+            run_work_units(
+                ids,
+                partial(_predict_slide, store=store, fold=fold, size_mm=size_mm, model=model,
+                        device=device, overwrite=overwrite),
+                stage=f"mil infer fold={fold} {ds.name}", progress=progress, parallel=parallel,
+                num_gpus=gpu_reservation(device, parallel), persistent_workers=True,
+                continue_on_error=bool(parallel and parallel.enabled),
+            )
             # Reduce over the whole cohort so a partial re-run never shrinks the table.
             scores = store.read_parts("whole_image_risk_score", cohort_ids, fold=fold)
             if not scores.empty:
@@ -263,6 +236,51 @@ def predict_mil(
         )
         store.write("whole_image_risk_score_ensemble", tag_dataset(ensemble, ds.name))
         progress.log(f"wrote whole_image_risk_score_ensemble {ds.name}")
+
+
+@lru_cache(maxsize=1)
+def _load_inference_bundle(path: str) -> Any:
+    return load_bundle(Path(path))
+
+
+def _predict_slide(
+    image_id: str, ctx: WorkContext, *, store: ArtifactStore, fold: int | None,
+    size_mm: float, model: str, device: str, overwrite: bool,
+) -> str:
+    complete = (
+        store.exists("aligned_patch_embeddings", fold=fold, image_id=image_id)
+        and store.exists("patch_attention", fold=fold, image_id=image_id)
+        and store.exists("aligned_slide_embedding", fold=fold, image_id=image_id)
+        and store.exists("aligned_slide_embedding_grad", fold=fold, image_id=image_id)
+        and store.part_exists("whole_image_risk_score", image_id, fold=fold)
+    )
+    if not overwrite and complete:
+        return "skipped"
+    mil_model = _load_inference_bundle(str(store.path("model_mil", fold=fold)))
+    out = infer_mil(
+        mil_model,
+        features_path=store.path("tile_features", size_mm=size_mm, model=model, image_id=image_id),
+        background_path=store.path("tile_background", size_mm=size_mm, image_id=image_id),
+        device=device,
+    )
+    store.write(
+        "aligned_patch_embeddings",
+        {"embeddings": out.patch_embeddings},
+        fold=fold,
+        image_id=image_id,
+    )
+    store.write("patch_attention", out.attention, fold=fold, image_id=image_id)
+    store.write("aligned_slide_embedding", out.slide_embedding, fold=fold, image_id=image_id)
+    store.write(
+        "aligned_slide_embedding_grad", out.slide_embedding_grad, fold=fold, image_id=image_id
+    )
+    store.write_part(
+        "whole_image_risk_score",
+        image_id,
+        [{"image_id": image_id, "risk_score": out.risk_score, "fold": fold}],
+        fold=fold,
+    )
+    return "completed"
 
 
 def _label(labels: pd.DataFrame, image_id: str, target: str) -> object | None:

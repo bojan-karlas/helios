@@ -80,6 +80,36 @@ def test_train_and_infer_roundtrip(slides: list[SlideFeatureRef]) -> None:
     assert 0.0 <= out.risk_score <= 1.0
 
 
+def test_inference_reuses_network_and_refit_invalidates_it(
+    slides: list[SlideFeatureRef], monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from helios.components.mil import _inference_net
+
+    model = train_mil(slides, max_epochs=1, val_frac=0.0, device="cpu")
+    original = model._build_net
+    builds = []
+
+    def build():
+        net = original()
+        builds.append(net)
+        return net
+
+    monkeypatch.setattr(model, "_build_net", build)
+    path = slides[0].features_path
+    first = infer_mil(model, features_path=path, device="cpu")
+    second = infer_mil(model, features_path=path, device="cpu")
+    assert len(builds) == 1
+    np.testing.assert_allclose(first.patch_embeddings, second.patch_embeddings)
+    np.testing.assert_allclose(first.slide_embedding_grad, second.slide_embedding_grad)
+    assert first.risk_score == second.risk_score
+    assert "_inference_net" not in model.__dict__
+    model.fit(slides, max_epochs=1, val_frac=0.0, device="cpu")
+    assert _inference_net.cache_info().currsize == 0
+    before_inference = len(builds)
+    infer_mil(model, features_path=path, device="cpu")
+    assert len(builds) == before_inference + 1
+
+
 def test_train_with_internal_val_split_early_stopping(slides: list[SlideFeatureRef]) -> None:
     # 6 slides, val_frac=0.34 -> internal split carves out a val set; must not crash
     # and must still return a usable model.

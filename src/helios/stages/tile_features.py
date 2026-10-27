@@ -15,12 +15,12 @@ from numpy.typing import NDArray
 from helios.components.features import IMPLEMENTED_FEATURE_MODELS, extract_features
 from helios.data.io import ArtifactStore
 from helios.progress import DEFAULT_PROGRESS, Progress
+from helios.stages._ray import gpu_reservation
 from helios.stages._runtime import (
     DatasetArgs,
     ParallelConfig,
     StorageRoots,
     WorkContext,
-    available_gpu_count,
     cohort_store,
     resolve_datasets,
     run_work_units,
@@ -61,8 +61,8 @@ def prep_tile_features(
         and staged ``tiles``. Each dataset's outputs are written under its own
         roots unless overridden.
     roots:
-        Role-specific storage overrides. Tile inputs use the preprocessing
-        root and embedding outputs use the features root.
+        Role-specific storage overrides. Tile inputs and embedding outputs
+        use the preprocessing root.
     parallel:
         Ray execution settings; ``None`` runs slides serially in this process.
     size_mm:
@@ -83,7 +83,7 @@ def prep_tile_features(
         Progress sink (default: no-op).
     """
     _validate_models(model)
-    gpu_budget = 1.0 if device.startswith("cuda") and available_gpu_count() > 0 else 0.0
+    gpu_budget = gpu_reservation(device, parallel)
 
     for ds in resolve_datasets(datasets, roots=roots):
         store = cohort_store(ds, roots)
@@ -96,6 +96,7 @@ def prep_tile_features(
             progress=progress,
             parallel=parallel,
             num_gpus=gpu_budget,
+            persistent_workers=True,
         )
 
 

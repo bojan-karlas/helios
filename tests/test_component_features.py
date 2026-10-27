@@ -55,3 +55,25 @@ def test_feature_batch_size_must_be_positive() -> None:
         assert "batch_size" in str(error)
     else:
         raise AssertionError("expected invalid batch_size to fail")
+
+
+def test_encoder_cache_reuses_current_model_without_retaining_all_models(monkeypatch) -> None:
+    calls = []
+
+    def load(*, device):
+        calls.append(device)
+        return lambda batch: np.zeros((len(batch), 2), dtype=np.float32)
+
+    monkeypatch.setattr("helios.components.features._load_virchow2", load)
+    monkeypatch.setattr("helios.components.features._load_uni", load)
+    _load_encoder.cache_clear()
+    try:
+        first = _load_encoder("virchow2", device="cpu")
+        assert _load_encoder("virchow2", device="cpu") is first
+        assert len(calls) == 1
+        _load_encoder("uni", device="cpu")
+        assert _load_encoder.cache_info().currsize == 1
+        assert _load_encoder("virchow2", device="cpu") is not first
+        assert len(calls) == 3
+    finally:
+        _load_encoder.cache_clear()

@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from contextlib import nullcontext
-from functools import cache
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal, get_args
 
@@ -115,7 +115,7 @@ def extract_features(
     return np.concatenate(chunks, axis=0)
 
 
-@cache
+@lru_cache(maxsize=1)
 def _load_encoder(model: FeatureModel, *, device: str) -> Encoder:
     """Load the encoder callable for ``model`` (weights loaded here, not in the stage)."""
     loaders = {

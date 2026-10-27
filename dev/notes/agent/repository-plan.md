@@ -556,9 +556,20 @@ reports/
 - **Cellular table selection:** `fit risk`, `predict risk` and `report` read `cellular_features` for exactly one `cellular_size_mm` (default `0.25`, shared with `prep cell-features`); no cross-partition globbing.
 - **Workers:**
   - CPU tasks (`thumbnails`, `tiles`, `cell-features`) with optional `(start, stop)` slice bounds for future single-slide chunking.
-  - Persistent 1-per-GPU lookup-or-create actors (`tile-features`, `augment`, `predict mil`) with slice-ready signatures.
+  - Reusable 1-per-GPU actors (`tile-features`, `augment`, `predict mil`) with slice-ready component signatures.
+    Pools are scoped to each scheduling group and explicitly released on completion/failure, including on an
+    attached cluster. They are not named lookup-or-create actors shared between commands. This bounds GPU
+    ownership and prevents stale model/settings reuse across independent runs. CPU-only clusters use CPU
+    actors. Resource detection uses the connected cluster, not the coordinator's GPU visibility.
   - Isolated per-GPU subprocess worker for `prep cells` (CellViT) with `CUDA_VISIBLE_DEVICES` pinned to that GPU and `SystemConfiguration` CPU/memory bounded to `cpus_per_slide`; the same CPU share is reserved from Ray (`num_cpus`) so slides never oversubscribe, and CellViT stdout/stderr are appended to the worker log. In serial mode CellViT runs in-process with the same CPU bound (CellViT's internal Ray pool is its own and cannot be disabled).
   - Parallel fold tasks for `fit` stages (1 GPU per fold for `fit mil`, CPU fold tasks for `concept`, `morphology`, `risk`).
+- **Model reuse:** Extraction and augmentation caches retain at most one encoder/generator configuration per
+  process. Augmentation tile generation and embedding extraction have separate worker groups. MIL prediction
+  caches the loaded bundle per fold and the built inference network per model/device; refitting invalidates
+  the network cache, which is not included in serialized bundles.
+- **Scheduling bounds:** At most one active call per actor. Both tasks and actors are bounded by cluster
+  CPU/GPU capacity and the invocation's CPU cap; work is replenished as results arrive. Single-unit
+  invocations still honor explicit Ray execution. Risk kinds finish their folds before dependent kinds start.
 - **Failures:** Slide tasks continue on remaining slides when one fails, log tracebacks, and exit nonzero at stage end.
 - **SLURM scripts:** Provide both fixed multi-node allocation (`ray-cluster.sbatch`) and dynamic job-array worker pool (`ray-array-workers.sbatch`).
 

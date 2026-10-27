@@ -400,6 +400,24 @@ command (respecting `CUDA_VISIBLE_DEVICES`), while `--ray-address` attaches to
 an existing cluster; see `scripts/slurm/` for multi-node cluster and job-array
 worker launch scripts. Python stages accept `parallel=ParallelConfig(...)`.
 
+Tile-feature extraction, augmentation, and MIL prediction use reusable Ray
+actors, processing one slide at a time per worker. On GPU clusters, each
+worker reserves one GPU; GPU availability is read from the cluster, so the
+coordinator need not have a GPU. On CPU-only clusters, these stages use
+CPU workers. Model caches are bounded to the current encoder, generator, or
+MIL model rather than retaining every model processed. Augmentation generates
+tiles before extracting their embeddings. MIL prediction also reuses its
+inference network between slides, including in serial mode.
+
+Workers are scoped to a scheduling group (one dataset's feature extraction,
+one augmentation generation/embedding phase, or one MIL prediction fold).
+They are released on completion or failure, not kept as named actors between
+commands. Independent training folds run as Ray tasks: one GPU per MIL fold
+when available, and CPU reservations for concept, morphology, and risk folds.
+Risk kinds retain their dependency ordering. Existing-output skips, provenance,
+and whole-cohort prediction reductions are unchanged. Explicit parallelism also
+applies when only one work unit is selected.
+
 `--output-root` has been removed and reports a migration error. Python stages
 accept `roots=StorageRoots(...)` instead of `output_root=...`.
 `--features-root` has also been removed; tile embeddings now live under the
