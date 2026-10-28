@@ -10,6 +10,7 @@ import yaml
 from typer.testing import CliRunner
 
 from helios.cli.main import app
+from helios.components.augmentation import apply_augmentation
 from helios.data.augmentation import Augmentation, select_augmentations, validate_feature_alignment
 from helios.data.cohort import ResolvedDataset, load_cohort_spec
 from helios.data.dataset import Dataset
@@ -17,6 +18,14 @@ from helios.data.resolver import StorageRoots
 from helios.stages import augment, mil
 from helios.stages._runtime import cohort_store
 from tests.fixtures import make_cohort
+
+
+def test_augmentation_dispatch_rejects_unknown_method_and_missing_checkpoint():
+    tiles = np.zeros((1, 2, 2, 3), np.uint8)
+    with pytest.raises(ValueError, match="Unsupported augmentation method"):
+        apply_augmentation(tiles, method="unknown")
+    with pytest.raises(ValueError, match="requires a checkpoint"):
+        apply_augmentation(tiles)
 
 
 def definition(root: Path, dataset_id: str) -> Augmentation:
@@ -119,7 +128,7 @@ def test_prep_fit_discovery_and_saved_selection(monkeypatch, tmp_path):
             "coords": np.empty((3, 0), np.int64),
         }, model="virchow2", **keys)
     calls = []
-    monkeypatch.setattr(augment, "augment_stains", lambda tiles, **kw: calls.append(kw) or tiles)
+    monkeypatch.setattr("helios.components.augmentation.augment_stains", lambda tiles, **kw: calls.append(kw) or tiles)
     monkeypatch.setattr(augment, "extract_features", lambda tiles, **kw: np.ones((len(tiles), 4), np.float32))
     output = tmp_path / "arbitrary-name"
     for _ in range(2):
@@ -164,7 +173,7 @@ def test_missing_features_fail_without_generation(monkeypatch, tmp_path):
 def test_cli_selection_disable_and_removed_options(monkeypatch, tmp_path):
     seen = []
     monkeypatch.setattr(mil, "fit_mil", lambda **kwargs: seen.append(kwargs))
-    monkeypatch.setattr("helios.cli.fit.console_progress", lambda *a, **k: None)
+    monkeypatch.setattr("helios.cli._common.console_progress", lambda *a, **k: None)
     runner = CliRunner()
     for args, expected in [
         (["--augmentation", "a", "--augmentation", "b"], ["a", "b"]),
@@ -256,7 +265,7 @@ def test_resume_definition_and_warn_on_changed_checkpoint(monkeypatch, tmp_path,
     image_id = ds.dataset().image_ids[0]
     cohort_store(ds).write("tiles", {"tiles": np.zeros((3, 2, 2, 3), np.uint8)}, size_mm=0.25, image_id=image_id)
     calls = []
-    monkeypatch.setattr(augment, "augment_stains", lambda tiles, **kw: calls.append(kw) or tiles)
+    monkeypatch.setattr("helios.components.augmentation.augment_stains", lambda tiles, **kw: calls.append(kw) or tiles)
     monkeypatch.setattr(augment, "extract_features", lambda tiles, **kw: np.ones((len(tiles), 4), np.float32))
     output = tmp_path / "prepared"
     augment.prep_augment(datasets=[root], output_dir=str(output), target=["domain_b"], checkpoint=["first.pth"])

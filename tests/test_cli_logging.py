@@ -45,8 +45,6 @@ def test_explicit_log_dir_overrides_default(tmp_path, monkeypatch):
 
 
 def test_every_output_command_uses_resolved_results_root(monkeypatch, tmp_path):
-    from importlib import import_module
-
     from helios.stages import STAGES
 
     runner = CliRunner()
@@ -56,8 +54,9 @@ def test_every_output_command_uses_resolved_results_root(monkeypatch, tmp_path):
             with monkeypatch.context() as patch:
                 patch.setattr(f"{stage.__module__}.{stage.__name__}", lambda **kwargs: None)
                 patch.setattr("helios.config.stage_config.load_stage_params", lambda *a, **k: {})
-                module = import_module(f"helios.cli.{'main' if verb == 'report' else verb}")
-                patch.setattr(module, "console_progress", lambda path, _seen=seen, **kwargs: _seen.append(path))
+                patch.setattr(
+                    "helios.cli._common.console_progress", lambda path, _seen=seen, **kwargs: _seen.append(path)
+                )
                 command = [verb] if verb == "report" else [verb, noun]
                 result = runner.invoke(app, command + [
                     "--dataset", str(tmp_path / "source"), "--models-root", str(tmp_path / "models"),
@@ -69,7 +68,40 @@ def test_every_output_command_uses_resolved_results_root(monkeypatch, tmp_path):
 def test_bare_prep_uses_resolved_results_root(monkeypatch, tmp_path):
     seen = []
     monkeypatch.setattr("helios.stages.STAGES", {"prep": {}})
-    monkeypatch.setattr("helios.cli.prep.console_progress", lambda path, **kw: seen.append(path))
+    monkeypatch.setattr("helios.cli._common.console_progress", lambda path, **kw: seen.append(path))
     result = CliRunner().invoke(app, ["prep", "--dataset", str(tmp_path / "source")])
     assert result.exit_code == 0, result.exception
     assert seen == [tmp_path / "source/results"]
+
+
+def test_shared_invocation_preserves_roots_filters_and_execution(monkeypatch, tmp_path):
+    from helios.cli._common import prepare_invocation
+
+    seen = []
+    monkeypatch.setattr(
+        "helios.cli._common.console_progress", lambda path, **kwargs: seen.append((path, kwargs))
+    )
+    invocation = prepare_invocation(
+        [f"{tmp_path / 'first'},{tmp_path / 'second'}"],
+        models_root=tmp_path / "models", results_root=tmp_path / "results",
+        splits_file=tmp_path / "assignments.csv", where="path_thickness > 1",
+        ray_address="auto", max_cpus=3, require_models=True,
+        log_dir=tmp_path / "custom-logs", run_tag="example",
+    )
+    assert [ds.root for ds in invocation.datasets] == [tmp_path / "first", tmp_path / "second"]
+    assert all(ds.where == "path_thickness > 1" for ds in invocation.datasets)
+    assert invocation.roots.models_root == tmp_path / "models"
+    assert invocation.roots.results_root == tmp_path / "results"
+    assert invocation.roots.splits_file == tmp_path / "assignments.csv"
+    assert invocation.parallel.ray_address == "auto"
+    assert invocation.parallel.max_cpus == 3
+    assert not seen
+    invocation.progress()
+    assert seen == [(tmp_path / "results/first", {"log_dir": tmp_path / "custom-logs", "run_tag": "example"})]
+
+
+def test_shared_invocation_preserves_pooled_training_requirement(tmp_path):
+    from helios.cli._common import prepare_invocation
+
+    with pytest.raises(ValueError, match="Pooled training requires"):
+        prepare_invocation([str(tmp_path / "first"), str(tmp_path / "second")], require_models=True)

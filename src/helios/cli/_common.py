@@ -8,7 +8,9 @@ stage function. Comma-separated list flags REPLACE the configured list
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import typer
 
@@ -16,6 +18,52 @@ from helios.data.cohort import ResolvedDataset
 from helios.data.resolver import StorageRoots
 from helios.progress import Progress, configure_logging, create_run_log_dir
 from helios.progress.reporter import ProgressReporter
+
+if TYPE_CHECKING:
+    from helios.stages._ray import ParallelConfig
+
+
+@dataclass(frozen=True)
+class Invocation:
+    datasets: list[ResolvedDataset]
+    roots: StorageRoots
+    parallel: ParallelConfig
+    log_dir: Path | None
+    run_tag: str | None
+
+    def progress(self) -> Progress:
+        """Create logs only when the command is ready to call its stage."""
+        return console_progress(
+            resolved_results_root(self.datasets[0], self.roots),
+            log_dir=self.log_dir,
+            run_tag=self.run_tag,
+        )
+
+
+def prepare_invocation(
+    dataset: list[str],
+    *,
+    preprocessing_root: Path | None = None,
+    models_root: Path | None = None,
+    results_root: Path | None = None,
+    splits_file: Path | None = None,
+    ray_address: str | None = None,
+    max_cpus: int | None = None,
+    where: str | None = None,
+    require_models: bool = False,
+    log_dir: Path | None = None,
+    run_tag: str | None = None,
+) -> Invocation:
+    """Resolve shared command inputs without hiding the explicit Typer options."""
+    from helios.stages._runtime import ParallelConfig, resolve_datasets
+
+    roots = StorageRoots(
+        preprocessing_root=preprocessing_root, models_root=models_root,
+        results_root=results_root, splits_file=splits_file,
+    )
+    parallel = ParallelConfig(ray_address=ray_address, max_cpus=max_cpus)
+    datasets = resolve_datasets(datasets_arg(dataset), where=where, roots=roots, require_models=require_models)
+    return Invocation(datasets, roots, parallel, log_dir, run_tag)
 
 
 def reject_output_root(value: Path | None) -> None:

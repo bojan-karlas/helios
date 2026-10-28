@@ -106,15 +106,16 @@ def _fit_concept_fold(
         labels.append(meta.loc[ids].reset_index())
         risk.append(_select_risk(store.read("whole_image_risk_score", fold=fold), ids))
 
+    params = {"n_bootstrap": n_bootstrap}
     bundle = train_concepts(
         np.concatenate(embeddings, axis=0) if embeddings else np.empty((0, 0), np.float32),
         pd.concat(labels, ignore_index=True),
         pd.concat(risk, ignore_index=True),
-        n_bootstrap=n_bootstrap,
+        **params,
     )
     meta = build_bundle_metadata(
         "concept",
-        {"n_bootstrap": n_bootstrap},
+        dict(params),
         resolved,
         roots,
         fold=fold,

@@ -9,11 +9,11 @@ from __future__ import annotations
 
 from functools import partial
 from pathlib import Path
-from typing import Literal
+from typing import Literal, TypedDict
 
 import pandas as pd
 
-from helios.components.morphology import infer_morphology, train_morphology
+from helios.components.morphology import MorphologyEstimator, infer_morphology, train_morphology
 from helios.data.cohort import ResolvedDataset
 from helios.data.io import ArtifactStore
 from helios.progress import DEFAULT_PROGRESS, Progress
@@ -44,6 +44,18 @@ DEFAULT_RESOLUTION: float = 1.0
 DEFAULT_SIGNIFICANCE_ALPHA: float = 0.05
 DEFAULT_ESTIMATOR: str = "random_forest"
 DEFAULT_SEED: int = 42
+
+
+class _TrainingParams(TypedDict):
+    target: str
+    attention_cutoff: float
+    n_pca: int
+    k_micro: int
+    k_neighbors: int
+    resolution: float
+    significance_alpha: float
+    estimator: MorphologyEstimator
+    seed: int
 
 
 def fit_morphology(
@@ -148,33 +160,26 @@ def _fit_morphology_fold(
             attention.append(store.read("patch_attention", fold=fold, image_id=image_id).assign(image_id=image_id))
         labels.append(meta.loc[ids].reset_index())
 
+    params: _TrainingParams = {
+        "target": target,
+        "attention_cutoff": attention_cutoff,
+        "n_pca": n_pca,
+        "k_micro": k_micro,
+        "k_neighbors": k_neighbors,
+        "resolution": resolution,
+        "significance_alpha": significance_alpha,
+        "estimator": estimator,
+        "seed": seed,
+    }
     bundle = train_morphology(
         paths,
         pd.concat(attention, ignore_index=True) if attention else pd.DataFrame(),
         pd.concat(labels, ignore_index=True),
-        target=target,
-        attention_cutoff=attention_cutoff,
-        n_pca=n_pca,
-        k_micro=k_micro,
-        k_neighbors=k_neighbors,
-        resolution=resolution,
-        significance_alpha=significance_alpha,
-        estimator=estimator,
-        seed=seed,
+        **params,
     )
     meta = build_bundle_metadata(
         "morphology",
-        {
-            "target": target,
-            "attention_cutoff": attention_cutoff,
-            "n_pca": n_pca,
-            "k_micro": k_micro,
-            "k_neighbors": k_neighbors,
-            "resolution": resolution,
-            "significance_alpha": significance_alpha,
-            "estimator": estimator,
-            "seed": seed,
-        },
+        dict(params),
         resolved,
         roots,
         fold=fold,

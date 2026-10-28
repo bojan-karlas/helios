@@ -24,9 +24,8 @@ from helios.cli._common import (
     REMOVED_OUTPUT_ROOT,
     RESULTS_ROOT,
     RUN_TAG,
-    console_progress,
     datasets_arg,
-    resolved_results_root,
+    prepare_invocation,
 )
 from helios.cli.fit import fit_app
 from helios.cli.predict import predict_app
@@ -103,31 +102,29 @@ def report(
 ) -> None:
     """Build the per-case reports and cohort summary (web-app data package)."""
     from helios.config.stage_config import load_stage_params
-    from helios.data.resolver import StorageRoots
-    from helios.stages._runtime import ParallelConfig, resolve_datasets
     from helios.stages.report import build_report
 
-    roots = StorageRoots(
+    invocation = prepare_invocation(
+        dataset,
         preprocessing_root=preprocessing_root,
-        models_root=models_root, results_root=results_root,
+        models_root=models_root,
+        results_root=results_root,
+        ray_address=ray_address,
+        max_cpus=max_cpus,
+        log_dir=log_dir,
+        run_tag=run_tag,
     )
-    parallel = ParallelConfig(ray_address=ray_address, max_cpus=max_cpus)
-    datasets = resolve_datasets(datasets_arg(dataset), roots=roots)
     overrides = {
         "assets": False if no_assets else None,
         "summarize": False if no_summarize else None,
     }
     params = load_stage_params("report", "build", config_path=config, overrides=overrides)
     build_report(
-        datasets=datasets,
-        roots=roots,
-        parallel=parallel,
+        datasets=invocation.datasets,
+        roots=invocation.roots,
+        parallel=invocation.parallel,
         overwrite=overwrite,
-        progress=console_progress(
-            resolved_results_root(datasets[0], roots),
-            log_dir=log_dir,
-            run_tag=run_tag,
-        ),
+        progress=invocation.progress(),
         **params,
     )
     typer.echo("report: done")

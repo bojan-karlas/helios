@@ -36,14 +36,6 @@ DEFAULT_LYMPH_FRAC_THRESHOLD: float = 0.05
 DEFAULT_MITOSIS_MIN_COUNT: int = 1
 
 
-def _resolve_single_size_mm(size_mm: float | list[float]) -> float:
-    if isinstance(size_mm, list):
-        if len(size_mm) != 1:
-            raise ValueError("prep_cell_features requires a single size_mm value.")
-        return float(size_mm[0])
-    return float(size_mm)
-
-
 def _threshold_hive(
     *,
     tissue_min_cells: int,
@@ -68,7 +60,7 @@ def prep_cell_features(
     datasets: DatasetArgs,
     roots: StorageRoots | None = None,
     parallel: ParallelConfig | None = None,
-    size_mm: float | list[float] = DEFAULT_SIZE_MM,
+    size_mm: float = DEFAULT_SIZE_MM,
     tissue_min_cells: int = DEFAULT_TISSUE_MIN_CELLS,
     tumor_percentile: float = DEFAULT_TUMOR_PERCENTILE,
     lymph_frac_threshold: float = DEFAULT_LYMPH_FRAC_THRESHOLD,
@@ -83,8 +75,11 @@ def prep_cell_features(
     for a single ``size_mm`` per slide, persisted as ``cellular_features.csv.parts``
     and reduced into ``cellular_features.csv``. Requires the cell pipeline
     (``prep cells``) and tile metadata (``prep tiles``).
+
+    ``size_mm`` is a scalar per invocation. Run tile-size sweeps as separate
+    jobs; within an invocation, parallelism is over slides.
     """
-    resolved_size = _resolve_single_size_mm(size_mm)
+    resolved_size = float(size_mm)
     extra_hive = _threshold_hive(
         tissue_min_cells=tissue_min_cells,
         tumor_percentile=tumor_percentile,

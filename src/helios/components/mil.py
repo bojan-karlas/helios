@@ -86,16 +86,8 @@ class SlideFeatureRef:
     image_id: str
     features_path: Path
     background_path: Path | None = None
-    aug_features_path: Path | None = None
     aug_features_paths: tuple[Path, ...] = ()
     label: object | None = None
-
-    def resolved_aug_paths(self) -> tuple[Path, ...]:
-        if self.aug_features_paths:
-            return self.aug_features_paths
-        if self.aug_features_path is not None:
-            return (self.aug_features_path,)
-        return ()
 
 
 @dataclass(frozen=True)
@@ -506,11 +498,12 @@ def train_mil(
 
     GRAIN: one fold (all of its train slides) per call. Tiles are streamed from
     each slide's ``features_path`` (background tiles excluded via
-    ``background_path``). If a tile has a stain-augmented counterpart
-    (``aug_features_path``), each tile independently swaps to it with
-    probability ``aug_swap_prob``: ``aug_mode="replace"`` (default) substitutes
-    the tile's embedding in place; ``aug_mode="augment"`` keeps the original
-    tile and appends the augmented one as an extra bag entry instead.
+    ``background_path``). Augmented features come from ``aug_features_paths``
+    (an empty tuple disables augmentation). With ``aug_mode="replace"``
+    (default), each tile swaps with probability ``aug_swap_prob``, choosing
+    uniformly among the attached augmentations. With ``aug_mode="augment"``,
+    originals are retained and each augmentation independently appends tile
+    embeddings with probability ``aug_swap_prob``.
 
     Early stopping monitors AUPRC on an internal ``val_frac`` split carved out
     of ``slides`` (this fold's CV test slides are never visible here -- they are
@@ -647,7 +640,7 @@ def _load_training_bag(
     foreground = ~is_background
     feats = feats[foreground]
 
-    aug_paths = ref.resolved_aug_paths()
+    aug_paths = ref.aug_features_paths
     if aug_paths and aug_swap_prob > 0 and feats.shape[0] > 0:
         aug_stacks = [_read_hdf5_features(p)[foreground] for p in aug_paths]
         if aug_mode == "replace":

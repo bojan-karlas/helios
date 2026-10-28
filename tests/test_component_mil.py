@@ -135,7 +135,7 @@ def test_aug_mode_replace_swaps_in_place(tmp_path: Path) -> None:
     _write_features(aug_path, aug)
 
     ref = SlideFeatureRef(
-        image_id="A", features_path=features_path, background_path=None, aug_features_path=aug_path, label=1
+        image_id="A", features_path=features_path, background_path=None, aug_features_paths=(aug_path,), label=1
     )
     bag = _load_training_bag(
         ref, aug_swap_prob=1.0, aug_mode="replace", rng=np.random.default_rng(0)
@@ -154,7 +154,7 @@ def test_aug_mode_augment_appends_rows(tmp_path: Path) -> None:
     _write_features(aug_path, aug)
 
     ref = SlideFeatureRef(
-        image_id="A", features_path=features_path, background_path=None, aug_features_path=aug_path, label=1
+        image_id="A", features_path=features_path, background_path=None, aug_features_paths=(aug_path,), label=1
     )
     bag = _load_training_bag(
         ref, aug_swap_prob=1.0, aug_mode="augment", rng=np.random.default_rng(0)

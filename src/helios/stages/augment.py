@@ -6,7 +6,7 @@ from functools import partial
 from pathlib import Path
 from typing import cast
 
-from helios.components.augmentation import AUGMENTATION_METHODS, augment_stains
+from helios.components.augmentation import AUGMENTATION_METHODS, apply_augmentation
 from helios.components.features import FEATURE_MODELS, FeatureModel, extract_features
 from helios.data.augmentation import Augmentation
 from helios.data.io import ArtifactStore
@@ -136,8 +136,8 @@ def _augment_slide(
     if overwrite or not aug_store.exists("tile_augmentation", size_mm=s, image_id=image_id):
         tiles = _tiles_array(store.read("tiles", size_mm=s, image_id=image_id))
         tile_ids, coords = _tile_index(store, size_mm=s, image_id=image_id, n_tiles=len(tiles))
-        augmented = augment_stains(
-            tiles, checkpoint=str(definition.checkpoint),
+        augmented = apply_augmentation(
+            tiles, method=definition.method, checkpoint=str(definition.checkpoint),
             batch_size=augmentation_batch_size, device=device,
         )
         if len(augmented) != len(tiles):

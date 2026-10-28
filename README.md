@@ -476,10 +476,13 @@ recorded settings and checkpoint paths. Use explicit prep options to create a
 new definition.
 
 Pooled training requires an explicit `--models-root`. Use that same model base
-for prediction, including on a different dataset. With a shared `--results-root`,
-each dataset's predictions and reports use its own directory-name subfolder;
-constituent directory names must be distinct. The existing path-list syntax
-and `roots` alias for `datasets` remain supported.
+for prediction, including on a different dataset. With an explicit `--results-root`,
+predictions and reports use `<results_root>/<logical_cohort_name>/`. Constituents
+of a named cohort share that destination. Without a cohort name, the physical
+dataset's directory name is used instead; distinct dataset roots supplied this
+way must have distinct directory names. Dataset descriptor IDs and display names
+do not determine these subfolder names. The existing path-list syntax and `roots`
+alias for `datasets` remain supported.
 
 This makes training and evaluation populations reproducible and reviewable. You
 can also:

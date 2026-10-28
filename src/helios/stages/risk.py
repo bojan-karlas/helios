@@ -156,10 +156,11 @@ def _fit_risk_fold(
         features.append(feat_df)
         targets.append(meta.loc[ids, target])
 
+    training_params = {"estimator": estimator}
     bundle = train_risk_model(
         pd.concat(features, ignore_index=True),
         pd.concat(targets, ignore_index=True),
-        estimator=estimator,
+        **training_params,
     )
     meta = build_bundle_metadata(
         "risk",
@@ -168,7 +169,7 @@ def _fit_risk_fold(
             "target": target,
             "staging_feature": staging_feature,
             "clinical_features": clinical_features,
-            "estimator": estimator,
+            **training_params,
             "cellular_size_mm": cellular_size_mm,
         },
         resolved,

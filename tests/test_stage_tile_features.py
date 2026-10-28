@@ -114,7 +114,7 @@ def test_cached_augmentation_reads_preprocessing_and_writes_features(monkeypatch
     def unexpected_augmentation(*args, **kwargs):
         pytest.fail("Cached augmented tiles must be reused without running CycleGAN.")
 
-    monkeypatch.setattr("helios.stages.augment.augment_stains", unexpected_augmentation)
+    monkeypatch.setattr("helios.components.augmentation.augment_stains", unexpected_augmentation)
     monkeypatch.setattr("helios.stages.augment.extract_features", _fake_extract)
     prep_augment(
         datasets=[cohort], roots=roots, target=["lab"], model=["virchow2"], image_ids=[image_id],
@@ -142,7 +142,7 @@ def test_augmentation_separates_generator_and_encoder_work(monkeypatch, cohort: 
         return run_work_units(units, fn, **kwargs)
 
     monkeypatch.setattr("helios.stages.augment.run_work_units", dispatch)
-    monkeypatch.setattr("helios.stages.augment.augment_stains", lambda tiles, **kwargs: tiles)
+    monkeypatch.setattr("helios.components.augmentation.augment_stains", lambda tiles, **kwargs: tiles)
     monkeypatch.setattr("helios.stages.augment.extract_features", _fake_extract)
     image_ids = ["FAKE-SKCM-P00000-S01-B1-I1", "FAKE-SKCM-P00001-S01-B1-I1"]
     _stage_tiles(cohort, image_ids)

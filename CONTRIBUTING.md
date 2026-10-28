@@ -90,14 +90,22 @@ its component(s) once per work unit, and writes the outputs back.
   configurable (config introspection) the moment it is registered here.
 - A stage's **keyword parameters with defaults are the single source of truth
   for its configuration** -- see `helios.config` below.
+- Fit stages reuse explicit parameter mappings for component arguments and
+  saved bundle configuration. Keep data-selection parameters in the saved
+  configuration as well; do not capture runtime objects through `locals()`.
+- Augmentation preparation calls `components.augmentation.apply_augmentation`
+  for method dispatch. Method-specific inference belongs in the component.
 
 ### `helios.cli` -- the command-line surface
 
 Thin [Typer](https://typer.tiangolo.com/) wrappers, one module per verb
 (`prep.py`, `fit.py`, `predict.py`, `main.py`). A CLI command resolves effective
 parameters (defaults + `--config` + flags), builds a console `Progress`, and
-calls the importable stage function. Shared flag parsing lives in
-[`cli/_common.py`](src/helios/cli/_common.py). The CLI holds **no domain logic**.
+calls the importable stage function. Shared flag parsing and invocation setup
+live in [`cli/_common.py`](src/helios/cli/_common.py): `prepare_invocation`
+resolves datasets, storage roots, and execution settings; `Invocation.progress()`
+opens the run logs when the command is ready to call its stage. Keep Typer
+options explicit on each command. The CLI holds **no domain logic**.
 
 ### Supporting infrastructure
 

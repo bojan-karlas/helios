@@ -23,10 +23,8 @@ from helios.cli._common import (
     RESULTS_ROOT,
     RUN_TAG,
     SPLITS_FILE,
-    console_progress,
     csv,
-    datasets_arg,
-    resolved_results_root,
+    prepare_invocation,
 )
 
 predict_app = typer.Typer(add_completion=False, help="Run inference (per-cohort).")
@@ -63,24 +61,25 @@ def mil(
 ) -> None:
     """Score whole-slide A-MIL and reduce whole-image risk."""
     from helios.config.stage_config import load_stage_params
-    from helios.data.resolver import StorageRoots
-    from helios.stages._runtime import ParallelConfig, resolve_datasets
     from helios.stages.mil import predict_mil
 
-    roots = StorageRoots(
+    invocation = prepare_invocation(
+        dataset,
         preprocessing_root=preprocessing_root,
-        models_root=models_root, results_root=results_root,
+        models_root=models_root,
+        results_root=results_root,
         splits_file=splits_file,
+        ray_address=ray_address,
+        max_cpus=max_cpus,
+        where=filter,
+        log_dir=log_dir,
+        run_tag=run_tag,
     )
-    parallel = ParallelConfig(ray_address=ray_address, max_cpus=max_cpus)
-    datasets = resolve_datasets(datasets_arg(dataset), where=filter, roots=roots)
     overrides = {"size_mm": size_mm, "model": model, "device": device}
     params = load_stage_params("predict", "mil", config_path=config, overrides=overrides)
     predict_mil(
-        datasets=datasets, roots=roots, parallel=parallel, overwrite=overwrite,
-        progress=console_progress(
-            resolved_results_root(datasets[0], roots), log_dir=log_dir, run_tag=run_tag
-        ),
+        datasets=invocation.datasets, roots=invocation.roots, parallel=invocation.parallel, overwrite=overwrite,
+        progress=invocation.progress(),
         **params,
     )
     typer.echo("predict mil: done")
@@ -105,23 +104,24 @@ def concept(
 ) -> None:
     """Predict concepts and the concept-based risk score."""
     from helios.config.stage_config import load_stage_params
-    from helios.data.resolver import StorageRoots
-    from helios.stages._runtime import ParallelConfig, resolve_datasets
     from helios.stages.concept import predict_concept
 
-    roots = StorageRoots(
+    invocation = prepare_invocation(
+        dataset,
         preprocessing_root=preprocessing_root,
-        models_root=models_root, results_root=results_root,
+        models_root=models_root,
+        results_root=results_root,
         splits_file=splits_file,
+        ray_address=ray_address,
+        max_cpus=max_cpus,
+        where=filter,
+        log_dir=log_dir,
+        run_tag=run_tag,
     )
-    parallel = ParallelConfig(ray_address=ray_address, max_cpus=max_cpus)
-    datasets = resolve_datasets(datasets_arg(dataset), where=filter, roots=roots)
     params = load_stage_params("predict", "concept", config_path=config)
     predict_concept(
-        datasets=datasets, roots=roots, parallel=parallel, overwrite=overwrite,
-        progress=console_progress(
-            resolved_results_root(datasets[0], roots), log_dir=log_dir, run_tag=run_tag
-        ),
+        datasets=invocation.datasets, roots=invocation.roots, parallel=invocation.parallel, overwrite=overwrite,
+        progress=invocation.progress(),
         **params,
     )
     typer.echo("predict concept: done")
@@ -146,23 +146,24 @@ def morphology(
 ) -> None:
     """Assign clusters, score cluster presence, and produce morphology risk."""
     from helios.config.stage_config import load_stage_params
-    from helios.data.resolver import StorageRoots
-    from helios.stages._runtime import ParallelConfig, resolve_datasets
     from helios.stages.morphology import predict_morphology
 
-    roots = StorageRoots(
+    invocation = prepare_invocation(
+        dataset,
         preprocessing_root=preprocessing_root,
-        models_root=models_root, results_root=results_root,
+        models_root=models_root,
+        results_root=results_root,
         splits_file=splits_file,
+        ray_address=ray_address,
+        max_cpus=max_cpus,
+        where=filter,
+        log_dir=log_dir,
+        run_tag=run_tag,
     )
-    parallel = ParallelConfig(ray_address=ray_address, max_cpus=max_cpus)
-    datasets = resolve_datasets(datasets_arg(dataset), where=filter, roots=roots)
     params = load_stage_params("predict", "morphology", config_path=config)
     predict_morphology(
-        datasets=datasets, roots=roots, parallel=parallel, overwrite=overwrite,
-        progress=console_progress(
-            resolved_results_root(datasets[0], roots), log_dir=log_dir, run_tag=run_tag
-        ),
+        datasets=invocation.datasets, roots=invocation.roots, parallel=invocation.parallel, overwrite=overwrite,
+        progress=invocation.progress(),
         **params,
     )
     typer.echo("predict morphology: done")
@@ -190,23 +191,24 @@ def risk(
 ) -> None:
     """Score the simple risk sub-models (and HELIOS fusion + survival)."""
     from helios.config.stage_config import load_stage_params
-    from helios.data.resolver import StorageRoots
-    from helios.stages._runtime import ParallelConfig, resolve_datasets
     from helios.stages.risk import predict_risk
 
-    roots = StorageRoots(
+    invocation = prepare_invocation(
+        dataset,
         preprocessing_root=preprocessing_root,
-        models_root=models_root, results_root=results_root,
+        models_root=models_root,
+        results_root=results_root,
         splits_file=splits_file,
+        ray_address=ray_address,
+        max_cpus=max_cpus,
+        where=filter,
+        log_dir=log_dir,
+        run_tag=run_tag,
     )
-    parallel = ParallelConfig(ray_address=ray_address, max_cpus=max_cpus)
-    datasets = resolve_datasets(datasets_arg(dataset), where=filter, roots=roots)
     params = load_stage_params("predict", "risk", config_path=config, overrides={"risk": csv(risk)})
     predict_risk(
-        datasets=datasets, roots=roots, parallel=parallel, overwrite=overwrite,
-        progress=console_progress(
-            resolved_results_root(datasets[0], roots), log_dir=log_dir, run_tag=run_tag
-        ),
+        datasets=invocation.datasets, roots=invocation.roots, parallel=invocation.parallel, overwrite=overwrite,
+        progress=invocation.progress(),
         **params,
     )
     typer.echo("predict risk: done")
