@@ -293,6 +293,27 @@ artifacts:
       concept-direction analysis. Per-fold; not consumed by concept training/inference itself, only by ad hoc
       concept-sensitivity analysis (notebooks).
 
+  - id: aligned_slide_hidden_embedding
+    role: results
+    title: Aligned Slide Hidden Embedding
+    key: [fold, image_id]
+    format: npy
+    path: mil/slide_hidden_embedding/fold={fold}/{image_id}.npy
+    description: |
+      A-MIL 256-dim classifier-head activation one layer before aligned_slide_embedding (after the 512->256 linear
+      layer, its layer norm and ReLU). Per-fold; used with aligned_slide_embedding by concept-sensitivity analysis
+      (notebooks) to compare concept directions across the last two hidden layers.
+
+  - id: aligned_slide_hidden_embedding_grad
+    role: results
+    title: Aligned Slide Hidden Embedding Gradient
+    key: [fold, image_id]
+    format: npy
+    path: mil/slide_hidden_embedding_grad/fold={fold}/{image_id}.npy
+    description: |
+      Gradient of the pre-sigmoid A-MIL logit w.r.t. aligned_slide_hidden_embedding. Per-fold; consumed only by
+      concept-sensitivity analysis (notebooks).
+
   - id: whole_image_risk_score
     role: results
     title: Whole-Image Risk Score (Per-Fold)
@@ -712,6 +733,8 @@ components:
         patch_attention,
         aligned_slide_embedding,
         aligned_slide_embedding_grad,
+        aligned_slide_hidden_embedding,
+        aligned_slide_hidden_embedding_grad,
         whole_image_risk_score,
       ]
     partitions: [fold]

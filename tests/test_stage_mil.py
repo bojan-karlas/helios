@@ -103,6 +103,8 @@ def test_predict_scores_each_fold_then_reduces(monkeypatch, cohort: Path) -> Non
             slide_embedding=np.ones(4, dtype=np.float32),
             slide_embedding_grad=np.zeros(4, dtype=np.float32),
             risk_score=0.5,
+            slide_hidden_embedding=np.ones(8, dtype=np.float32),
+            slide_hidden_embedding_grad=np.zeros(8, dtype=np.float32),
         )
 
     def _fake_reduce(per_fold_scores, splits):
@@ -118,6 +120,8 @@ def test_predict_scores_each_fold_then_reduces(monkeypatch, cohort: Path) -> Non
         for image_id in IMAGE_IDS:
             assert store.exists("aligned_slide_embedding", fold=fold, image_id=image_id)
             assert store.exists("aligned_slide_embedding_grad", fold=fold, image_id=image_id)
+            assert store.exists("aligned_slide_hidden_embedding", fold=fold, image_id=image_id)
+            assert store.exists("aligned_slide_hidden_embedding_grad", fold=fold, image_id=image_id)
     ensemble = store.read("whole_image_risk_score_ensemble")
     assert sorted(ensemble["image_id"]) == sorted(IMAGE_IDS)
     assert (ensemble["dataset"] == Path(cohort).name).all(), "ensemble must carry dataset provenance"
@@ -165,6 +169,8 @@ def test_union_extract_fit_predict_and_downstream_fit_use_split_roots(monkeypatc
             slide_embedding=np.ones(4, np.float32),
             slide_embedding_grad=np.zeros(4, np.float32),
             risk_score=0.5,
+            slide_hidden_embedding=np.ones(8, np.float32),
+            slide_hidden_embedding_grad=np.zeros(8, np.float32),
         )
 
     monkeypatch.setattr(mil, "infer_mil", fake_infer)

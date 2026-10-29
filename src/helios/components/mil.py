@@ -99,6 +99,8 @@ class MilSlideOutputs:
     ``attention``, and per-tile saliency ``tile_gradient`` columns.
     ``slide_embedding_grad`` is the gradient of the pre-sigmoid logit w.r.t.
     ``slide_embedding`` (a TCAV-style concept-sensitivity signal).
+    ``slide_hidden_embedding`` is the 256-dim classifier-head activation one
+    layer earlier, with its logit gradient ``slide_hidden_embedding_grad``.
     """
 
     patch_embeddings: NDArray[np.float32]
@@ -106,6 +108,8 @@ class MilSlideOutputs:
     slide_embedding: NDArray[np.float32]
     slide_embedding_grad: NDArray[np.float32]
     risk_score: float
+    slide_hidden_embedding: NDArray[np.float32]
+    slide_hidden_embedding_grad: NDArray[np.float32]
 
 
 # =================================================================
@@ -234,13 +238,16 @@ class _MultiBranchGatedAMIL(nn.Module):
 
     def forward_with_attribution(
         self, x: torch.Tensor
-    ) -> tuple[float, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[
+        float, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor
+    ]:
         """Score one slide AND compute gradient-based tile/slide attribution.
 
         Inference-only (requires grad tracking + one ``backward()``, unlike the
         plain :meth:`forward` used during training). Returns ``(risk_prob,
         patch_embeddings [N,L], weighted_attention [N], tile_gradients [N],
-        slide_embedding [128], slide_embedding_grad [128])``.
+        slide_embedding [128], slide_embedding_grad [128],
+        slide_hidden_embedding [256], slide_hidden_embedding_grad [256])``.
         """
         h_enhanced = x + self.feature_enhancer(x)
         h_weighted = h_enhanced * self.quality_estimator(h_enhanced)
@@ -268,8 +275,13 @@ class _MultiBranchGatedAMIL(nn.Module):
 
         m_fused = self.branch_fusion(reps_stacked.view(-1))
 
-        penultimate = m_fused
-        for layer in self.classifier[:10]:  # through the 128-dim ReLU (post Linear(256, 128))
+        hidden = m_fused
+        for layer in self.classifier[:8]:  # through the 256-dim ReLU (post Linear(512, 256)) and Dropout(0.2)
+            hidden = layer(hidden)
+        hidden.retain_grad()
+
+        penultimate = hidden
+        for layer in self.classifier[8:10]:  # through the 128-dim ReLU (post Linear(256, 128))
             penultimate = layer(penultimate)
         penultimate.retain_grad()
 
@@ -292,6 +304,8 @@ class _MultiBranchGatedAMIL(nn.Module):
             tile_scores.grad.detach().clone(),
             penultimate.detach(),
             penultimate.grad.detach().clone(),
+            hidden.detach(),
+            hidden.grad.detach().clone(),
         )
 
     def objective(
@@ -462,34 +476,20 @@ class MilAttentionModel(Model):
 
     def predict(
         self, inputs: NDArray[np.float32], *, device: str | None = None
-    ) -> tuple[
-        float, NDArray[np.float32], NDArray[np.float32], NDArray[np.float32], NDArray[np.float32], NDArray[np.float32]
-    ]:
+    ) -> tuple[float, NDArray[np.float32], NDArray[np.float32], NDArray[np.float32], NDArray[np.float32],
+               NDArray[np.float32], NDArray[np.float32], NDArray[np.float32]]:
         """Score one slide's tile bag with gradient-based tile/slide attribution.
 
         Returns ``(risk_prob, patch_embeddings[N,L], weighted_attention[N],
-        tile_gradients[N], slide_embedding[128], slide_embedding_grad[128])``.
+        tile_gradients[N], slide_embedding[128], slide_embedding_grad[128],
+        slide_hidden_embedding[256], slide_hidden_embedding_grad[256])``.
         """
         dev = torch.device(_resolve_device(device or self.device))
         net = _inference_net(self, str(dev))
         net.zero_grad()
         x = torch.from_numpy(np.asarray(inputs, dtype=np.float32)).to(dev)
-        (
-            risk_prob,
-            patch_embeddings,
-            weighted_attention,
-            tile_gradients,
-            slide_embedding,
-            slide_embedding_grad,
-        ) = net.forward_with_attribution(x)
-        return (
-            risk_prob,
-            patch_embeddings.cpu().numpy(),
-            weighted_attention.cpu().numpy(),
-            tile_gradients.cpu().numpy(),
-            slide_embedding.cpu().numpy(),
-            slide_embedding_grad.cpu().numpy(),
-        )
+        risk_prob, *arrays = net.forward_with_attribution(x)
+        return (risk_prob, *(array.cpu().numpy() for array in arrays))
 
 
 @lru_cache(maxsize=1)
@@ -565,8 +565,8 @@ def infer_mil(
     GRAIN: one slide per call; tiles are streamed from ``features_path``
     (background excluded via ``background_path``). One gradient backward pass
     (through the pre-sigmoid logit) additionally produces gradient-weighted
-    per-tile attention/saliency and the 128-dim penultimate slide embedding +
-    its gradient.
+    per-tile attention/saliency, the 128-dim penultimate slide embedding, and
+    the 256-dim hidden slide embedding one layer earlier, each with its gradient.
     """
     feats, tile_ids = _load_inference_bag(features_path, background_path)
     if feats.shape[0] == 0:
@@ -579,6 +579,8 @@ def infer_mil(
         tile_gradients,
         slide_embedding,
         slide_embedding_grad,
+        slide_hidden_embedding,
+        slide_hidden_embedding_grad,
     ) = model.predict(feats, device=device)  # type: ignore[call-arg]
 
     attention_df = pd.DataFrame(
@@ -591,6 +593,8 @@ def infer_mil(
         slide_embedding=slide_embedding.astype(np.float32),
         slide_embedding_grad=slide_embedding_grad.astype(np.float32),
         risk_score=risk_score,
+        slide_hidden_embedding=slide_hidden_embedding.astype(np.float32),
+        slide_hidden_embedding_grad=slide_hidden_embedding_grad.astype(np.float32),
     )
 
 

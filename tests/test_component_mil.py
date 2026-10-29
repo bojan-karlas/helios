@@ -229,3 +229,32 @@ def test_bundle_rejects_config_that_does_not_match_the_weights(tmp_path: Path, s
     )
     with pytest.raises(RuntimeError, match="state_dict"):
         load_bundle(bundle_dir)
+
+
+def test_hidden_and_penultimate_embeddings_match_the_classifier_head(slides: list[SlideFeatureRef]) -> None:
+    import torch
+
+    from helios.components.mil import _load_inference_bag
+
+    model = train_mil(slides, max_epochs=1, val_frac=0.0, device="cpu")
+    slide = slides[0]
+    out = infer_mil(model, features_path=slide.features_path, background_path=slide.background_path, device="cpu")
+    assert out.slide_hidden_embedding.shape == (256,)
+    assert out.slide_hidden_embedding_grad.shape == (256,)
+
+    # Recompute the classifier head from its 256-dim input layer, independently of forward_with_attribution.
+    net = model._build_net().eval()
+    head = net.classifier
+    hidden = torch.from_numpy(out.slide_hidden_embedding).requires_grad_(True)
+    logit = head[11](head[10](head[9](head[8](hidden))))
+    logit.backward()
+    feats, _ = _load_inference_bag(slide.features_path, slide.background_path)
+    with torch.no_grad():
+        prob, _, _, _ = net(torch.from_numpy(feats))
+    assert torch.sigmoid(logit).item() == pytest.approx(prob.item(), rel=1e-5)
+    np.testing.assert_allclose(out.slide_hidden_embedding_grad, hidden.grad.numpy(), rtol=1e-5, atol=1e-7)
+    # The logit is linear in the 128-dim embedding, so its gradient is the final layer's weight vector.
+    np.testing.assert_allclose(out.slide_embedding_grad, head[11].weight.detach().numpy()[0], rtol=1e-6)
+    np.testing.assert_allclose(
+        out.slide_embedding, head[9](head[8](hidden)).detach().numpy(), rtol=1e-5, atol=1e-7
+    )

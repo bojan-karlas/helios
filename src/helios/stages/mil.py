@@ -256,6 +256,8 @@ def _predict_slide(
         and store.exists("patch_attention", fold=fold, image_id=image_id)
         and store.exists("aligned_slide_embedding", fold=fold, image_id=image_id)
         and store.exists("aligned_slide_embedding_grad", fold=fold, image_id=image_id)
+        and store.exists("aligned_slide_hidden_embedding", fold=fold, image_id=image_id)
+        and store.exists("aligned_slide_hidden_embedding_grad", fold=fold, image_id=image_id)
         and store.part_exists("whole_image_risk_score", image_id, fold=fold)
     )
     if not overwrite and complete:
@@ -279,6 +281,10 @@ def _predict_slide(
     store.write("aligned_slide_embedding", out.slide_embedding, fold=fold, image_id=image_id)
     store.write(
         "aligned_slide_embedding_grad", out.slide_embedding_grad, fold=fold, image_id=image_id
+    )
+    store.write("aligned_slide_hidden_embedding", out.slide_hidden_embedding, fold=fold, image_id=image_id)
+    store.write(
+        "aligned_slide_hidden_embedding_grad", out.slide_hidden_embedding_grad, fold=fold, image_id=image_id
     )
     store.write_part(
         "whole_image_risk_score",
