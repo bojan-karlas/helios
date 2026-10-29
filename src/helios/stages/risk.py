@@ -93,7 +93,6 @@ def fit_risk(
     _validate(risk)
     resolved = resolve_datasets(datasets, roots=roots, require_models=True)
     folds = folds_across(resolved, roots)
-    cfg = parallel or ParallelConfig()
 
     for kind in _ordered(risk):
         run_work_units(
@@ -113,10 +112,9 @@ def fit_risk(
             stage=f"fit risk {kind}",
             unit_id=lambda fold: f"fold={fold}",
             progress=progress,
-            parallel=cfg,
+            parallel=parallel,
             num_cpus=1.0,
-            continue_on_error=cfg.enabled,
-        )
+            )
 
 
 def _fit_risk_fold(

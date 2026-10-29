@@ -16,9 +16,11 @@ This amendment supersedes earlier split-path and force-flag descriptions.
   Completed batch units skip by default; incomplete units may be recomputed and
   aggregate tables rebuilt. Overwrite regenerates all units in invocation scope,
   not upstream prerequisites or unrelated artifacts.
-- Split preparation errors on an existing destination unless overwrite is
-  enabled, and checks all destinations before writing any. Distinct independent
-  preparations cannot silently target the same file.
+- Split preparation skips an existing destination with a WARNING (pointing at
+  `prep splits --overwrite`, which is cheap) so bare `helios prep` remains
+  re-runnable; overwrite replaces the assignments. Distinct independent
+  preparations cannot silently target the same file. (AMENDED 2026-10-28:
+  supersedes the earlier error-on-existing rule.)
 - Other pooling behavior is unchanged; this is not a pooling redesign.
 
 ## Goal
@@ -545,7 +547,7 @@ reports/
 
 - Each CLI run creates `<log_dir>/<run_id>/` where `<run_id>` is `YYYY-MM-DD-HH-MM-SS.ffffff-utc[-<kebab-tag>]` (`--log-dir`, `--run-tag`).
 - Contains `run.log` (combined lifecycle + error tracebacks), `status.json` (atomic snapshot), `events.jsonl` (append-only events), and `workers/<worker-id>.log` (per-worker detailed logs).
-- Workers send throttled status events to a Ray reporting actor; the CLI process drains events, treats Ray task results/exceptions as authoritative for completion/failure, and renders one console progress display.
+- Workers send status events to a bounded Ray mailbox actor (`STATUS_MAILBOX_LIMIT`); under backpressure the oldest log/progress events are dropped and counted (`dropped_events` in `status.json`, plus a WARNING), lifecycle events are never dropped. The CLI process drains events, treats Ray task results/exceptions as authoritative for completion/failure, and renders one console progress display.
 
 ## 2026-10-22: Parallel execution, Ray workers & SLURM (NEW)
 
@@ -570,7 +572,7 @@ reports/
 - **Scheduling bounds:** At most one active call per actor. Both tasks and actors are bounded by cluster
   CPU/GPU capacity and the invocation's CPU cap; work is replenished as results arrive. Single-unit
   invocations still honor explicit Ray execution. Risk kinds finish their folds before dependent kinds start.
-- **Failures:** Slide tasks continue on remaining slides when one fails, log tracebacks, and exit nonzero at stage end.
+- **Failures (one rule, serial and parallel alike):** every `run_work_units` stage (per-slide prep/predict and per-fold fit) continues with the remaining units when one fails, logs the traceback to the worker log, and raises a single `StageExecutionError` listing all failures at stage end (nonzero exit). A persistent worker whose process dies (e.g. CUDA OOM) is replaced for its slot so the remaining units are not routed to a dead actor.
 - **SLURM scripts:** Provide both fixed multi-node allocation (`ray-cluster.sbatch`) and dynamic job-array worker pool (`ray-array-workers.sbatch`).
 
 ## 2026-10-26: Dataset descriptors and prepared augmentation directories

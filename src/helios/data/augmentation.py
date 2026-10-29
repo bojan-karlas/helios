@@ -26,6 +26,11 @@ class Augmentation:
     def load(cls, root: str | Path) -> Augmentation:
         root = Path(root).absolute()
         path = root / "augmentation.yaml"
+        if not path.is_file():
+            raise FileNotFoundError(
+                f"{root} is not a prepared augmentation directory (missing augmentation.yaml); "
+                "run `helios prep augment` first."
+            )
         data = yaml.safe_load(path.read_text())
         if not isinstance(data, dict):
             raise ValueError(f"{path} must contain an augmentation mapping.")

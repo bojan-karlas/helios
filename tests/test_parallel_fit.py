@@ -25,10 +25,7 @@ from tests.fixtures import make_cohort
         (risk, "fit_risk", "_fit_risk_fold", "fit risk clinical", {"risk": ["clinical"]}),
     ],
 )
-@pytest.mark.parametrize(
-    ("parallel", "expected_continue_on_error"),
-    [(None, False), (ParallelConfig(max_cpus=2), True)],
-)
+@pytest.mark.parametrize("parallel", [None, ParallelConfig(max_cpus=2)])
 def test_fit_stages_submit_fold_units(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -38,7 +35,6 @@ def test_fit_stages_submit_fold_units(
     stage: str,
     fit_options: dict[str, object],
     parallel: ParallelConfig | None,
-    expected_continue_on_error: bool,
 ) -> None:
     resolved = [ResolvedDataset(tmp_path / "synthetic-set")]
     monkeypatch.setattr(module, "resolve_datasets", lambda *args, **kwargs: resolved)
@@ -59,29 +55,40 @@ def test_fit_stages_submit_fold_units(
     assert isinstance(submitted["fn"], partial)
     assert submitted["fn"].func is getattr(module, worker_name)
     assert submitted["stage"] == stage
-    assert submitted["parallel"] == (parallel or ParallelConfig())
+    assert submitted["parallel"] == parallel
     assert submitted["num_cpus"] >= 1
-    assert submitted["continue_on_error"] is expected_continue_on_error
+    # One failure rule for every stage and mode: finish the other folds, then aggregate.
+    assert "continue_on_error" not in submitted
     assert "progress" in submitted
 
 
-def test_serial_work_unit_reraises_original_exception_type() -> None:
+def test_serial_fold_failures_aggregate_like_parallel_ones() -> None:
+    from helios.stages._ray import StageExecutionError
+
+    seen: list[int] = []
+
+    def fit(fold, _ctx):
+        seen.append(fold)
+        if fold == 0:
+            raise ValueError("synthetic failure")
+        return "completed"
+
+    with pytest.raises(StageExecutionError) as exc_info:
+        run_work_units([0, 1], fit, stage="fit synthetic", parallel=ParallelConfig())
+    assert seen == [0, 1]
+    assert [f.work_id for f in exc_info.value.failures] == ["0"]
+    assert "ValueError: synthetic failure" in exc_info.value.failures[0].error
+
+
+def test_fail_fast_remains_available_to_callers() -> None:
     class FitFailure(ValueError):
         pass
 
     def fail(_fold, _ctx):
         raise FitFailure("synthetic failure")
 
-    with pytest.raises(FitFailure, match="synthetic failure") as exc_info:
-        run_work_units(
-            [0],
-            fail,
-            stage="fit synthetic",
-            parallel=ParallelConfig(),
-            continue_on_error=False,
-        )
-
-    assert type(exc_info.value) is FitFailure
+    with pytest.raises(FitFailure):
+        run_work_units([0, 1], fail, stage="fit synthetic", parallel=ParallelConfig(), continue_on_error=False)
 
 
 def test_morphology_serial_fold_loads_inputs_and_writes_bundle(

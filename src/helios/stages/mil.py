@@ -16,7 +16,7 @@ import pandas as pd
 from helios.components.features import FEATURE_MODELS
 from helios.components.mil import SlideFeatureRef, infer_mil, reduce_whole_image_risk, train_mil
 from helios.data.augmentation import Augmentation, select_augmentations, validate_feature_alignment
-from helios.data.bundle import load_bundle
+from helios.data.bundle import MANIFEST_NAME, load_bundle
 from helios.data.cohort import ResolvedDataset
 from helios.data.io import ArtifactStore
 from helios.progress import DEFAULT_PROGRESS, Progress
@@ -166,7 +166,7 @@ def fit_mil(
         list(slides_by_fold),
         partial(_fit_fold, slides_by_fold=slides_by_fold, out=out, params=params, resolved=resolved, roots=roots),
         stage="fit mil", progress=progress, parallel=parallel,
-        num_gpus=gpu_reservation(device, parallel), continue_on_error=bool(parallel and parallel.enabled),
+        num_gpus=gpu_reservation(device, parallel),
     )
 
 
@@ -215,14 +215,12 @@ def predict_mil(
 
         per_fold_scores: list[pd.DataFrame] = []
         for fold in folds:
-            _load_inference_bundle.cache_clear()
             run_work_units(
                 ids,
                 partial(_predict_slide, store=store, fold=fold, size_mm=size_mm, model=model,
                         device=device, overwrite=overwrite),
                 stage=f"mil infer fold={fold} {ds.name}", progress=progress, parallel=parallel,
                 num_gpus=gpu_reservation(device, parallel), persistent_workers=True,
-                continue_on_error=bool(parallel and parallel.enabled),
             )
             # Reduce over the whole cohort so a partial re-run never shrinks the table.
             scores = store.read_parts("whole_image_risk_score", cohort_ids, fold=fold)
@@ -239,8 +237,13 @@ def predict_mil(
 
 
 @lru_cache(maxsize=1)
-def _load_inference_bundle(path: str) -> Any:
+def _cached_bundle(path: str, manifest_mtime_ns: int) -> Any:
     return load_bundle(Path(path))
+
+
+def _load_inference_bundle(path: Path) -> Any:
+    """Reuse the loaded bundle across slides; a refit (new manifest) invalidates it."""
+    return _cached_bundle(str(path), (path / MANIFEST_NAME).stat().st_mtime_ns)
 
 
 def _predict_slide(
@@ -256,7 +259,7 @@ def _predict_slide(
     )
     if not overwrite and complete:
         return "skipped"
-    mil_model = _load_inference_bundle(str(store.path("model_mil", fold=fold)))
+    mil_model = _load_inference_bundle(store.path("model_mil", fold=fold))
     out = infer_mil(
         mil_model,
         features_path=store.path("tile_features", size_mm=size_mm, model=model, image_id=image_id),

@@ -1,4 +1,5 @@
 """Prepare self-described augmentation directories and aligned embeddings."""
+
 from __future__ import annotations
 
 import logging
@@ -68,10 +69,23 @@ def prep_augment(
     for ds in resolved:
         store = cohort_store(ds, roots)
         definitions = _definitions(
-            ds, roots=roots, method=method, source=source, targets=target,
-            checkpoints=checkpoint, stain_model_root=Path(stain_model_root), output_dir=output_dir,
+            ds,
+            roots=roots,
+            method=method,
+            source=source,
+            targets=target,
+            checkpoints=checkpoint,
+            stain_model_root=Path(stain_model_root),
+            output_dir=output_dir,
         )
         ids = select_image_ids(ds, store, image_ids)
+        if not definitions:
+            progress.log(
+                f"no augmentations selected for {ds.name}: pass --target (with --checkpoint) or attach "
+                "prepared augmentation directories in the cohort YAML; nothing to prepare.",
+                level=logging.WARNING,
+            )
+            continue
         for definition in definitions:
             if definition.method not in AUGMENTATION_METHODS:
                 raise ValueError(f"Unsupported augmentation method {definition.method!r}.")
@@ -95,24 +109,35 @@ def prep_augment(
             run_work_units(
                 [(s, i) for s in size_mm for i in ids],
                 partial(
-                    _augment_slide, store=store, definition=definition,
-                    augmentation_batch_size=augmentation_batch_size, device=device, overwrite=overwrite,
+                    _augment_slide,
+                    store=store,
+                    definition=definition,
+                    augmentation_batch_size=augmentation_batch_size,
+                    device=device,
+                    overwrite=overwrite,
                 ),
-                stage=f"augment {ds.dataset().descriptor.name}",
-                unit_id=_augmentation_unit_id, progress=progress, parallel=parallel,
-                num_gpus=gpu_reservation(device, parallel), persistent_workers=True,
-                continue_on_error=bool(parallel and parallel.enabled),
+                stage=f"augment {ds.name}",
+                unit_id=_augmentation_unit_id,
+                progress=progress,
+                parallel=parallel,
+                num_gpus=gpu_reservation(device, parallel),
+                persistent_workers=True,
             )
             run_work_units(
                 [(s, m, i) for m in model for s in size_mm for i in ids],
                 partial(
-                    _embed_augmentation, definition=definition, batch_size=batch_size,
-                    device=device, overwrite=overwrite,
+                    _embed_augmentation,
+                    definition=definition,
+                    batch_size=batch_size,
+                    device=device,
+                    overwrite=overwrite,
                 ),
-                stage=f"augment features {ds.name}", unit_id=_augmentation_feature_id,
-                progress=progress, parallel=parallel,
-                num_gpus=gpu_reservation(device, parallel), persistent_workers=True,
-                continue_on_error=bool(parallel and parallel.enabled),
+                stage=f"augment features {ds.name}",
+                unit_id=_augmentation_feature_id,
+                progress=progress,
+                parallel=parallel,
+                num_gpus=gpu_reservation(device, parallel),
+                persistent_workers=True,
             )
 
 
@@ -125,34 +150,48 @@ def _augmentation_feature_id(unit: tuple[float, str, str]) -> str:
 
 
 def _augment_slide(
-    unit: tuple[float, str], ctx: WorkContext, *, store: ArtifactStore,
+    unit: tuple[float, str],
+    ctx: WorkContext,
+    *,
+    store: ArtifactStore,
     definition: Augmentation,
-    augmentation_batch_size: int, device: str, overwrite: bool,
+    augmentation_batch_size: int,
+    device: str,
+    overwrite: bool,
 ) -> str:
     s, image_id = unit
     aug_store = definition.store()
     if not overwrite and aug_store.exists("tile_augmentation", size_mm=s, image_id=image_id):
         return "skipped"
-    if overwrite or not aug_store.exists("tile_augmentation", size_mm=s, image_id=image_id):
-        tiles = _tiles_array(store.read("tiles", size_mm=s, image_id=image_id))
-        tile_ids, coords = _tile_index(store, size_mm=s, image_id=image_id, n_tiles=len(tiles))
-        augmented = apply_augmentation(
-            tiles, method=definition.method, checkpoint=str(definition.checkpoint),
-            batch_size=augmentation_batch_size, device=device,
-        )
-        if len(augmented) != len(tiles):
-            raise ValueError("Augmentation changed the number of tiles.")
-        aug_store.write(
-            "tile_augmentation", {"tiles": augmented, "tile_ids": tile_ids, "coords": coords},
-            size_mm=s, image_id=image_id,
-        )
+    tiles = _tiles_array(store.read("tiles", size_mm=s, image_id=image_id))
+    tile_ids, coords = _tile_index(store, size_mm=s, image_id=image_id, n_tiles=len(tiles))
+    augmented = apply_augmentation(
+        tiles,
+        method=definition.method,
+        checkpoint=str(definition.checkpoint),
+        batch_size=augmentation_batch_size,
+        device=device,
+    )
+    if len(augmented) != len(tiles):
+        raise ValueError("Augmentation changed the number of tiles.")
+    aug_store.write(
+        "tile_augmentation",
+        {"tiles": augmented, "tile_ids": tile_ids, "coords": coords},
+        size_mm=s,
+        image_id=image_id,
+    )
     ctx.progress.log(f"prepared augmentation={definition.root} image={image_id} size_mm={s}")
     return "completed"
 
 
 def _embed_augmentation(
-    unit: tuple[float, str, str], ctx: WorkContext, *, definition: Augmentation,
-    batch_size: int, device: str, overwrite: bool,
+    unit: tuple[float, str, str],
+    ctx: WorkContext,
+    *,
+    definition: Augmentation,
+    batch_size: int,
+    device: str,
+    overwrite: bool,
 ) -> str:
     s, m, image_id = unit
     store = definition.store()
@@ -162,21 +201,34 @@ def _embed_augmentation(
     if not {"tiles", "tile_ids", "coords"} <= payload.keys():
         raise ValueError(f"Augmented tiles at {definition.root} lack alignment metadata; use --overwrite.")
     embeddings = extract_features(
-        payload["tiles"], model=cast(FeatureModel, m), batch_size=batch_size, device=device, progress=ctx.progress,
+        payload["tiles"],
+        model=cast(FeatureModel, m),
+        batch_size=batch_size,
+        device=device,
+        progress=ctx.progress,
     )
     if len(embeddings) != len(payload["tile_ids"]):
         raise ValueError("Feature extraction changed the number of tiles.")
     store.write(
         "tile_augmentation_features",
         {"features": embeddings, "tile_ids": payload["tile_ids"], "coords": payload["coords"]},
-        size_mm=s, image_id=image_id, model=m,
+        size_mm=s,
+        image_id=image_id,
+        model=m,
     )
     return "completed"
 
 
 def _definitions(
-    ds: ResolvedDataset, *, roots: StorageRoots | None, method: str, source: str | None,
-    targets: list[str], checkpoints: list[str], stain_model_root: Path, output_dir: str | None,
+    ds: ResolvedDataset,
+    *,
+    roots: StorageRoots | None,
+    method: str,
+    source: str | None,
+    targets: list[str],
+    checkpoints: list[str],
+    stain_model_root: Path,
+    output_dir: str | None,
 ) -> list[Augmentation]:
     if not targets:
         return [Augmentation.load(path) for path in ds.augmentations]

@@ -13,7 +13,10 @@ than one CPU is requested (``max_cpus > 1``).
 Workers never touch the coordinator's ``status.json`` / ``events.jsonl``: they
 write their own ``workers/<worker-id>.log`` and forward log / lifecycle events
 to a status actor that the coordinator drains while it renders one console
-progress display. Ray task results are authoritative for completion.
+progress display. The actor mailbox is bounded (``STATUS_MAILBOX_LIMIT``): when
+a chatty worker outruns the coordinator, the oldest ``log``/progress events are
+dropped and counted (``dropped_events`` in ``status.json``); lifecycle events
+are never dropped. Ray task results are authoritative for completion.
 """
 
 from __future__ import annotations
@@ -231,18 +234,33 @@ def worker_identity(prefix: str = "worker") -> str:
     return f"{prefix}-{host}-{os.getpid()}{gpu_tag}"
 
 
-class _StatusActor:
-    """Event mailbox: workers push, the coordinator drains (wrapped by ``ray.remote`` lazily)."""
+#: Maximum buffered worker events between coordinator drains.
+STATUS_MAILBOX_LIMIT = 10_000
+#: Event kinds that must never be dropped under backpressure.
+_LIFECYCLE_EVENTS = frozenset({"start"})
 
-    def __init__(self) -> None:
+
+class _StatusActor:
+    """Bounded event mailbox: workers push, the coordinator drains (wrapped by ``ray.remote`` lazily)."""
+
+    def __init__(self, limit: int = STATUS_MAILBOX_LIMIT) -> None:
+        self.limit = limit
         self.events: list[dict[str, Any]] = []
+        self.dropped = 0
 
     def push(self, event: dict[str, Any]) -> None:
+        if len(self.events) >= self.limit and event.get("kind") not in _LIFECYCLE_EVENTS:
+            for i, old in enumerate(self.events):
+                if old.get("kind") not in _LIFECYCLE_EVENTS:
+                    del self.events[i]
+                    self.dropped += 1
+                    break
         self.events.append(event)
 
-    def drain(self) -> list[dict[str, Any]]:
+    def drain(self) -> tuple[list[dict[str, Any]], int]:
         out, self.events = self.events, []
-        return out
+        dropped, self.dropped = self.dropped, 0
+        return out, dropped
 
 
 class _ActorSink:
@@ -414,16 +432,27 @@ def run_work_units(
         try:
             if persistent_workers:
                 remote_actor = ray.remote(_WorkActor).options(
-                    num_cpus=num_cpus, num_gpus=num_gpus, max_restarts=0, max_task_retries=0,
+                    num_cpus=num_cpus,
+                    num_gpus=num_gpus,
+                    max_restarts=0,
+                    max_task_retries=0,
                 )
                 workers = [remote_actor.remote(fn) for _ in range(count)]
             else:
                 remote: Any = ray.remote(num_cpus=num_cpus, num_gpus=num_gpus, max_retries=0)(_execute_unit)
 
-            def submit(index: int, *args: Any) -> Any:
+            def submit(slot: int, *args: Any) -> Any:
                 if persistent_workers:
-                    return workers[index % count].execute.remote(*args)
+                    return workers[slot].execute.remote(*args)
                 return remote.remote(fn, *args)
+
+            def replace_dead_worker(slot: int) -> None:
+                """A worker that died (e.g. CUDA OOM) must not keep receiving this slot's units."""
+                if not persistent_workers:
+                    return
+                ray.kill(workers[slot], no_restart=True)
+                workers[slot] = remote_actor.remote(fn)
+
             log_dir_str = str(run_log_dir) if run_log_dir is not None else None
             queue = iter(enumerate(zip(units, work_ids, strict=True)))
             refs: dict[Any, tuple[int, str, int]] = {}
@@ -437,8 +466,21 @@ def run_work_units(
                 refs[ref] = (idx, wid, slot)
                 return ref
 
+            dropped_total = 0
+
             def drain() -> None:
-                for ev in ray.get(actor.drain.remote()):
+                nonlocal dropped_total
+                events, dropped = ray.get(actor.drain.remote())
+                if dropped:
+                    dropped_total += dropped
+                    progress.log(
+                        f"{stage}: status mailbox full; dropped {dropped} worker log/progress events "
+                        f"({dropped_total} total). Lifecycle events and results are unaffected.",
+                        level=logging.WARNING,
+                    )
+                    if reporter is not None:
+                        reporter.update(dropped_events=dropped_total)
+                for ev in events:
                     kind = ev.get("kind")
                     worker_id = str(ev.get("worker_id", ""))
                     if kind == "start":
@@ -458,12 +500,14 @@ def run_work_units(
                 while not done:
                     done, pending = ray.wait(pending, num_returns=1, timeout=0.5)
                     drain()
-                idx, wid, slot = refs[done[0]]
+                idx, wid, slot = refs.pop(done[0])
                 try:
                     result = ray.get(done[0])
                 except Exception as exc:
+                    # The task body returns failures; reaching here means the worker process itself died.
                     first = str(exc).splitlines()[0] if str(exc) else type(exc).__name__
                     result = WorkResult(wid, "ray-worker", "failed", None, f"{type(exc).__name__}: {first}", str(exc))
+                    replace_dead_worker(slot)
                 record(idx, result)
                 if result.status == "failed" and not continue_on_error:
                     return finish()

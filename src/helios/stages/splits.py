@@ -3,7 +3,10 @@
 Reads a cohort's ``image_metadata`` and writes its ``splits`` table. Train-only
 and fold-free (it *creates* the folds), so it runs once per training cohort.
 """
+
 from __future__ import annotations
+
+import logging
 
 import pandas as pd
 
@@ -64,14 +67,17 @@ def prep_splits(
     destinations = [resolve_splits_path(group[0], roots) for group in groups]
     if len(set(path.absolute() for path in destinations)) != len(destinations):
         raise ValueError("Multiple split preparations select the same destination; use distinct split paths.")
-    if not overwrite:
-        for path in destinations:
-            if path.exists():
-                raise FileExistsError(f"Splits already exist at {path}; use --overwrite to replace them.")
 
     for group, out_path in progress.task(list(zip(groups, destinations, strict=True)), desc="prep splits"):
         lead = group[0]
         label = lead.logical_name
+        if not overwrite and out_path.exists():
+            progress.log(
+                f"skip splits {label}: {out_path} already exists and was NOT regenerated with the current "
+                "settings; run `helios prep splits --overwrite` to replace the fold assignments.",
+                level=logging.WARNING,
+            )
+            continue
         frames: list[pd.DataFrame] = []
         for ds in group:
             store = cohort_store(ds, roots)

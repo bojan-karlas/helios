@@ -133,7 +133,6 @@ def test_roots_alias_remains_supported(tmp_path: Path) -> None:
 
 
 def test_cli_forwards_storage_roots_to_every_stage(monkeypatch, tmp_path: Path) -> None:
-    from importlib import import_module
 
     from typer.testing import CliRunner
 
@@ -159,8 +158,7 @@ def test_cli_forwards_storage_roots_to_every_stage(monkeypatch, tmp_path: Path) 
             seen = []
             with monkeypatch.context() as patch:
                 patch.setattr(f"{stage.__module__}.{stage.__name__}", lambda _seen=seen, **kwargs: _seen.append(kwargs))
-                module = import_module(f"helios.cli.{'main' if verb == 'report' else verb}")
-                patch.setattr(module, "console_progress", lambda path, **kw: None)
+                patch.setattr("helios.cli._common.console_progress", lambda path, **kw: None)
                 command = [verb] if verb == "report" else [verb, noun]
                 result = runner.invoke(app, command + options)
             assert result.exit_code == 0, (command, result.output, result.exception)

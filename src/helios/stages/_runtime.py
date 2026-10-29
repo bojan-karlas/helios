@@ -315,10 +315,10 @@ def build_cohort_provenance(
     lead = datasets[0]
     entries: list[dict[str, object]] = []
     for ds in datasets:
-        entry: dict[str, object] = {"source_root": str(ds.root.resolve())}
+        entry: dict[str, object] = {"source_root": str(ds.root.absolute())}
         pre = (roots.preprocessing_root if roots else None) or ds.preprocessing_root
         if pre is not None:
-            entry["preprocessing_root"] = str(Path(pre).resolve())
+            entry["preprocessing_root"] = str(Path(pre).absolute())
         if ds.augmentations:
             entry["augmentations"] = [str(a.absolute()) for a in ds.augmentations]
         entries.append(entry)
@@ -330,7 +330,7 @@ def build_cohort_provenance(
         doc["filter"] = lead.where
     splits_path = resolve_splits_path(lead, roots)
     if splits_path.is_file():
-        doc["splits"] = str(splits_path.resolve())
+        doc["splits"] = str(splits_path.absolute())
     return doc
 
 

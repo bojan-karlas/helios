@@ -169,6 +169,35 @@ def test_actor_death_is_reported_as_stage_failure(cluster, tmp_path: Path) -> No
     assert failure.traceback_text
 
 
+def test_dead_actor_is_replaced_so_remaining_units_still_run(cluster, tmp_path: Path) -> None:
+    import json
+
+    units = [-2, 0, 1, 2, 3]
+    with pytest.raises(StageExecutionError) as raised:
+        run_work_units(
+            units, partial(_record, root=tmp_path), stage="respawn",
+            parallel=ParallelConfig(max_cpus=2), persistent_workers=True, num_cpus=2,
+        )
+    assert [f.work_id for f in raised.value.failures] == ["-2"]
+    outputs = [json.loads((tmp_path / f"{i}.json").read_text()) for i in (0, 1, 2, 3)]
+    assert len({out["pid"] for out in outputs}) == 1, "a fresh actor took over the dead slot"
+
+
+def test_status_mailbox_drops_oldest_non_lifecycle_events_and_counts() -> None:
+    from helios.stages._ray import _StatusActor
+
+    mailbox = _StatusActor(limit=3)
+    mailbox.push({"kind": "start", "work_id": "a"})
+    for i in range(5):
+        mailbox.push({"kind": "log", "message": str(i)})
+    mailbox.push({"kind": "start", "work_id": "b"})
+    events, dropped = mailbox.drain()
+    assert dropped == 3
+    assert [e["kind"] for e in events] == ["start", "log", "log", "start"]
+    assert [e["message"] for e in events if e["kind"] == "log"] == ["3", "4"]
+    assert mailbox.drain() == ([], 0)
+
+
 def test_impossible_reservation_fails_without_hanging(cluster) -> None:
     with pytest.raises(ValueError, match="cannot satisfy"):
         run_work_units(

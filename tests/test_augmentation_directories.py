@@ -289,3 +289,20 @@ def test_yaml_can_disable_unavailable_augmentations(tmp_path):
     assert select_augmentations([ds], [])[0].augmentations == ()
     with pytest.raises(FileNotFoundError):
         select_augmentations([ds], None)
+
+
+def test_prep_augment_without_selections_warns_instead_of_silently_doing_nothing(tmp_path, caplog):
+    import logging
+
+    from helios.progress import Progress
+
+    root = make_cohort(tmp_path / "source", n_images=1)
+    with caplog.at_level(logging.WARNING, logger="helios"):
+        augment.prep_augment(datasets=[root], progress=Progress(use_tqdm=False))
+    assert "no augmentations selected" in caplog.text
+    assert not (root / "preprocessing" / "augmentations").exists()
+
+
+def test_unprepared_directory_reports_actionable_error(tmp_path):
+    with pytest.raises(FileNotFoundError, match="not a prepared augmentation directory"):
+        Augmentation.load(tmp_path / "absent")

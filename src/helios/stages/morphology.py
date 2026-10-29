@@ -86,7 +86,6 @@ def fit_morphology(
     """
     resolved = resolve_datasets(datasets, roots=roots, require_models=True)
     folds = folds_across(resolved, roots)
-    cfg = parallel or ParallelConfig()
     run_work_units(
         folds,
         partial(
@@ -107,9 +106,8 @@ def fit_morphology(
         stage="fit morphology",
         unit_id=lambda fold: f"fold={fold}",
         progress=progress,
-        parallel=cfg,
+        parallel=parallel,
         num_cpus=1.0,
-        continue_on_error=cfg.enabled,
     )
 
 

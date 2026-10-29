@@ -110,28 +110,35 @@ def test_no_default_splits_fits_entire_filtered_cohort(monkeypatch, tmp_path, ya
     assert [s.image_id for s in seen[0][0]] == ds.dataset().image_ids[:3]
 
 
-def test_existing_splits_error_and_overwrite_replaces(tmp_path):
+def test_existing_splits_skip_with_warning_and_overwrite_replaces(tmp_path):
+    import logging
+
+    from helios.progress import Progress
+
     root = make_cohort(tmp_path / "source", n_images=12, n_patients=12)
     ds = ResolvedDataset(root)
     prep_splits(datasets=[ds], n_folds=3, stratify_by=[])
     path = resolve_splits_path(ds)
     original = path.read_bytes()
-    with pytest.raises(FileExistsError, match="--overwrite"):
-        prep_splits(datasets=[ds], n_folds=4, stratify_by=[])
+    warnings = []
+    progress = Progress(use_tqdm=False)
+    progress.log = lambda message, level=logging.INFO: warnings.append((level, message))  # type: ignore[method-assign]
+    prep_splits(datasets=[ds], n_folds=4, stratify_by=[], progress=progress)
     assert path.read_bytes() == original
+    assert [level for level, _ in warnings] == [logging.WARNING]
+    assert "--overwrite" in warnings[0][1]
     prep_splits(datasets=[ds], n_folds=4, stratify_by=[], overwrite=True)
     assert folds_of(ds) == [0, 1, 2, 3]
 
 
-def test_all_destinations_preflighted_before_writing(tmp_path):
+def test_existing_destination_does_not_block_other_cohorts(tmp_path):
     a = make_cohort(tmp_path / "a", n_images=6)
     b = make_cohort(tmp_path / "b", n_images=6)
     b_path = resolve_splits_path(ResolvedDataset(b))
     b_path.parent.mkdir(parents=True)
     b_path.write_text("existing output")
-    with pytest.raises(FileExistsError):
-        prep_splits(datasets=[a, b], n_folds=2, stratify_by=[])
-    assert not resolve_splits_path(ResolvedDataset(a)).exists()
+    prep_splits(datasets=[a, b], n_folds=2, stratify_by=[])
+    assert resolve_splits_path(ResolvedDataset(a)).is_file()
     assert b_path.read_text() == "existing output"
 
 
@@ -166,9 +173,7 @@ def test_cli_splits_overwrite_and_legacy_flag_rejection(tmp_path):
     assert runner.invoke(app, command).exit_code == 0
     path = resolve_splits_path(ResolvedDataset(root))
     original = path.read_bytes()
-    result = runner.invoke(app, command)
-    assert result.exit_code != 0
-    assert isinstance(result.exception, FileExistsError)
+    assert runner.invoke(app, command).exit_code == 0
     assert path.read_bytes() == original
     assert runner.invoke(app, command + ["--overwrite"]).exit_code == 0
     assert runner.invoke(app, command + ["--force"]).exit_code == 2

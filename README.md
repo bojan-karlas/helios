@@ -541,10 +541,10 @@ replace their partial files. Aggregate tables are rebuilt normally. With
 `--overwrite`, all units selected by the invocation are regenerated; unrelated
 slides, sizes, models, and upstream prerequisites are not regenerated.
 
-`prep splits` produces one file per logical cohort. An existing destination
-raises an error unless `--overwrite` is supplied. All split destinations are
-checked before any are written, preventing an existing-file conflict from
-partially executing a multi-cohort preparation.
+`prep splits` produces one file per logical cohort. An existing destination is
+left untouched and a warning is logged, so bare `helios prep` stays re-runnable
+after a crash in a later stage. Fold assignments are cheap to regenerate: pass
+`--overwrite` to `prep splits` to replace them with the current settings.
 
 Migration: rename dataset-local `cv_splits.csv` to `splits.csv`, or explicitly
 select the existing file. For cohort YAML, move/select the intended assignments
