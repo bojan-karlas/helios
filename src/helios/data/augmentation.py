@@ -6,10 +6,10 @@ from pathlib import Path
 from typing import Any
 
 import h5py
-import numpy as np
 import yaml
 
 from helios.data.cohort import ResolvedDataset
+from helios.data.hdf5 import array_dataset
 from helios.data.io import ArtifactStore, write
 from helios.data.resolver import Resolver, Roots
 
@@ -101,27 +101,10 @@ def select_augmentations(
 
 
 def validate_feature_alignment(original: Path, augmented: Path) -> None:
-    """Read only shapes and alignment indices, not the large embedding matrices."""
+    """Validate shapes; all full arrays share the original metadata row order."""
     with h5py.File(original, "r") as base, h5py.File(augmented, "r") as aug:
-        for file in (base, aug):
-            missing = {"features", "tile_ids", "coords"} - set(file)
-            if missing:
-                raise ValueError(f"{file.filename}: missing alignment datasets {sorted(missing)}; regenerate features.")
-            features = file["features"]
-            if len(features.shape) != 2 or features.shape[1] == 0:
-                raise ValueError(f"{file.filename}: features must be a two-dimensional embedding matrix.")
-            n = features.shape[0]
-            ids = file["tile_ids"][()]
-            coords = file["coords"]
-            if ids.shape != (n,) or len(np.unique(ids)) != n:
-                raise ValueError(f"{file.filename}: invalid or duplicate tile_ids.")
-            if len(coords.shape) != 2 or coords.shape[0] != n or coords.shape[1] not in (0, 2):
-                raise ValueError(f"{file.filename}: invalid coords shape.")
-        if base["features"].shape != aug["features"].shape:
+        if array_dataset(base, "features").shape != array_dataset(aug, "features").shape:
             raise ValueError(f"Augmented feature shape differs from original: {augmented}.")
-        for key in ("tile_ids", "coords"):
-            if not np.array_equal(base[key][()], aug[key][()]):
-                raise ValueError(f"Augmented {key} differ from original tile identity/order: {augmented}.")
 
 
 def discover_augmentations(root: Path) -> list[Augmentation]:

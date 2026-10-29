@@ -242,11 +242,12 @@ dataset's descriptor. Unmatched/ambiguous associations fail; YAML-attached paths
 must also agree with their dataset's ID.
 
 Fit errors on missing features; it never runs prep automatically, even with
-`--overwrite`. It checks tile counts, embedding widths, tile IDs/order, and coordinates
-against the original features before training. Augmented tiles may be deleted
-once features exist. Rebuilding missing features from cached augmented tiles
-requires the saved alignment metadata. Selected legacy embeddings without
-alignment metadata must be regenerated.
+`--overwrite`. It checks original/augmented tile counts and embedding widths,
+and checks counts against shared tile metadata when available. Full original
+and augmented arrays must preserve the same metadata row order. Shape checks
+cannot detect a permutation of historically generated embedding rows.
+Augmented tiles may be deleted once features exist. Cached augmented tiles and
+legacy embeddings do not need embedded identity or coordinate datasets.
 
 The checkpoint is loaded with the upstream 8-level `unet_256` architecture,
 instance normalization, RGB input/output, and strict state-dict validation.
@@ -362,6 +363,47 @@ artifact spec drives the graph.
 
 ### Storage roots
 
+#### Tile artifact contents
+
+Tile identity is the zero-based row ordinal in the full tile metadata table.
+Full tile pixels, embeddings, augmentation arrays, and background flags share
+that row order. Geometry belongs only in tile metadata. New full Parquet tables
+do not store redundant `tile_id` or `size_mm` columns; readers expose them in
+memory from row position and the requested partition. Old explicit IDs must
+agree with row ordinals; reordering a full table is an error. Filtered results
+such as foreground-only attention retain original tile ordinals because their
+row positions no longer identify the original tiles.
+
+New pixel HDF5 files contain only `tiles`: shape `(N,)` with a uint8 subarray
+datatype `(H, W, 3)`. Slicing rows produces an RGB stack. Readers also accept
+ordinary `(N, H, W, 3)` datasets. New embedding HDF5 files contain only a
+two-dimensional `features` matrix. Both readers accept legacy `tile_224` and
+`tiles_224` keys if the canonical key is absent; ambiguous aliases error.
+Other legacy HDF5 contents are ignored, including embedded background,
+thumbnail, grid coordinates, and alignment indices.
+
+Float-valued partition arguments resolve equivalent decimal spellings such as
+`size_mm=0.25` and `size_mm=0.250`. Multiple equivalent directories error, even
+when one matches the canonical spelling exactly. New partitions use canonical
+formatting; writes reuse an existing equivalent partition rather than creating
+a second spelling. String-valued labels, including augmentation source/target
+names, are opaque and are not numerically normalized.
+
+To generate thumbnail segmentation masks for debugging without re-extracting
+tiles or reading/writing geometry and background tables:
+
+```bash
+helios prep tiles --dataset /data/my_cohort --size-mm 0.25 --background-mask-only
+```
+
+This writes only `background_mask/size_mm=.../<image_id>.png` under the
+preprocessing root. Existing masks are skipped unless `--overwrite` is given.
+This mode segments thumbnail pixels only; it does not paint rejected tile
+footprints or change existing tile flags, so the mask can differ from historical
+tile-background decisions. Thumbnails must already exist.
+
+#### Role roots
+
 Artifacts are grouped by storage role, independently of execution order:
 
 | Role | Contents | Default root | Explicit `--<role>-root PATH` |
@@ -426,7 +468,9 @@ preprocessing root, so use `--preprocessing-root` to relocate them.
 Existing embeddings are not moved automatically: relocate
 `<old_features_root>/tile_features/` to `<preprocessing_root>/features/`.
 The old `tile_augmentation/` and `tile_augmentation_features/` trees must be
-re-prepared in the directory-based layout to retain tile alignment metadata.
+relocated into prepared augmentation directories with an `augmentation.yaml`
+descriptor. Full arrays must preserve the original tile metadata row order;
+embedded tile IDs and coordinates are not required.
 Replace cohort `features_root` fields with a common `preprocessing_root`, and
 replace augmentation transformation mappings with prepared directory paths.
 The removed `--augmentation-target` / `augmentation_target` setting reports

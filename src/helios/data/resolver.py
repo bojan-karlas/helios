@@ -19,6 +19,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
@@ -34,7 +35,9 @@ def format_hive_value(value: Any) -> str:
     if isinstance(value, bool):
         return str(value).lower()
     if isinstance(value, float):
-        return f"{value:g}"
+        if not Decimal(str(value)).is_finite():
+            raise ValueError(f"Non-finite float partition value: {value}")
+        return format(Decimal(str(value)).normalize(), "f")
     if isinstance(value, (list, tuple)):
         return "+".join(format_hive_value(v) for v in value)
     return str(value)
@@ -142,7 +145,30 @@ class Resolver:
             raise ValueError(f"Artifact {artifact_id!r} has no path template (non-file artifact).")
         rel = render_path(artifact.path, keys, extra_hive=extra_hive)
         root = self.roots.for_role(artifact.role)
-        return root / rel
+        float_values = {k: v for k, v in {**keys, **(extra_hive or {})}.items() if isinstance(v, float)}
+        for part in Path(rel).parts:
+            name, sep, raw = part.partition("=")
+            if sep and name in float_values and root.is_dir():
+                value = Decimal(str(float_values[name]))
+                if not value.is_finite():
+                    raise ValueError(f"Non-finite float partition {name}={raw}.")
+                matches = []
+                for child in root.iterdir():
+                    if not child.is_dir() or not child.name.startswith(f"{name}="):
+                        continue
+                    try:
+                        candidate = Decimal(child.name.split("=", 1)[1])
+                    except InvalidOperation:
+                        continue
+                    if candidate == value:
+                        matches.append(child)
+                if len(matches) > 1:
+                    raise ValueError(f"Ambiguous equivalent float partitions under {root}: {sorted(matches)}")
+                if matches:
+                    root = matches[0]
+                    continue
+            root = root / part
+        return root
 
     def exists(self, artifact_id: str, *, extra_hive: Mapping[str, Any] | None = None, **keys: Any) -> bool:
         return self.path(artifact_id, extra_hive=extra_hive, **keys).exists()

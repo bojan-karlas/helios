@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from helios.components.background import detect_background
+from helios.components.background import detect_background, segment_background
 from helios.components.tiling import extract_tiles
 from helios.data.io import ArtifactStore
 from helios.progress import DEFAULT_PROGRESS, Progress
@@ -47,6 +47,7 @@ def prep_tiles(
     size_mm: list[float] = DEFAULT_SIZE_MM,
     tile_px: int = DEFAULT_TILE_PX,
     stride_fraction: float = DEFAULT_STRIDE_FRACTION,
+    background_mask_only: bool = False,
     image_ids: list[str] | None = None,
     overwrite: bool = False,
     progress: Progress = DEFAULT_PROGRESS,
@@ -56,6 +57,8 @@ def prep_tiles(
     GRAIN CONTRACT: one (dataset, size_mm, image) per work unit. Tiling runs
     once per unit; background detection reuses the tile grid + slide thumbnail.
     The thumbnail must already exist (``prep thumbnails``).
+    ``background_mask_only`` segments the thumbnail without reading WSI/tiles
+    or changing tile metadata/background flags. Size only selects mask paths.
     """
     for ds in resolve_datasets(datasets, roots=roots):
         cohort = ds.dataset()
@@ -66,10 +69,11 @@ def prep_tiles(
             partial(
                 _tile,
                 store=store,
-                slides=cohort.slides,
+                slides={} if background_mask_only else cohort.slides,
                 metadata=cohort.image_metadata.set_index("image_id"),
                 tile_px=tile_px,
                 stride_fraction=stride_fraction,
+                background_mask_only=background_mask_only,
                 overwrite=overwrite,
             ),
             stage=f"tiles {ds.name}",
@@ -92,9 +96,18 @@ def _tile(
     metadata: pd.DataFrame,
     tile_px: int,
     stride_fraction: float,
+    background_mask_only: bool,
     overwrite: bool,
 ) -> str:
     s, image_id = unit
+    if background_mask_only:
+        if not overwrite and store.exists("background_mask", size_mm=s, image_id=image_id):
+            ctx.progress.log(f"skip background_mask image={image_id} size_mm={s} (exists)")
+            return "skipped"
+        mask = segment_background(store.read("thumbnail", image_id=image_id))
+        store.write("background_mask", mask, size_mm=s, image_id=image_id)
+        ctx.progress.log(f"wrote background_mask only image={image_id} size_mm={s}")
+        return "completed"
     if not overwrite and all(store.exists(a, size_mm=s, image_id=image_id) for a in TILE_OUTPUTS):
         ctx.progress.log(f"skip tiles image={image_id} size_mm={s} (exists)")
         return "skipped"

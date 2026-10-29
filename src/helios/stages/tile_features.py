@@ -118,13 +118,13 @@ def _embed(
         ctx.progress.log(f"skip tile_features image={image_id} size_mm={s} model={m} (exists)")
         return "skipped"
     tiles = _tiles_array(store.read("tiles", size_mm=s, image_id=image_id))
-    tile_ids, coords = _tile_index(store, size_mm=s, image_id=image_id, n_tiles=len(tiles))
+    _validate_tile_count(store, size_mm=s, image_id=image_id, n_tiles=len(tiles))
     embeddings = extract_features(
         tiles, model=m, batch_size=batch_size, device=device, progress=ctx.progress  # type: ignore[arg-type]
     )
     store.write(
         "tile_features",
-        {"features": embeddings, "tile_ids": tile_ids, "coords": coords},
+        {"features": embeddings},
         size_mm=s,
         model=m,
         image_id=image_id,
@@ -149,20 +149,10 @@ def _tiles_array(tiles: object) -> NDArray[np.uint8]:
     return np.asarray(tiles, dtype=np.uint8)
 
 
-def _tile_index(store, *, size_mm: float, image_id: str, n_tiles: int):
-    """Return row-aligned tile IDs and level-0 coordinates for MIL/provenance."""
+def _validate_tile_count(store: ArtifactStore, *, size_mm: float, image_id: str, n_tiles: int) -> None:
+    """Check full-array row count against the shared geometry when available."""
     if not store.exists("tile_metadata", size_mm=size_mm, image_id=image_id):
-        ids = np.arange(n_tiles, dtype=np.int64)
-        return ids, np.empty((n_tiles, 0), dtype=np.int64)
+        return
     metadata = store.read("tile_metadata", size_mm=size_mm, image_id=image_id)
-    required = {"tile_id", "tile_x", "tile_y"}
-    missing = required - set(metadata.columns)
-    if missing:
-        raise ValueError(f"tile_metadata is missing columns: {sorted(missing)}")
     if len(metadata) != n_tiles:
         raise ValueError(f"tile_metadata has {len(metadata)} rows but tiles has {n_tiles} rows for image {image_id!r}.")
-    ids = metadata["tile_id"].to_numpy(dtype=np.int64)
-    if len(np.unique(ids)) != n_tiles:
-        raise ValueError(f"tile_metadata contains duplicate tile_id values for image {image_id!r}.")
-    coords = metadata[["tile_x", "tile_y"]].to_numpy(dtype=np.int64)
-    return ids, coords

@@ -134,7 +134,8 @@ artifacts:
     path: background_mask/size_mm={size_mm}/{image_id}.png
     description: |
       Thumbnail-resolution binary debug mask combining color-based background/non-tissue pixels with rejected tile
-      footprints. Depends on the tile grid at size_mm; saved mainly for debugging/QC.
+      footprints during normal tiling. Mask-only prep segments thumbnail pixels without classifying tiles or
+      updating tile background flags. Saved mainly for debugging/QC.
 
   - id: tile_metadata
     role: preprocessing
@@ -144,7 +145,8 @@ artifacts:
     path: tile_metadata/size_mm={size_mm}/{image_id}.parquet
     description: |
       Per-tile grid + pixel coords. Row-oriented: one row per tile, indexed by tile_id (the row's position).
-      Columns: tile_row, tile_col, tile_x, tile_y, tile_width, tile_height.
+      Columns: tile_row, tile_col, tile_x, tile_y, tile_width, tile_height. tile_id and size_mm are derived in
+      memory from row position and the partition, not stored as redundant columns.
 
   - id: tiles
     role: preprocessing
@@ -153,7 +155,9 @@ artifacts:
     format: hdf5
     path: tiles/size_mm={size_mm}/{image_id}/{image_id}.hdf5
     description: |
-      Extracted tile image ndarrays (every tile in the grid, background not yet removed).
+      Extracted tile images in metadata row order (every tile in the grid, background not yet removed).
+      HDF5 dataset tiles has shape (N,) and uint8 subarray dtype (H,W,3); readers also accept 4D stacks
+      and legacy tile_224/tiles_224 dataset keys. Other legacy datasets are ignored.
 
   - id: tile_background
     role: preprocessing
@@ -162,8 +166,8 @@ artifacts:
     format: parquet
     path: tile_background/size_mm={size_mm}/{image_id}.parquet
     description: |
-      Per-tile binary background flag -- 1 if the tile maps onto background_mask pixels. Consumed downstream to drop
-      non-tissue tiles (NOT used to gate feature extraction).
+      Per-tile binary background flag in metadata row order, without a stored tile_id column. Consumed downstream
+      to drop non-tissue tiles (NOT used to gate feature extraction). Debug masks can be regenerated independently.
 
   - id: tile_features
     role: preprocessing
@@ -174,6 +178,8 @@ artifacts:
     description: |
       Foundation-model embedding per tile. model in {virchow2,uni,uni2,conch,conch1.5,chief,
       ctranspath,dino,gigapath,musk,phikon2,resnet-50}.
+      HDF5 contains only features (N,D); tile identity is row position and geometry belongs to tile_metadata.
+      Legacy tile_224/tiles_224 embedding keys are accepted without rewriting the files.
 
   - id: tile_augmentation
     role: preprocessing
@@ -182,7 +188,8 @@ artifacts:
     format: hdf5
     path: tiles/size_mm={size_mm}/{image_id}/{image_id}.hdf5
     description: |
-      Augmented tiles with tile_ids and coords, resolved relative to a prepared augmentation directory.
+      Augmented pixels only, in the original metadata row order and the same storage format as tiles.
+      Resolved relative to a prepared augmentation directory; no embedded tile_ids or coords are needed.
       augmentation.yaml records source_dataset_id and generation settings; directory names are not parsed.
 
   - id: tile_augmentation_features
@@ -192,7 +199,7 @@ artifacts:
     format: hdf5
     path: features/size_mm={size_mm}/model={model}/{image_id}/{image_id}.hdf5
     description: |
-      Foundation embeddings with tile_ids and coords, resolved relative to a prepared augmentation directory.
+      Foundation embeddings only, in original metadata row order, resolved relative to a prepared augmentation directory.
       The preprocessing role includes both original and augmented embeddings.
 
   - id: thumbnail

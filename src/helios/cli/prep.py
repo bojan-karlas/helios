@@ -202,6 +202,10 @@ def tiles(
     stride_fraction: float | None = typer.Option(
         None, "--stride-fraction", help="Grid stride as a fraction of tile width (0.5 gives 50% overlap)."
     ),
+    background_mask_only: bool | None = typer.Option(
+        None, "--background-mask-only/--no-background-mask-only",
+        help="Segment thumbnails into debug masks only; leave tile pixels, geometry, and background tables unchanged.",
+    ),
     config: Path | None = _CONFIG,
     overwrite: bool = _OVERWRITE,
 ) -> None:
@@ -223,6 +227,7 @@ def tiles(
         "size_mm": csv_floats(size_mm),
         "tile_px": tile_px,
         "stride_fraction": stride_fraction,
+        "background_mask_only": background_mask_only,
     }
     params = load_stage_params("prep", "tiles", config_path=config, overrides=overrides)
     prep_tiles(

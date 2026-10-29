@@ -611,19 +611,27 @@ def _seed_everything(seed: int) -> None:
 
 
 def _peek_feature_dim(path: Path) -> int:
+    from helios.data.hdf5 import array_dataset
+
     with h5py.File(path, "r") as h:
-        return int(h["features"].shape[-1])
+        return int(array_dataset(h, "features").shape[-1])
 
 
 def _read_hdf5_features(path: Path) -> NDArray[np.float32]:
+    from helios.data.hdf5 import array_dataset
+
     with h5py.File(path, "r") as h:
-        return np.asarray(h["features"][()], dtype=np.float32)
+        return np.asarray(array_dataset(h, "features")[()], dtype=np.float32)
 
 
 def _read_tile_background(path: Path | None, n_tiles: int) -> tuple[NDArray[np.bool_], NDArray[np.int64]]:
+    from helios.data.io import ordinal_tile_table
+
     if path is None or not Path(path).exists():
         return np.zeros(n_tiles, dtype=bool), np.arange(n_tiles, dtype=np.int64)
-    table = pd.read_parquet(path).sort_values("tile_id")
+    table = ordinal_tile_table(pd.read_parquet(path))
+    if len(table) != n_tiles:
+        raise ValueError(f"{path}: background has {len(table)} rows, but features have {n_tiles}.")
     flag_column = "tile_background" if "tile_background" in table.columns else "is_background"
     return table[flag_column].to_numpy(dtype=bool), table["tile_id"].to_numpy(dtype=np.int64)
 

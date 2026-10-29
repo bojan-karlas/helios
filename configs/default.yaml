@@ -107,6 +107,7 @@ prep:
     size_mm:
     - 0.25
   tiles:
+    background_mask_only: false
     size_mm:
     - 0.0625
     - 0.125

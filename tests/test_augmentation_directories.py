@@ -90,7 +90,7 @@ def test_cohort_paths_and_provenance_round_trip(tmp_path):
     assert load_cohort_spec(cohort_file).datasets[0].augmentations == (prepared.root,)
 
 
-@pytest.mark.parametrize("change", ["count", "width", "ids", "coords", "missing", "duplicate"])
+@pytest.mark.parametrize("change", ["count", "width"])
 def test_alignment_rejects_incompatible_features(tmp_path, change):
     prepared = definition(tmp_path / "aug", "a")
     store = prepared.store()
@@ -103,17 +103,20 @@ def test_alignment_rejects_incompatible_features(tmp_path, change):
         payload = features(2)
     elif change == "width":
         payload = features(width=5)
-    elif change == "ids":
-        payload["tile_ids"] = payload["tile_ids"][::-1]
-    elif change == "coords":
-        payload["coords"] = payload["coords"][::-1]
-    elif change == "missing":
-        del payload["tile_ids"]
-    else:
-        payload["tile_ids"][:] = 0
     store.write("tile_augmentation_features", payload, **keys)
     with pytest.raises(ValueError):
         validate_feature_alignment(original, store.path("tile_augmentation_features", **keys))
+
+
+@pytest.mark.parametrize("key", ["features", "tile_224", "tiles_224"])
+def test_alignment_uses_array_shapes_and_ignores_redundant_legacy_indices(tmp_path, key):
+    from helios.data.io import write
+
+    original = write({"features": np.ones((3, 4))}, tmp_path / "base.hdf5", "hdf5")
+    augmented = write({
+        key: np.ones((3, 4)), "tile_ids": np.zeros(3), "coords": np.zeros((1, 1)),
+    }, tmp_path / "aug.hdf5", "hdf5")
+    validate_feature_alignment(original, augmented)
 
 
 def test_prep_fit_discovery_and_saved_selection(monkeypatch, tmp_path):

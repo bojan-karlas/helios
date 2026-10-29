@@ -124,6 +124,7 @@ def fit_mil(
                     raise FileNotFoundError(
                         f"Missing tile_features for training slide {image_id!r} in {ds.name}: {feat_path}"
                     )
+                _validate_feature_count(store, feat_path, size_mm=size_mm, image_id=image_id)
                 for ap in aug_paths:
                     if not ap.exists():
                         raise FileNotFoundError(
@@ -260,9 +261,11 @@ def _predict_slide(
     if not overwrite and complete:
         return "skipped"
     mil_model = _load_inference_bundle(store.path("model_mil", fold=fold))
+    features_path = store.path("tile_features", size_mm=size_mm, model=model, image_id=image_id)
+    _validate_feature_count(store, features_path, size_mm=size_mm, image_id=image_id)
     out = infer_mil(
         mil_model,
-        features_path=store.path("tile_features", size_mm=size_mm, model=model, image_id=image_id),
+        features_path=features_path,
         background_path=store.path("tile_background", size_mm=size_mm, image_id=image_id),
         device=device,
     )
@@ -284,6 +287,13 @@ def _predict_slide(
         fold=fold,
     )
     return "completed"
+
+
+def _validate_feature_count(store: ArtifactStore, path: Path, *, size_mm: float, image_id: str) -> None:
+    from helios.data.hdf5 import feature_shape
+    from helios.stages.tile_features import _validate_tile_count
+
+    _validate_tile_count(store, size_mm=size_mm, image_id=image_id, n_tiles=feature_shape(path)[0])
 
 
 def _label(labels: pd.DataFrame, image_id: str, target: str) -> object | None:

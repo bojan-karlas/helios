@@ -22,7 +22,7 @@ from helios.stages._runtime import (
     resolve_datasets,
     select_image_ids,
 )
-from helios.stages.tile_features import _tile_index, _tiles_array
+from helios.stages.tile_features import _tiles_array, _validate_tile_count
 
 DEFAULT_METHOD: str = "cyclegan"
 DEFAULT_SOURCE: str | None = None
@@ -164,7 +164,7 @@ def _augment_slide(
     if not overwrite and aug_store.exists("tile_augmentation", size_mm=s, image_id=image_id):
         return "skipped"
     tiles = _tiles_array(store.read("tiles", size_mm=s, image_id=image_id))
-    tile_ids, coords = _tile_index(store, size_mm=s, image_id=image_id, n_tiles=len(tiles))
+    _validate_tile_count(store, size_mm=s, image_id=image_id, n_tiles=len(tiles))
     augmented = apply_augmentation(
         tiles,
         method=definition.method,
@@ -176,7 +176,7 @@ def _augment_slide(
         raise ValueError("Augmentation changed the number of tiles.")
     aug_store.write(
         "tile_augmentation",
-        {"tiles": augmented, "tile_ids": tile_ids, "coords": coords},
+        {"tiles": augmented},
         size_mm=s,
         image_id=image_id,
     )
@@ -198,8 +198,6 @@ def _embed_augmentation(
     if not overwrite and store.exists("tile_augmentation_features", size_mm=s, image_id=image_id, model=m):
         return "skipped"
     payload = store.read("tile_augmentation", size_mm=s, image_id=image_id)
-    if not {"tiles", "tile_ids", "coords"} <= payload.keys():
-        raise ValueError(f"Augmented tiles at {definition.root} lack alignment metadata; use --overwrite.")
     embeddings = extract_features(
         payload["tiles"],
         model=cast(FeatureModel, m),
@@ -207,11 +205,11 @@ def _embed_augmentation(
         device=device,
         progress=ctx.progress,
     )
-    if len(embeddings) != len(payload["tile_ids"]):
+    if len(embeddings) != len(payload["tiles"]):
         raise ValueError("Feature extraction changed the number of tiles.")
     store.write(
         "tile_augmentation_features",
-        {"features": embeddings, "tile_ids": payload["tile_ids"], "coords": payload["coords"]},
+        {"features": embeddings},
         size_mm=s,
         image_id=image_id,
         model=m,

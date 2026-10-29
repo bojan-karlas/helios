@@ -110,7 +110,7 @@ def test_ambiguous_union_roots_fail_before_io(tmp_path: Path) -> None:
 def test_path_enables_lazy_hdf5_subset_read(tmp_path: Path) -> None:
     store = ArtifactStore(Resolver(Roots.single(tmp_path)))
     n_tiles = 1000
-    tiles = np.arange(n_tiles * 4, dtype=np.float32).reshape(n_tiles, 4)
+    tiles = np.arange(n_tiles * 2 * 2 * 3, dtype=np.uint8).reshape(n_tiles, 2, 2, 3)
     store.write("tiles", {"tiles": tiles}, size_mm=0.25, image_id="I1")
 
     # The streaming seam: get the path, open lazily, read only a slice.
@@ -119,9 +119,10 @@ def test_path_enables_lazy_hdf5_subset_read(tmp_path: Path) -> None:
 
     with h5py.File(path, "r") as h:
         dset = h["tiles"]
-        assert dset.shape == (n_tiles, 4)  # metadata only; not materialized
+        assert dset.shape == (n_tiles,)  # metadata only; not materialized
+        assert dset.dtype.subdtype == (np.dtype(np.uint8), (2, 2, 3))
         subset = dset[10:13]  # read just 3 rows
-    assert subset.shape == (3, 4)
+    assert subset.shape == (3, 2, 2, 3)
     np.testing.assert_array_equal(subset, tiles[10:13])
 
 

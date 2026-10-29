@@ -12,6 +12,22 @@ import pandas as pd
 from numpy.typing import NDArray
 
 
+def segment_background(
+    thumbnail: NDArray[np.uint8], *, saturation_threshold: int = 15,
+) -> NDArray[np.bool_]:
+    """Segment thumbnail pixels for debugging without classifying any tiles."""
+    if thumbnail.ndim != 3 or thumbnail.shape[-1] < 3:
+        raise ValueError("thumbnail must have shape (H, W, 3)")
+    from PIL import Image
+    from scipy import ndimage
+
+    rgb = np.asarray(thumbnail[..., :3], dtype=np.uint8)
+    hsv = np.asarray(Image.fromarray(rgb).convert("HSV"), dtype=np.uint8)
+    return ndimage.median_filter(
+        _background_pixels(hsv, saturation_threshold=saturation_threshold) | _artifact_pixels(hsv), size=5,
+    ).astype(bool)
+
+
 def detect_background(
     thumbnail: NDArray[np.uint8],
     tile_metadata: pd.DataFrame,
@@ -46,17 +62,11 @@ def detect_background(
     if missing:
         raise ValueError(f"tile_metadata is missing columns: {sorted(missing)}")
 
-    from PIL import Image
-    from scipy import ndimage
-
     rgb = np.asarray(thumbnail[..., :3], dtype=np.uint8)
-    hsv = np.asarray(Image.fromarray(rgb).convert("HSV"), dtype=np.uint8)
 
     # Debug mask at thumbnail resolution. Tile classification below repeats the
     # reference extractor's morphology at its fixed 100x100 analysis scale.
-    background = _background_pixels(hsv, saturation_threshold=saturation_threshold)
-    artifact = _artifact_pixels(hsv)
-    background = ndimage.median_filter(background | artifact, size=5).astype(bool)
+    background = segment_background(thumbnail, saturation_threshold=saturation_threshold)
 
     if tile_metadata.empty:
         flags = pd.DataFrame({"tile_id": pd.Series(dtype=int), "tile_background": pd.Series(dtype=bool)})
