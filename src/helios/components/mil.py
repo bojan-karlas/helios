@@ -59,6 +59,7 @@ scripts, were resolved as follows:
 """
 from __future__ import annotations
 
+import inspect
 import random
 from dataclasses import dataclass
 from functools import lru_cache
@@ -355,6 +356,29 @@ class MilAttentionModel(Model):
         self.device = device
         self.input_dim: int | None = None
         self._state_dict: dict[str, torch.Tensor] | None = None
+
+    #: Bundles store the trained weights as a plain torch ``state_dict`` (``model.pt``).
+    bundle_format = "torch_state_dict"
+
+    def to_state_dict(self) -> dict[str, torch.Tensor]:
+        """The trained network weights, as stored in a bundle's ``model.pt``."""
+        if self._state_dict is None:
+            raise RuntimeError("MilAttentionModel is not fitted yet.")
+        return self._state_dict
+
+    @classmethod
+    def from_state_dict(cls, state: dict[str, torch.Tensor], params: dict[str, Any]) -> MilAttentionModel:
+        """Rebuild a fitted model from a ``state_dict`` and the ``fit mil`` parameters it was trained with.
+
+        Unrecognized parameters (stage-level settings such as ``model`` or ``size_mm``) are ignored. The input
+        dimension is read from the weights; the architecture is validated when the weights are loaded strictly.
+        """
+        accepted = set(inspect.signature(cls.__init__).parameters) - {"self"}
+        model = cls(**{key: value for key, value in params.items() if key in accepted})
+        model.input_dim = int(state["feature_enhancer.0.weight"].shape[1])
+        model._state_dict = dict(state)
+        model._build_net()
+        return model
 
     def _build_net(self) -> _MultiBranchGatedAMIL:
         if self.input_dim is None:

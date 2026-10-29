@@ -194,3 +194,38 @@ def test_reduce_whole_image_risk_deploy_ensembles() -> None:
     reduced = reduce_whole_image_risk(per_fold_scores, None)
     assert reduced.set_index("image_id").loc["A", "risk_score"] == pytest.approx(0.5)
     assert reduced.set_index("image_id").loc["A", "fold"] is None
+
+
+def test_bundle_stores_state_dict_and_rebuilds_from_config(tmp_path: Path, slides: list[SlideFeatureRef]) -> None:
+    import torch
+
+    from helios.data.bundle import MODEL_NAME, STATE_DICT_NAME, load_bundle, save_bundle
+
+    model = train_mil(slides, max_epochs=1, val_frac=0.0, n_branches=2, num_heads=2, device="cpu")
+    params = {"n_branches": 2, "num_heads": 2, "dropout_rate": 0.1, "size_mm": 0.25}
+    bundle_dir = save_bundle(model, tmp_path / "mil" / "fold=0", metadata={"config": {"fit": {"mil": params}}})
+
+    assert (bundle_dir / STATE_DICT_NAME).is_file()
+    assert not (bundle_dir / MODEL_NAME).exists()
+    state = torch.load(bundle_dir / STATE_DICT_NAME, weights_only=True)
+    assert state.keys() == model.to_state_dict().keys()
+
+    loaded = load_bundle(bundle_dir)
+    assert (loaded.n_branches, loaded.num_heads, loaded.input_dim) == (2, 2, D)
+    held_out = slides[0]
+    paths = {"features_path": held_out.features_path, "background_path": held_out.background_path}
+    expected = infer_mil(model, **paths, device="cpu")
+    actual = infer_mil(loaded, **paths, device="cpu")
+    assert actual.risk_score == pytest.approx(expected.risk_score)
+    np.testing.assert_allclose(actual.slide_embedding, expected.slide_embedding, rtol=1e-6)
+
+
+def test_bundle_rejects_config_that_does_not_match_the_weights(tmp_path: Path, slides: list[SlideFeatureRef]) -> None:
+    from helios.data.bundle import load_bundle, save_bundle
+
+    model = train_mil(slides, max_epochs=1, val_frac=0.0, n_branches=2, num_heads=2, device="cpu")
+    bundle_dir = save_bundle(
+        model, tmp_path / "mil" / "fold=0", metadata={"config": {"fit": {"mil": {"n_branches": 3, "num_heads": 2}}}}
+    )
+    with pytest.raises(RuntimeError, match="state_dict"):
+        load_bundle(bundle_dir)
