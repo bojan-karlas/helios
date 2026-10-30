@@ -53,7 +53,7 @@
 #                  combination of those fields); key fields NOT in `path` become the ROWS within each file.
 #                  Hive-style `field={field}/` segments are used for partition-like dirs; the final segment
 #                  is the file (with extension). e.g. tile_features key=[size_mm,model,image_id,tile_id]
-#                  path=features/size_mm={size_mm}/model={model}/{image_id}/{image_id}.hdf5
+#                  path=tile_features/size_mm={size_mm}/model={model}/{image_id}/{image_id}.hdf5
 #                  -> one file per (size_mm,model,image_id) with one row per tile_id.
 #                  NOTE: `tile_id` is the positional index of a tile's row within its (row-oriented) file;
 #                        the grid coords `tile_row`, `tile_col` are available as columns alongside it.
@@ -94,7 +94,7 @@ artifacts:
     format: svs/tiff/ndpi
     path: wsi/{image_id}.svs
     description: |
-      H&E-stained whole slide image. Flat set under wsi/ (subfolders cosmetic, ignored).
+      H&E-stained whole slide image. Discovered recursively under wsi/.
 
   - id: image_metadata
     role: source
@@ -174,7 +174,7 @@ artifacts:
     title: Tile (Patch) Embeddings
     key: [size_mm, model, image_id, tile_id]
     format: hdf5
-    path: features/size_mm={size_mm}/model={model}/{image_id}/{image_id}.hdf5
+    path: tile_features/size_mm={size_mm}/model={model}/{image_id}/{image_id}.hdf5
     description: |
       Foundation-model embedding per tile. model in {virchow2,uni,uni2,conch,conch1.5,chief,
       ctranspath,dino,gigapath,musk,phikon2,resnet-50}.
@@ -197,7 +197,7 @@ artifacts:
     title: Stain-Augmented Tile Embeddings
     key: [size_mm, model, image_id, tile_id]
     format: hdf5
-    path: features/size_mm={size_mm}/model={model}/{image_id}/{image_id}.hdf5
+    path: tile_features/size_mm={size_mm}/model={model}/{image_id}/{image_id}.hdf5
     description: |
       Foundation embeddings only, in original metadata row order, resolved relative to a prepared augmentation directory.
       The preprocessing role includes both original and augmented embeddings.

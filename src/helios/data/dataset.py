@@ -3,7 +3,7 @@
 A HELIOS dataset is, at minimum:
 
 * a ``dataset.yaml`` descriptor with required ``id`` and ``name`` strings,
-* a flat ``wsi/`` set of whole-slide images, and
+* a ``wsi/`` tree of whole-slide images, and
 * a ``metadata/image_metadata.csv`` conforming to the data dictionary
   (one row per ``image_id``).
 

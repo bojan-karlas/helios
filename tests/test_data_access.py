@@ -26,7 +26,7 @@ def test_independent_roots_keep_source_unchanged(tmp_path: Path) -> None:
 
     # Derived artifact lands under the output root, not the source cohort.
     assert (
-        output / "features/size_mm=0.25/model=virchow2/I1/I1.hdf5"
+        output / "tile_features/size_mm=0.25/model=virchow2/I1/I1.hdf5"
     ).exists()
     assert not (source / "preprocessing").exists()
     assert store.exists("tile_features", size_mm=0.25, model="virchow2", image_id="I1")
@@ -62,7 +62,7 @@ def test_all_artifacts_resolve_under_their_declared_roots(tmp_path: Path) -> Non
     ) == tmp_path / "pre/tiles/size_mm=0.25/I1/I1.hdf5"
     assert resolver.path(
         "tile_augmentation_features", size_mm=0.25, model="uni", image_id="I1"
-    ) == tmp_path / "pre/features/size_mm=0.25/model=uni/I1/I1.hdf5"
+    ) == tmp_path / "pre/tile_features/size_mm=0.25/model=uni/I1/I1.hdf5"
     assert resolver.role("aligned_slide_embedding") == "results"
     assert resolver.role("cellular_features") == "preprocessing"
     assert resolver.role("model_mil") == "models"

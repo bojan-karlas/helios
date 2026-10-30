@@ -130,13 +130,13 @@ def test_partial_or_reordered_full_table_is_rejected(tmp_path, ids):
 def test_float_partitions_resolve_existing_spelling_for_all_store_operations(tmp_path):
     store = store_at(tmp_path)
     keys = {"size_mm": 0.25, "model": "uni", "image_id": "slide"}
-    path = tmp_path / "preprocessing/features/size_mm=0.250/model=uni/slide/slide.hdf5"
+    path = tmp_path / "preprocessing/tile_features/size_mm=0.250/model=uni/slide/slide.hdf5"
     write({"tile_224": np.ones((3, 4))}, path, "hdf5")
     assert store.path("tile_features", **keys) == path
     assert store.exists("tile_features", **keys)
     assert store.read("tile_features", **keys)["features"].shape == (3, 4)
     assert store.write("tile_features", {"features": np.zeros((3, 4))}, **keys) == path
-    assert not (tmp_path / "preprocessing/features/size_mm=0.25").exists()
+    assert not (tmp_path / "preprocessing/tile_features/size_mm=0.25").exists()
     store.remove("tile_features", **keys)
     assert not path.exists()
 
@@ -147,7 +147,7 @@ def test_float_partitions_are_exact_and_string_labels_are_opaque(tmp_path):
     (root / "size_mm=0.25000000000001").mkdir(parents=True)
     assert resolver.path("tiles", size_mm=0.25, image_id="slide") == root / "size_mm=0.25/slide/slide.hdf5"
     assert format_hive_value(0.123456789) == "0.123456789"
-    pre = tmp_path / "preprocessing/features/size_mm=0.250"
+    pre = tmp_path / "preprocessing/tile_features/size_mm=0.250"
     (pre / "model=1.00").mkdir(parents=True)
     path = resolver.path("tile_features", size_mm=0.25, model="1.0", image_id="slide",
                          extra_hive={"threshold": 0.5})

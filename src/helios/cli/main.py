@@ -69,7 +69,7 @@ def list_augmentations(
     rows = []
     for a in found.values():
         features = {}
-        for partition in sorted((a.root / "features").glob("size_mm=*/model=*")):
+        for partition in sorted((a.root / "tile_features").glob("size_mm=*/model=*")):
             features[str(partition.relative_to(a.root))] = len(list(partition.glob("*/*.hdf5")))
         rows.append({
             "path": str(a.root), "source_dataset_id": a.source_dataset_id,

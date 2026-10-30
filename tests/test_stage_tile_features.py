@@ -125,7 +125,7 @@ def test_cached_augmentation_reads_preprocessing_and_writes_features(monkeypatch
     feature_path = store.path(
         "tile_augmentation_features", size_mm=0.25, model="virchow2", image_id=image_id
     )
-    assert feature_path.is_relative_to(definition.root / "features")
+    assert feature_path.is_relative_to(definition.root / "tile_features")
     assert feature_path.exists()
     assert store.read(
         "tile_augmentation_features", size_mm=0.25, model="virchow2", image_id=image_id

@@ -215,7 +215,7 @@ Each prepared directory contains:
 ```text
 augmentation.yaml
 tiles/size_mm=0.25/<image_id>/<image_id>.hdf5
-features/size_mm=0.25/model=virchow2/<image_id>/<image_id>.hdf5
+tile_features/size_mm=0.25/model=virchow2/<image_id>/<image_id>.hdf5
 ```
 
 The saved definition records `source_dataset_id`, `method`, `parameters`, and
@@ -365,6 +365,16 @@ artifact spec drives the graph.
 
 #### Tile artifact contents
 
+Tile embeddings live under `tile_features/size_mm=.../model=.../` in the
+preprocessing root (or in a prepared augmentation root). The HDF5 array key
+remains `features`.
+
+Tile extraction uses the slide's native microns-per-pixel (MPP), with
+`image_mpp` from image metadata taking precedence over OpenSlide's `mpp-x`.
+`size_mm` is the physical tile edge in millimeters: the level-0 pixel edge is
+`round(size_mm * 1000 / MPP)`, then resized to `tile_px`. TIFF inputs currently
+require explicit `image_mpp`; missing or invalid MPP raises an error.
+
 Tile identity is the zero-based row ordinal in the full tile metadata table.
 Full tile pixels, embeddings, augmentation arrays, and background flags share
 that row order. Geometry belongs only in tile metadata. New full Parquet tables
@@ -466,7 +476,7 @@ accept `roots=StorageRoots(...)` instead of `output_root=...`.
 preprocessing root, so use `--preprocessing-root` to relocate them.
 
 Existing embeddings are not moved automatically: relocate
-`<old_features_root>/tile_features/` to `<preprocessing_root>/features/`.
+`<old_features_root>/tile_features/` to `<preprocessing_root>/tile_features/`.
 The old `tile_augmentation/` and `tile_augmentation_features/` trees must be
 relocated into prepared augmentation directories with an `augmentation.yaml`
 descriptor. Full arrays must preserve the original tile metadata row order;

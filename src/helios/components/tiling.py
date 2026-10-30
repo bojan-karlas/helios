@@ -31,8 +31,8 @@ def extract_tiles(
     wsi_path:
         Path to the slide file.
     size_mm:
-        Target tile resolution in microns-per-pixel (drives the pyramid level /
-        resampling).
+        Physical tile edge length in millimeters. The level-0 edge in pixels
+        is round(size_mm * 1000 / image_mpp), then resized to tile_px.
     tile_px:
         Output tile edge length in pixels.
     stride_fraction:

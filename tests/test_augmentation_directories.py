@@ -153,7 +153,7 @@ def test_prep_fit_discovery_and_saved_selection(monkeypatch, tmp_path):
     row, = json.loads(result.output)
     assert row["path"] == str(output)
     assert row["tile_files"] == 2
-    assert row["feature_files"] == {"features/size_mm=0.25/model=virchow2": 2}
+    assert row["feature_files"] == {"tile_features/size_mm=0.25/model=virchow2": 2}
     for path in (output / "tiles").rglob("*.hdf5"):
         path.unlink()
     mil.fit_mil(datasets=[root], augmentations=[str(output)], overwrite=True)
@@ -170,7 +170,7 @@ def test_missing_features_fail_without_generation(monkeypatch, tmp_path):
     monkeypatch.setattr(mil, "train_mil", lambda *a, **k: pytest.fail("must not train"))
     with pytest.raises(FileNotFoundError, match="Missing tile_augmentation_features"):
         mil.fit_mil(datasets=[root], augmentations=[str(prepared.root)])
-    assert not (prepared.root / "features").exists()
+    assert not (prepared.root / "tile_features").exists()
 
 
 def test_cli_selection_disable_and_removed_options(monkeypatch, tmp_path):
@@ -278,7 +278,7 @@ def test_resume_definition_and_warn_on_changed_checkpoint(monkeypatch, tmp_path,
     )
     assert len(calls) == 1
     assert "Mixed outputs" in caplog.text
-    for path in (output / "features").rglob("*.hdf5"):
+    for path in (output / "tile_features").rglob("*.hdf5"):
         path.unlink()
     augment.prep_augment(datasets=[replace(ds, augmentations=(output,))])
     assert len(calls) == 1

@@ -5,6 +5,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 from PIL import Image
 
 from helios.components.background import detect_background
@@ -36,6 +37,54 @@ def test_thumbnail_and_tiles_from_tiff(tmp_path: Path) -> None:
         "tile_width", "tile_height", "size_mm",
     ]
     assert metadata["tile_id"].tolist() == list(range(len(metadata)))
+
+
+@pytest.mark.parametrize(("mpp", "source_px", "count"), [(0.5, 8, 2), (1.0, 4, 15), (2.0, 2, 77)])
+def test_tile_physical_size_uses_mpp(tmp_path, mpp, source_px, count):
+    path = tmp_path / "slide.tiff"
+    _write_tiff(path)
+    metadata, tiles = extract_tiles(str(path), size_mm=0.004, tile_px=6, image_mpp=mpp)
+    assert metadata.tile_width.eq(source_px).all()
+    assert metadata.tile_height.eq(source_px).all()
+    assert metadata.tile_width.mul(mpp).eq(4.0).all()
+    assert tiles.shape == (count, 6, 6, 3)
+
+
+@pytest.mark.parametrize(("override", "edge"), [(None, 8), (1.0, 4)])
+def test_tile_mpp_fallback_and_override(monkeypatch, override, edge):
+    closed = []
+    monkeypatch.setattr("helios.components.tiling._open_slide", lambda path: (
+        lambda x, y, size: np.zeros((size, size, 3), np.uint8),
+        8, 8, 0.5, lambda: closed.append(True),
+    ))
+    metadata, _ = extract_tiles("slide.svs", size_mm=0.004, image_mpp=override)
+    assert metadata.tile_width.eq(edge).all()
+    assert closed == [True]
+
+
+@pytest.mark.parametrize("mpp", [None, 0, -1, float("nan"), float("inf")])
+def test_tiff_requires_valid_explicit_mpp(tmp_path, mpp):
+    path = tmp_path / "slide.tiff"
+    _write_tiff(path)
+    with pytest.raises(ValueError, match="MPP"):
+        extract_tiles(str(path), size_mm=0.004, image_mpp=mpp)
+
+
+def test_tiling_stage_passes_per_image_mpp(tmp_path):
+    (tmp_path / "wsi/groups").mkdir(parents=True)
+    (tmp_path / "metadata").mkdir()
+    for image_id in ("slide-a", "slide-b"):
+        _write_tiff(tmp_path / "wsi/groups" / f"{image_id}.tiff")
+    pd.DataFrame({"image_id": ["slide-a", "slide-b"], "image_mpp": [0.5, 1.0]}).to_csv(
+        tmp_path / "metadata/image_metadata.csv", index=False,
+    )
+    store = cohort_store(tmp_path)
+    for image_id in ("slide-a", "slide-b"):
+        store.write("thumbnail", np.full((8, 12, 3), 255, np.uint8), image_id=image_id)
+    prep_tiles(datasets=[tmp_path], size_mm=[0.004], tile_px=4)
+    for image_id, edge in (("slide-a", 8), ("slide-b", 4)):
+        table = store.read("tile_metadata", size_mm=0.004, image_id=image_id)
+        assert table.tile_width.eq(edge).all()
 
 
 def test_background_flags_align_with_tile_ids() -> None:

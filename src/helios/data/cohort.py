@@ -134,7 +134,7 @@ def load_cohort_spec(path: str | Path) -> CohortSpec:
         elif isinstance(entry, dict):
             if "features_root" in entry:
                 raise ValueError(
-                    "features_root has been removed; move embeddings to preprocessing_root/features "
+                    "features_root has been removed; move embeddings to preprocessing_root/tile_features "
                     "and use preprocessing_root instead."
                 )
             unknown = set(entry) - {"source_root", "preprocessing_root", "augmentations"}
