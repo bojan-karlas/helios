@@ -91,7 +91,7 @@ artifacts:
     role: source
     title: Whole Slide Image
     key: [image_id]
-    format: svs/tiff/ndpi
+    format: svs/tif/tiff/ndpi/mrxs/avs/dcm/vms/vmu/scn/svslide/bif/czi
     path: wsi/{image_id}.svs
     description: |
       H&E-stained whole slide image. Discovered recursively under wsi/.

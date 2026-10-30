@@ -12,9 +12,38 @@ import pytest
 
 from helios.data.catalog import load_artifacts, storage_role
 from helios.data.cohort import ResolvedDataset
+from helios.data.dataset import Dataset
 from helios.data.io import ArtifactStore
 from helios.data.resolver import Resolver, Roots, StorageRoots
 from helios.stages._runtime import cohort_store, resolve_datasets
+
+
+@pytest.mark.parametrize("suffix", [
+    ".svs", ".tif", ".tiff", ".ndpi", ".mrxs",
+    ".avs", ".dcm", ".vms", ".vmu", ".scn", ".svslide", ".bif", ".czi",
+])
+@pytest.mark.parametrize("uppercase", [False, True])
+def test_slide_discovery_formats(tmp_path, suffix, uppercase):
+    folder = tmp_path / "wsi/group"
+    folder.mkdir(parents=True)
+    slide = folder / f"slide{suffix.upper() if uppercase else suffix}"
+    slide.write_bytes(b"synthetic slide")
+    (folder / f"directory{suffix}").mkdir()
+    assert Dataset(tmp_path).slides == {"slide": slide}
+
+
+@pytest.mark.parametrize("suffix", [".mrxs", ".MRXS"])
+def test_recursive_mrxs_discovery_ignores_companion_files_and_directories(tmp_path, suffix):
+    folder = tmp_path / "wsi/group"
+    folder.mkdir(parents=True)
+    slide = folder / f"slide{suffix}"
+    slide.write_bytes(b"synthetic MRXS header")
+    companion = folder / "slide"
+    companion.mkdir()
+    (companion / "Data0000.dat").write_bytes(b"synthetic data")
+    (companion / "Slidedat.ini").write_text("synthetic configuration")
+    (folder / "not-a-slide.mrxs").mkdir()
+    assert Dataset(tmp_path).slides == {"slide": slide}
 
 
 def test_independent_roots_keep_source_unchanged(tmp_path: Path) -> None:

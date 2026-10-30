@@ -24,7 +24,10 @@ import pandas as pd
 import yaml
 
 IMAGE_ID = "image_id"
-WSI_SUFFIXES = (".svs", ".tiff", ".tif", ".ndpi")
+WSI_SUFFIXES = (
+    ".svs", ".tiff", ".tif", ".ndpi", ".mrxs",
+    ".avs", ".dcm", ".vms", ".vmu", ".scn", ".svslide", ".bif", ".czi",
+)
 
 
 @dataclass(frozen=True)
@@ -98,7 +101,7 @@ class Dataset:
         return {
             p.stem: p
             for p in self.wsi_dir.rglob("*")
-            if p.suffix.lower() in WSI_SUFFIXES
+            if p.is_file() and p.suffix.lower() in WSI_SUFFIXES
         }
 
     @cached_property

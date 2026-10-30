@@ -287,12 +287,18 @@ A physical dataset is a directory with a descriptor, slides, and metadata:
 my_cohort/
   dataset.yaml                          # physical dataset identity and display name
   wsi/                                  # one slide per image_id
-    DEMO-SKCM-P00001-S01-B1-I1.svs      # .svs / .tiff / .tif / .ndpi
+    DEMO-SKCM-P00001-S01-B1-I1.svs
     DEMO-SKCM-P00002-S01-B1-I1.svs
     ...
   metadata/
     image_metadata.csv                  # one row per image_id
 ```
+
+Slides are discovered recursively by extension: `.svs`, `.tif`, `.tiff`,
+`.ndpi`, `.mrxs`, `.avs`, `.dcm`, `.vms`, `.vmu`, `.scn`, `.svslide`, `.bif`,
+and `.czi` (case-insensitive). Keep multi-file slides with their companion files.
+Decoding depends on the installed OpenSlide build; discovery alone does not
+guarantee that a file can be read.
 
 The descriptor has required nonempty `id` and `name` strings and an optional
 `description`:

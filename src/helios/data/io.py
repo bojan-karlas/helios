@@ -14,7 +14,7 @@ Two access modes:
 
 Supported formats (scaffold): csv, parquet, json, npy, hdf5, pkl, bundle,
 txt/md, png. ``bundle`` is a provenance-bearing model directory (see
-:mod:`helios.data.bundle`). Whole-slide image decoding (svs/tiff/ndpi) is
+:mod:`helios.data.bundle`). Whole-slide image decoding (svs/tiff/ndpi/mrxs) is
 intentionally left to the component that needs it.
 """
 from __future__ import annotations
