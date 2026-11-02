@@ -33,6 +33,7 @@ def make_cohort(root: str | Path, n_images: int = 4, n_patients: int = 2) -> Pat
                 "patient_sex": ["male", "female"][i % 2],
                 "disease_age_at_diagnosis": 50 + i,
                 "disease_pfs_recurred": i % 2,
+                "disease_pfs_recurred_5yfu": i % 2,
                 "disease_pfs_recurred_days": 365 * (i + 1),
                 "path_thickness": 1.0 + i * 0.5,
                 "path_ulceration_present": i % 2,

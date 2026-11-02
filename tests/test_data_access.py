@@ -46,6 +46,30 @@ def test_recursive_mrxs_discovery_ignores_companion_files_and_directories(tmp_pa
     assert Dataset(tmp_path).slides == {"slide": slide}
 
 
+@pytest.mark.parametrize("suffix", [".ome.tif", ".ome.tiff", ".OME.TIFF"])
+def test_ome_tiff_identity_uses_full_suffix(tmp_path, suffix):
+    root = tmp_path / "wsi"
+    root.mkdir()
+    slide = root / f"slide{suffix}"
+    slide.write_bytes(b"synthetic slide")
+    assert Dataset(tmp_path).slides == {"slide": slide}
+    (root / "slide.tiff").write_bytes(b"duplicate slide")
+    with pytest.raises(ValueError, match="Duplicate WSI image_id"):
+        _ = Dataset(tmp_path).slides
+
+
+def test_wsi_ignore_subtrees_are_excluded(tmp_path):
+    root = tmp_path / "wsi"
+    for group in ("_ignore", "group/_ignore/nested", "_ignored", "group"):
+        folder = root / group
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "slide.svs").write_bytes(b"synthetic slide")
+    (root / "group/slide.svs").rename(root / "group/other.svs")
+    assert Dataset(tmp_path).slides == {
+        "slide": root / "_ignored/slide.svs", "other": root / "group/other.svs",
+    }
+
+
 def test_independent_roots_keep_source_unchanged(tmp_path: Path) -> None:
     source = tmp_path / "cohort"
     output = tmp_path / "preprocessing"

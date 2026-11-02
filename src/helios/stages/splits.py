@@ -27,7 +27,7 @@ from helios.stages._runtime import (
 # -- configurable defaults (source of truth for configs/default.yaml) ----------
 DEFAULT_N_FOLDS: int = 5
 DEFAULT_VAL_FRACTION: float = 0.0
-DEFAULT_STRATIFY_BY: list[str] = ["disease_pfs_recurrence_5yfu"]
+DEFAULT_STRATIFY_BY: list[str] = ["disease_pfs_recurred_5yfu"]
 DEFAULT_GROUP_BY: str | None = "patient_id"
 DEFAULT_SEED: int = 0
 

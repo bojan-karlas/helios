@@ -39,7 +39,7 @@ from helios.stages._runtime import (
 # -- configurable defaults (source of truth for configs/default.yaml) ----------
 DEFAULT_SIZE_MM: float = 0.25
 DEFAULT_MODEL: str = "virchow2"
-DEFAULT_TARGET: str = "disease_pfs_recurrence_5yfu"
+DEFAULT_TARGET: str = "disease_pfs_recurred_5yfu"
 DEFAULT_AUG_SWAP_PROB: float = 0.5
 DEFAULT_AUG_MODE: Literal["replace", "augment"] = "replace"
 DEFAULT_N_BRANCHES: int = 4
@@ -106,8 +106,20 @@ def fit_mil(
         slides: list[SlideFeatureRef] = []
         for ds, store in zip(resolved, stores, strict=True):
             labels = ds.dataset().image_metadata.set_index("image_id")
+            if target not in labels:
+                raise ValueError(f"Missing MIL target column {target!r} in {ds.root}.")
+            selected = train_ids(ds, fold, where=ds.where, roots=roots)
+            missing = labels.loc[selected, target].isna()
+            if missing.any():
+                progress.log(
+                    f"excluding {int(missing.sum())} unlabeled training images "
+                    f"dataset={ds.name} fold={fold} target={target}"
+                )
             aug_stores = [Augmentation.load(path).store() for path in ds.augmentations]
-            for image_id in train_ids(ds, fold, where=ds.where, roots=roots):
+            for image_id in selected:
+                if missing.loc[image_id]:
+                    continue
+                label = _label(labels, image_id, target)
                 aug_paths = tuple(
                     aug_store.path(
                         "tile_augmentation_features",
@@ -140,7 +152,7 @@ def fit_mil(
                         features_path=feat_path,
                         background_path=store.path("tile_background", size_mm=size_mm, image_id=image_id),
                         aug_features_paths=aug_paths,
-                        label=_label(labels, image_id, target),
+                        label=label,
                     )
                 )
         slides_by_fold[fold] = slides
@@ -297,6 +309,7 @@ def _validate_feature_count(store: ArtifactStore, path: Path, *, size_mm: float,
 
 
 def _label(labels: pd.DataFrame, image_id: str, target: str) -> object | None:
-    if image_id not in labels.index or target not in labels.columns:
-        return None
-    return labels.loc[image_id, target]
+    value = labels.loc[image_id, target]
+    if value not in (0, 1):
+        raise ValueError(f"MIL target {target!r} must be binary (0/1) for image {image_id!r}; got {value!r}.")
+    return value

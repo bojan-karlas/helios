@@ -89,6 +89,39 @@ def test_fit_mil_raises_on_missing_slide_features(tmp_path: Path) -> None:
         mil.fit_mil(datasets=[root])
 
 
+def test_fit_rejects_missing_target_column_before_training(monkeypatch, cohort):
+    monkeypatch.setattr(mil, "train_mil", lambda *a, **k: pytest.fail("must not train"))
+    with pytest.raises(ValueError, match="Missing MIL target column 'unknown'"):
+        mil.fit_mil(datasets=[cohort], target="unknown")
+
+
+def test_fit_excludes_unlabeled_images_and_logs_count(monkeypatch, cohort, caplog):
+    from helios.progress import Progress
+
+    path = cohort / "metadata/image_metadata.csv"
+    table = pd.read_csv(path)
+    table.loc[0, mil.DEFAULT_TARGET] = np.nan
+    table.to_csv(path, index=False)
+    seen = []
+    monkeypatch.setattr(mil, "train_mil", lambda slides, **kw: seen.append(slides) or {})
+    with caplog.at_level("INFO", logger="helios"):
+        mil.fit_mil(datasets=[cohort], progress=Progress(use_tqdm=False))
+    assert [s.image_id for s in seen[0]] == [IMAGE_IDS[1]]
+    assert [s.image_id for s in seen[1]] == IMAGE_IDS[2:]
+    assert "excluding 1 unlabeled training images" in caplog.text
+    assert all(s.label in (0, 1) for slides in seen for s in slides)
+
+
+def test_fit_rejects_nonbinary_labels(monkeypatch, cohort):
+    path = cohort / "metadata/image_metadata.csv"
+    table = pd.read_csv(path)
+    table.loc[0, mil.DEFAULT_TARGET] = 2
+    table.to_csv(path, index=False)
+    monkeypatch.setattr(mil, "train_mil", lambda *a, **k: pytest.fail("must not train"))
+    with pytest.raises(ValueError, match="must be binary"):
+        mil.fit_mil(datasets=[cohort])
+
+
 def test_predict_scores_each_fold_then_reduces(monkeypatch, cohort: Path) -> None:
     store = ArtifactStore(Resolver(Roots.single(cohort)))
     for fold in (0, 1):

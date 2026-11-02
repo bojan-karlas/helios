@@ -35,7 +35,7 @@ from helios.stages._runtime import (
 )
 
 # -- configurable defaults (source of truth for configs/default.yaml) ----------
-DEFAULT_TARGET: str = "disease_pfs_recurrence_5yfu"
+DEFAULT_TARGET: str = "disease_pfs_recurred_5yfu"
 DEFAULT_ATTENTION_CUTOFF: float = 0.8
 DEFAULT_N_PCA: int = 50
 DEFAULT_K_MICRO: int = 3000

@@ -42,7 +42,7 @@ from helios.stages.cell_features import DEFAULT_SIZE_MM as DEFAULT_CELLULAR_SIZE
 
 # -- configurable defaults (source of truth for configs/default.yaml) ----------
 DEFAULT_RISK: list[str] = list(RISK_KINDS)
-DEFAULT_TARGET: str = "disease_pfs_recurrence_5yfu"
+DEFAULT_TARGET: str = "disease_pfs_recurred_5yfu"
 DEFAULT_STAGING_FEATURE: str = "path_stage_substage"
 DEFAULT_CLINICAL_FEATURES: list[str] = [
     "patient_age_at_diagnosis",

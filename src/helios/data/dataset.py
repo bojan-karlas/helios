@@ -16,6 +16,8 @@ validation belongs to the config/datadict layer.
 """
 from __future__ import annotations
 
+import os
+from collections.abc import Iterator
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
@@ -28,6 +30,25 @@ WSI_SUFFIXES = (
     ".svs", ".tiff", ".tif", ".ndpi", ".mrxs",
     ".avs", ".dcm", ".vms", ".vmu", ".scn", ".svslide", ".bif", ".czi",
 )
+
+
+def wsi_image_id(path: Path) -> str:
+    """Strip the complete slide suffix, including OME-TIFF's compound suffix."""
+    for suffix in (".ome.tiff", ".ome.tif"):
+        if path.name.lower().endswith(suffix):
+            return path.name[:-len(suffix)]
+    return path.stem
+
+
+def wsi_files(root: Path) -> Iterator[Path]:
+    """Yield WSI-tree files without descending into directories named _ignore."""
+    def scan_error(error: OSError) -> None:
+        raise error
+
+    for folder, directories, filenames in os.walk(root, onerror=scan_error):
+        directories[:] = [name for name in directories if name != "_ignore"]
+        for name in filenames:
+            yield Path(folder) / name
 
 
 @dataclass(frozen=True)
@@ -98,11 +119,15 @@ class Dataset:
     @cached_property
     def slides(self) -> dict[str, Path]:
         """``image_id -> wsi path``, discovered by scanning ``wsi/``."""
-        return {
-            p.stem: p
-            for p in self.wsi_dir.rglob("*")
-            if p.is_file() and p.suffix.lower() in WSI_SUFFIXES
-        }
+        slides: dict[str, Path] = {}
+        for path in wsi_files(self.wsi_dir):
+            if not path.is_file() or path.suffix.lower() not in WSI_SUFFIXES:
+                continue
+            image_id = wsi_image_id(path)
+            if image_id in slides:
+                raise ValueError(f"Duplicate WSI image_id {image_id!r}: {slides[image_id]} and {path}")
+            slides[image_id] = path
+        return slides
 
     @cached_property
     def table(self) -> pd.DataFrame:

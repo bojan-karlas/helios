@@ -67,7 +67,7 @@ from helios.models.base import Model, register_model
 
 #: Outcome column used for cluster-significance testing + the risk model,
 #: matching helios.stages.mil's DEFAULT_TARGET.
-DEFAULT_TARGET: str = "disease_pfs_recurrence_5yfu"
+DEFAULT_TARGET: str = "disease_pfs_recurred_5yfu"
 
 #: Risk estimators available for the cluster-presence model.
 MorphologyEstimator = Literal["random_forest", "logreg_l2", "logreg_l1", "elasticnet", "gradient_boosting"]
