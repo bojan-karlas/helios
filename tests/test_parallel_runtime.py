@@ -214,13 +214,11 @@ def test_real_mil_parallel_fit_and_prediction_match_serial(cluster, tmp_path: Pa
     import numpy as np
     import pandas as pd
 
-    from helios.data.io import ArtifactStore
-    from helios.data.resolver import Resolver, Roots
     from helios.stages.mil import fit_mil, predict_mil
-    from tests.fixtures import make_cohort
+    from tests.fixtures import make_cohort, prepared_store, storage_dirs
 
     root = make_cohort(tmp_path / "example", n_images=4, n_patients=4)
-    store = ArtifactStore(Resolver(Roots.single(root)))
+    store = prepared_store(root)
     ids = pd.read_csv(root / "metadata/image_metadata.csv")["image_id"].tolist()
     rng = np.random.default_rng(42)
     for image_id in ids:
@@ -234,21 +232,21 @@ def test_real_mil_parallel_fit_and_prediction_match_serial(cluster, tmp_path: Pa
     ]))
     config = ParallelConfig(max_cpus=2)
     fit_mil(
-        datasets=[root], parallel=config, target="disease_pfs_recurred",
+        datasets=[root], dirs=storage_dirs(root), parallel=config, target="disease_pfs_recurred",
         device="cpu", max_epochs=1, val_frac=0,
     )
     for fold in (0, 1):
         assert store.exists("model_mil", fold=fold)
-    predict_mil(datasets=[root], device="cpu")
+    predict_mil(datasets=[root], dirs=storage_dirs(root), device="cpu")
     expected = store.read("whole_image_risk_score_ensemble")
     expected_grad = store.read("aligned_slide_embedding_grad", fold=0, image_id=ids[0])
-    predict_mil(datasets=[root], device="cpu", parallel=config, overwrite=True)
+    predict_mil(datasets=[root], dirs=storage_dirs(root), device="cpu", parallel=config, overwrite=True)
     pd.testing.assert_frame_equal(expected, store.read("whole_image_risk_score_ensemble"))
     np.testing.assert_allclose(
         expected_grad, store.read("aligned_slide_embedding_grad", fold=0, image_id=ids[0]), atol=1e-7,
     )
     path = store.path("aligned_slide_embedding", fold=0, image_id=ids[0])
     modified = path.stat().st_mtime_ns
-    predict_mil(datasets=[root], device="cpu", parallel=config, image_ids=[ids[0]])
+    predict_mil(datasets=[root], dirs=storage_dirs(root), device="cpu", parallel=config, image_ids=[ids[0]])
     assert path.stat().st_mtime_ns == modified
     pd.testing.assert_frame_equal(expected, store.read("whole_image_risk_score_ensemble"))

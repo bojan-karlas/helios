@@ -13,14 +13,13 @@ from pathlib import Path
 import typer
 
 from helios.cli._common import (
-    LOG_DIR,
+    LOGS_DIR,
     MAX_CPUS,
-    MODELS_ROOT,
-    PREPROCESSING_ROOT,
+    MODELS_DIR,
+    OUTPUT_DIR,
+    PREPROCESSING_DIR,
     RAY_ADDRESS,
-    REMOVED_FEATURES_ROOT,
-    REMOVED_OUTPUT_ROOT,
-    RESULTS_ROOT,
+    RESULTS_DIR,
     RUN_TAG,
     SPLITS_FILE,
     csv,
@@ -44,15 +43,14 @@ _OVERWRITE = typer.Option(False, "--overwrite", help="Re-derive even if outputs 
 def prep_all(
     ctx: typer.Context,
     dataset: list[str] = _DATASET_GROUP,
-    preprocessing_root: Path | None = PREPROCESSING_ROOT,
-    features_root: Path | None = REMOVED_FEATURES_ROOT,
-    models_root: Path | None = MODELS_ROOT,
-    results_root: Path | None = RESULTS_ROOT,
-    log_dir: Path | None = LOG_DIR,
+    preprocessing_dir: Path | None = PREPROCESSING_DIR,
+    models_dir: Path | None = MODELS_DIR,
+    results_dir: Path | None = RESULTS_DIR,
+    logs_dir: Path | None = LOGS_DIR,
     run_tag: str | None = RUN_TAG,
     ray_address: str | None = RAY_ADDRESS,
     max_cpus: int | None = MAX_CPUS,
-    output_root: Path | None = REMOVED_OUTPUT_ROOT,
+    output_dir: Path | None = OUTPUT_DIR,
     config: Path | None = _CONFIG,
     overwrite: bool = _OVERWRITE,
 ) -> None:
@@ -66,19 +64,27 @@ def prep_all(
 
     invocation = prepare_invocation(
         dataset,
-        preprocessing_root=preprocessing_root,
-        models_root=models_root,
-        results_root=results_root,
+        preprocessing_dir=preprocessing_dir,
+        models_dir=models_dir,
+        results_dir=results_dir,
         ray_address=ray_address,
         max_cpus=max_cpus,
-        log_dir=log_dir,
-        run_tag=run_tag,
+        logs_dir=logs_dir,
+        run_tag=run_tag, output_dir=output_dir,
     )
+    if any(
+        invocation.dirs.preprocessing_dir is None and ds.preprocessing_dir is None
+        for ds in invocation.datasets
+    ):
+        raise typer.BadParameter(
+            "Full prep requires --preprocessing-dir (or preprocessing_dir in each dataset entry): "
+            "its stages exchange saved artifacts. --output-dir does not select preprocessing storage."
+        )
     progress = invocation.progress()
     for noun, stage in STAGES["prep"].items():
         params = load_stage_params("prep", noun, config_path=config)
         stage(
-            datasets=invocation.datasets, roots=invocation.roots, parallel=invocation.parallel,
+            datasets=invocation.datasets, dirs=invocation.dirs, parallel=invocation.parallel,
             overwrite=overwrite, progress=progress, **params,
         )
     typer.echo("prep: done")
@@ -87,16 +93,15 @@ def prep_all(
 @prep_app.command("splits")
 def splits(
     dataset: list[str] = _DATASET,
-    preprocessing_root: Path | None = PREPROCESSING_ROOT,
-    features_root: Path | None = REMOVED_FEATURES_ROOT,
-    models_root: Path | None = MODELS_ROOT,
-    results_root: Path | None = RESULTS_ROOT,
+    preprocessing_dir: Path | None = PREPROCESSING_DIR,
+    models_dir: Path | None = MODELS_DIR,
+    results_dir: Path | None = RESULTS_DIR,
     splits_file: Path | None = SPLITS_FILE,
-    log_dir: Path | None = LOG_DIR,
+    logs_dir: Path | None = LOGS_DIR,
     run_tag: str | None = RUN_TAG,
     ray_address: str | None = RAY_ADDRESS,
     max_cpus: int | None = MAX_CPUS,
-    output_root: Path | None = REMOVED_OUTPUT_ROOT,
+    output_dir: Path | None = OUTPUT_DIR,
     n_folds: int | None = typer.Option(None, "--n-folds", help="Number of CV folds."),
     val_fraction: float | None = typer.Option(
         None, "--val-fraction", help="Fraction of each fold's train rows carved off as val."
@@ -121,14 +126,14 @@ def splits(
 
     invocation = prepare_invocation(
         dataset,
-        preprocessing_root=preprocessing_root,
-        models_root=models_root,
-        results_root=results_root,
+        preprocessing_dir=preprocessing_dir,
+        models_dir=models_dir,
+        results_dir=results_dir,
         splits_file=splits_file,
         ray_address=ray_address,
         max_cpus=max_cpus,
-        log_dir=log_dir,
-        run_tag=run_tag,
+        logs_dir=logs_dir,
+        run_tag=run_tag, output_dir=output_dir,
     )
     overrides = {
         "n_folds": n_folds,
@@ -139,7 +144,7 @@ def splits(
     }
     params = load_stage_params("prep", "splits", config_path=config, overrides=overrides)
     prep_splits(
-        datasets=invocation.datasets, roots=invocation.roots, parallel=invocation.parallel, overwrite=overwrite,
+        datasets=invocation.datasets, dirs=invocation.dirs, parallel=invocation.parallel, overwrite=overwrite,
         progress=invocation.progress(),
         **params,
     )
@@ -149,15 +154,14 @@ def splits(
 @prep_app.command("thumbnails")
 def thumbnails(
     dataset: list[str] = _DATASET,
-    preprocessing_root: Path | None = PREPROCESSING_ROOT,
-    features_root: Path | None = REMOVED_FEATURES_ROOT,
-    models_root: Path | None = MODELS_ROOT,
-    results_root: Path | None = RESULTS_ROOT,
-    log_dir: Path | None = LOG_DIR,
+    preprocessing_dir: Path | None = PREPROCESSING_DIR,
+    models_dir: Path | None = MODELS_DIR,
+    results_dir: Path | None = RESULTS_DIR,
+    logs_dir: Path | None = LOGS_DIR,
     run_tag: str | None = RUN_TAG,
     ray_address: str | None = RAY_ADDRESS,
     max_cpus: int | None = MAX_CPUS,
-    output_root: Path | None = REMOVED_OUTPUT_ROOT,
+    output_dir: Path | None = OUTPUT_DIR,
     max_size: int | None = typer.Option(None, "--max-size", help="Thumbnail longest-edge pixels."),
     config: Path | None = _CONFIG,
     overwrite: bool = _OVERWRITE,
@@ -168,17 +172,17 @@ def thumbnails(
 
     invocation = prepare_invocation(
         dataset,
-        preprocessing_root=preprocessing_root,
-        models_root=models_root,
-        results_root=results_root,
+        preprocessing_dir=preprocessing_dir,
+        models_dir=models_dir,
+        results_dir=results_dir,
         ray_address=ray_address,
         max_cpus=max_cpus,
-        log_dir=log_dir,
-        run_tag=run_tag,
+        logs_dir=logs_dir,
+        run_tag=run_tag, output_dir=output_dir,
     )
     params = load_stage_params("prep", "thumbnails", config_path=config, overrides={"max_size": max_size})
     prep_thumbnails(
-        datasets=invocation.datasets, roots=invocation.roots, parallel=invocation.parallel, overwrite=overwrite,
+        datasets=invocation.datasets, dirs=invocation.dirs, parallel=invocation.parallel, overwrite=overwrite,
         progress=invocation.progress(),
         **params,
     )
@@ -188,15 +192,14 @@ def thumbnails(
 @prep_app.command("tiles")
 def tiles(
     dataset: list[str] = _DATASET,
-    preprocessing_root: Path | None = PREPROCESSING_ROOT,
-    features_root: Path | None = REMOVED_FEATURES_ROOT,
-    models_root: Path | None = MODELS_ROOT,
-    results_root: Path | None = RESULTS_ROOT,
-    log_dir: Path | None = LOG_DIR,
+    preprocessing_dir: Path | None = PREPROCESSING_DIR,
+    models_dir: Path | None = MODELS_DIR,
+    results_dir: Path | None = RESULTS_DIR,
+    logs_dir: Path | None = LOGS_DIR,
     run_tag: str | None = RUN_TAG,
     ray_address: str | None = RAY_ADDRESS,
     max_cpus: int | None = MAX_CPUS,
-    output_root: Path | None = REMOVED_OUTPUT_ROOT,
+    output_dir: Path | None = OUTPUT_DIR,
     size_mm: str | None = typer.Option(None, "--size-mm", help="Comma list of resolutions."),
     tile_px: int | None = typer.Option(None, "--tile-px", help="Tile edge length in pixels."),
     stride_fraction: float | None = typer.Option(
@@ -215,13 +218,13 @@ def tiles(
 
     invocation = prepare_invocation(
         dataset,
-        preprocessing_root=preprocessing_root,
-        models_root=models_root,
-        results_root=results_root,
+        preprocessing_dir=preprocessing_dir,
+        models_dir=models_dir,
+        results_dir=results_dir,
         ray_address=ray_address,
         max_cpus=max_cpus,
-        log_dir=log_dir,
-        run_tag=run_tag,
+        logs_dir=logs_dir,
+        run_tag=run_tag, output_dir=output_dir,
     )
     overrides = {
         "size_mm": csv_floats(size_mm),
@@ -231,7 +234,7 @@ def tiles(
     }
     params = load_stage_params("prep", "tiles", config_path=config, overrides=overrides)
     prep_tiles(
-        datasets=invocation.datasets, roots=invocation.roots, parallel=invocation.parallel, overwrite=overwrite,
+        datasets=invocation.datasets, dirs=invocation.dirs, parallel=invocation.parallel, overwrite=overwrite,
         progress=invocation.progress(),
         **params,
     )
@@ -241,26 +244,25 @@ def tiles(
 @prep_app.command("augment")
 def augment(
     dataset: list[str] = _DATASET,
-    preprocessing_root: Path | None = PREPROCESSING_ROOT,
-    features_root: Path | None = REMOVED_FEATURES_ROOT,
-    models_root: Path | None = MODELS_ROOT,
-    results_root: Path | None = RESULTS_ROOT,
-    log_dir: Path | None = LOG_DIR,
+    preprocessing_dir: Path | None = PREPROCESSING_DIR,
+    models_dir: Path | None = MODELS_DIR,
+    results_dir: Path | None = RESULTS_DIR,
+    logs_dir: Path | None = LOGS_DIR,
     run_tag: str | None = RUN_TAG,
     ray_address: str | None = RAY_ADDRESS,
     max_cpus: int | None = MAX_CPUS,
-    output_root: Path | None = REMOVED_OUTPUT_ROOT,
+    output_dir: Path | None = OUTPUT_DIR,
     method: str | None = typer.Option(None, "--method", help="Augmentation method (default: cyclegan)."),
     source: str | None = typer.Option(None, "--source", help="Optional CycleGAN source stain domain."),
     target: str | None = typer.Option(None, "--target", help="Comma list of stain targets."),
     checkpoint: str | None = typer.Option(
         None, "--checkpoint", help="Comma list of user-trained MultiStain-CycleGAN G_A checkpoints."
     ),
-    stain_model_root: Path | None = typer.Option(
-        None, "--stain-model-root", help="Root for <target>/latest_net_G_A.pth checkpoint lookup."
+    stain_model_dir: Path | None = typer.Option(
+        None, "--stain-model-dir", help="Root for <target>/latest_net_G_A.pth checkpoint lookup."
     ),
-    output_dir: Path | None = typer.Option(
-        None, "--output-dir", help="Augmentation directory; requires one dataset and one explicit target."
+    augmentation_dir: Path | None = typer.Option(
+        None, "--augmentation-dir", help="Augmentation directory; requires one dataset and one explicit target."
     ),
     size_mm: str | None = typer.Option(None, "--size-mm", help="Comma list of resolutions."),
     model: str | None = typer.Option(None, "--model", help="Comma list of foundation models."),
@@ -277,21 +279,21 @@ def augment(
 
     invocation = prepare_invocation(
         dataset,
-        preprocessing_root=preprocessing_root,
-        models_root=models_root,
-        results_root=results_root,
+        preprocessing_dir=preprocessing_dir,
+        models_dir=models_dir,
+        results_dir=results_dir,
         ray_address=ray_address,
         max_cpus=max_cpus,
-        log_dir=log_dir,
-        run_tag=run_tag,
+        logs_dir=logs_dir,
+        run_tag=run_tag, output_dir=output_dir,
     )
     overrides = {
         "method": method,
         "source": source,
         "target": csv(target),
         "checkpoint": csv(checkpoint),
-        "stain_model_root": stain_model_root,
-        "output_dir": str(output_dir.absolute()) if output_dir is not None else None,
+        "stain_model_dir": stain_model_dir,
+        "augmentation_dir": str(augmentation_dir.absolute()) if augmentation_dir is not None else None,
         "size_mm": csv_floats(size_mm),
         "model": csv(model),
         "augmentation_batch_size": augmentation_batch_size,
@@ -299,7 +301,7 @@ def augment(
     }
     params = load_stage_params("prep", "augment", config_path=config, overrides=overrides)
     prep_augment(
-        datasets=invocation.datasets, roots=invocation.roots, parallel=invocation.parallel, overwrite=overwrite,
+        datasets=invocation.datasets, dirs=invocation.dirs, parallel=invocation.parallel, overwrite=overwrite,
         progress=invocation.progress(),
         **params,
     )
@@ -309,15 +311,14 @@ def augment(
 @prep_app.command("tile-features")
 def tile_features(
     dataset: list[str] = _DATASET,
-    preprocessing_root: Path | None = PREPROCESSING_ROOT,
-    features_root: Path | None = REMOVED_FEATURES_ROOT,
-    models_root: Path | None = MODELS_ROOT,
-    results_root: Path | None = RESULTS_ROOT,
-    log_dir: Path | None = LOG_DIR,
+    preprocessing_dir: Path | None = PREPROCESSING_DIR,
+    models_dir: Path | None = MODELS_DIR,
+    results_dir: Path | None = RESULTS_DIR,
+    logs_dir: Path | None = LOGS_DIR,
     run_tag: str | None = RUN_TAG,
     ray_address: str | None = RAY_ADDRESS,
     max_cpus: int | None = MAX_CPUS,
-    output_root: Path | None = REMOVED_OUTPUT_ROOT,
+    output_dir: Path | None = OUTPUT_DIR,
     size_mm: str | None = typer.Option(None, "--size-mm", help="Comma list of resolutions, e.g. 0.25,0.5."),
     model: str | None = typer.Option(None, "--model", help="Comma list of foundation models."),
     batch_size: int | None = typer.Option(None, "--batch-size", help="Tiles per forward pass."),
@@ -331,18 +332,18 @@ def tile_features(
 
     invocation = prepare_invocation(
         dataset,
-        preprocessing_root=preprocessing_root,
-        models_root=models_root,
-        results_root=results_root,
+        preprocessing_dir=preprocessing_dir,
+        models_dir=models_dir,
+        results_dir=results_dir,
         ray_address=ray_address,
         max_cpus=max_cpus,
-        log_dir=log_dir,
-        run_tag=run_tag,
+        logs_dir=logs_dir,
+        run_tag=run_tag, output_dir=output_dir,
     )
     overrides = {"size_mm": csv_floats(size_mm), "model": csv(model), "batch_size": batch_size, "device": device}
     params = load_stage_params("prep", "tile-features", config_path=config, overrides=overrides)
     prep_tile_features(
-        datasets=invocation.datasets, roots=invocation.roots, parallel=invocation.parallel, overwrite=overwrite,
+        datasets=invocation.datasets, dirs=invocation.dirs, parallel=invocation.parallel, overwrite=overwrite,
         progress=invocation.progress(),
         **params,
     )
@@ -352,15 +353,14 @@ def tile_features(
 @prep_app.command("cells")
 def cells(
     dataset: list[str] = _DATASET,
-    preprocessing_root: Path | None = PREPROCESSING_ROOT,
-    features_root: Path | None = REMOVED_FEATURES_ROOT,
-    models_root: Path | None = MODELS_ROOT,
-    results_root: Path | None = RESULTS_ROOT,
-    log_dir: Path | None = LOG_DIR,
+    preprocessing_dir: Path | None = PREPROCESSING_DIR,
+    models_dir: Path | None = MODELS_DIR,
+    results_dir: Path | None = RESULTS_DIR,
+    logs_dir: Path | None = LOGS_DIR,
     run_tag: str | None = RUN_TAG,
     ray_address: str | None = RAY_ADDRESS,
     max_cpus: int | None = MAX_CPUS,
-    output_root: Path | None = REMOVED_OUTPUT_ROOT,
+    output_dir: Path | None = OUTPUT_DIR,
     patch_px: int | None = typer.Option(None, "--patch-px", help="Tumor patch edge length in pixels."),
     device: str | None = typer.Option(None, "--device", help="Torch device (cuda, cpu)."),
     config: Path | None = _CONFIG,
@@ -372,18 +372,18 @@ def cells(
 
     invocation = prepare_invocation(
         dataset,
-        preprocessing_root=preprocessing_root,
-        models_root=models_root,
-        results_root=results_root,
+        preprocessing_dir=preprocessing_dir,
+        models_dir=models_dir,
+        results_dir=results_dir,
         ray_address=ray_address,
         max_cpus=max_cpus,
-        log_dir=log_dir,
-        run_tag=run_tag,
+        logs_dir=logs_dir,
+        run_tag=run_tag, output_dir=output_dir,
     )
     overrides = {"patch_px": patch_px, "device": device}
     params = load_stage_params("prep", "cells", config_path=config, overrides=overrides)
     prep_cells(
-        datasets=invocation.datasets, roots=invocation.roots, parallel=invocation.parallel, overwrite=overwrite,
+        datasets=invocation.datasets, dirs=invocation.dirs, parallel=invocation.parallel, overwrite=overwrite,
         progress=invocation.progress(),
         **params,
     )
@@ -393,15 +393,14 @@ def cells(
 @prep_app.command("cell-features")
 def cell_features(
     dataset: list[str] = _DATASET,
-    preprocessing_root: Path | None = PREPROCESSING_ROOT,
-    features_root: Path | None = REMOVED_FEATURES_ROOT,
-    models_root: Path | None = MODELS_ROOT,
-    results_root: Path | None = RESULTS_ROOT,
-    log_dir: Path | None = LOG_DIR,
+    preprocessing_dir: Path | None = PREPROCESSING_DIR,
+    models_dir: Path | None = MODELS_DIR,
+    results_dir: Path | None = RESULTS_DIR,
+    logs_dir: Path | None = LOGS_DIR,
     run_tag: str | None = RUN_TAG,
     ray_address: str | None = RAY_ADDRESS,
     max_cpus: int | None = MAX_CPUS,
-    output_root: Path | None = REMOVED_OUTPUT_ROOT,
+    output_dir: Path | None = OUTPUT_DIR,
     size_mm: float | None = typer.Option(None, "--size-mm", help="Tile resolution in mm (default: 0.25)."),
     config: Path | None = _CONFIG,
     overwrite: bool = _OVERWRITE,
@@ -412,17 +411,17 @@ def cell_features(
 
     invocation = prepare_invocation(
         dataset,
-        preprocessing_root=preprocessing_root,
-        models_root=models_root,
-        results_root=results_root,
+        preprocessing_dir=preprocessing_dir,
+        models_dir=models_dir,
+        results_dir=results_dir,
         ray_address=ray_address,
         max_cpus=max_cpus,
-        log_dir=log_dir,
-        run_tag=run_tag,
+        logs_dir=logs_dir,
+        run_tag=run_tag, output_dir=output_dir,
     )
     params = load_stage_params("prep", "cell-features", config_path=config, overrides={"size_mm": size_mm})
     prep_cell_features(
-        datasets=invocation.datasets, roots=invocation.roots, parallel=invocation.parallel, overwrite=overwrite,
+        datasets=invocation.datasets, dirs=invocation.dirs, parallel=invocation.parallel, overwrite=overwrite,
         progress=invocation.progress(),
         **params,
     )

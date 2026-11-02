@@ -11,6 +11,21 @@ from pathlib import Path
 import pandas as pd
 import yaml
 
+from helios.data.cohort import ResolvedDataset
+from helios.data.resolver import StorageDirs
+from helios.stages._runtime import cohort_store
+
+
+def storage_dirs(dataset: str | Path | ResolvedDataset) -> StorageDirs:
+    root = dataset.root if isinstance(dataset, ResolvedDataset) else Path(dataset)
+    return StorageDirs(
+        preprocessing_dir=root / "preprocessing", models_dir=root / "models", results_dir=root / "results",
+    )
+
+
+def prepared_store(dataset: str | Path | ResolvedDataset):
+    return cohort_store(dataset, storage_dirs(dataset))
+
 
 def make_cohort(root: str | Path, n_images: int = 4, n_patients: int = 2) -> Path:
     root = Path(root)

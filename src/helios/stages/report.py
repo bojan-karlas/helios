@@ -22,7 +22,7 @@ from helios.progress import DEFAULT_PROGRESS, Progress
 from helios.stages._runtime import (
     DatasetArgs,
     ParallelConfig,
-    StorageRoots,
+    StorageDirs,
     cohort_store,
     resolve_datasets,
     select_image_ids,
@@ -58,7 +58,7 @@ _SUMMARY_TABLES = (
 def build_report(
     *,
     datasets: DatasetArgs,
-    roots: StorageRoots | None = None,
+    dirs: StorageDirs | None = None,
     parallel: ParallelConfig | None = None,
     assets: bool = DEFAULT_ASSETS,
     summarize: bool = DEFAULT_SUMMARIZE,
@@ -73,15 +73,15 @@ def build_report(
     one cohort-level summary join. Reads the shipped result tables; missing
     optional inputs are simply skipped by the report components.
     """
-    resolved = resolve_datasets(datasets, roots=roots)
+    resolved = resolve_datasets(datasets, dirs=dirs, produces=("results",), progress=progress)
 
     for ds in resolved:
-        store = cohort_store(ds, roots)
+        store = cohort_store(ds, dirs)
         ids = select_image_ids(ds, store, image_ids)
         tables = _read_tables(store, _CASE_TABLES, cellular_size_mm)
 
         for image_id in progress.task(ids, desc=f"report {ds.name}"):
-            if not overwrite and store.exists("case_report_md", image_id=image_id):
+            if not overwrite and store.output_exists("case_report_md", image_id=image_id):
                 progress.log(f"skip report image={image_id} (exists)")
                 continue
             case_inputs = {name: _slice(table, image_id) for name, table in tables.items()}
@@ -96,7 +96,7 @@ def build_report(
                 asset_ids = list(rendered)
 
             store.write("case_report_md", render_markdown(report, asset_ids), image_id=image_id)
-            progress.log(f"wrote report image={image_id}")
+            progress.log(f"computed report image={image_id}")
 
         if summarize:
             summary = summarize_cohort(
@@ -106,7 +106,7 @@ def build_report(
                 }
             )
             store.write("cohort_summary", summary)
-            progress.log(f"wrote cohort_summary {ds.name}")
+            progress.log(f"computed cohort_summary {ds.name}")
 
 
 def _read_tables(

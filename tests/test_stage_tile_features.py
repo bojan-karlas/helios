@@ -13,11 +13,11 @@ import pytest
 
 from helios.data.augmentation import Augmentation
 from helios.data.io import ArtifactStore
-from helios.data.resolver import Resolver, Roots, StorageRoots
+from helios.data.resolver import StorageDirs
 from helios.stages._ray import ParallelConfig, run_work_units
 from helios.stages.augment import prep_augment
 from helios.stages.tile_features import prep_tile_features
-from tests.fixtures import make_cohort
+from tests.fixtures import make_cohort, prepared_store, storage_dirs
 
 EMBED_DIM = 8
 
@@ -33,7 +33,7 @@ def cohort(tmp_path: Path) -> Path:
 
 
 def _stage_tiles(cohort: Path, image_ids: list[str], n_tiles: int = 5) -> ArtifactStore:
-    store = ArtifactStore(Resolver(Roots.single(cohort)))
+    store = prepared_store(cohort)
     for image_id in image_ids:
         tiles = np.zeros((n_tiles, 4, 4, 3), dtype=np.uint8)
         store.write("tiles", {"tiles": tiles}, size_mm=0.25, image_id=image_id)
@@ -46,7 +46,7 @@ def test_stage_extracts_and_writes(monkeypatch, cohort: Path) -> None:
     image_ids = ["FAKE-SKCM-P00000-S01-B1-I1", "FAKE-SKCM-P00001-S01-B1-I1"]
     store = _stage_tiles(cohort, image_ids)
 
-    prep_tile_features(datasets=[cohort], size_mm=[0.25], model=["virchow2"])
+    prep_tile_features(datasets=[cohort], dirs=storage_dirs(cohort), size_mm=[0.25], model=["virchow2"])
 
     for image_id in image_ids:
         assert store.exists("tile_features", size_mm=0.25, model="virchow2", image_id=image_id)
@@ -65,17 +65,17 @@ def test_stage_skips_existing_unless_overwritten(monkeypatch, cohort: Path) -> N
     image_ids = ["FAKE-SKCM-P00000-S01-B1-I1", "FAKE-SKCM-P00001-S01-B1-I1"]
     _stage_tiles(cohort, image_ids)
 
-    prep_tile_features(datasets=[cohort], size_mm=[0.25], model=["virchow2"])
+    prep_tile_features(datasets=[cohort], dirs=storage_dirs(cohort), size_mm=[0.25], model=["virchow2"])
     assert calls["n"] == 2
-    prep_tile_features(datasets=[cohort], size_mm=[0.25], model=["virchow2"])
+    prep_tile_features(datasets=[cohort], dirs=storage_dirs(cohort), size_mm=[0.25], model=["virchow2"])
     assert calls["n"] == 2, "second run should skip existing artifacts"
-    prep_tile_features(datasets=[cohort], size_mm=[0.25], model=["virchow2"], overwrite=True)
+    prep_tile_features(datasets=[cohort], dirs=storage_dirs(cohort), size_mm=[0.25], model=["virchow2"], overwrite=True)
     assert calls["n"] == 4, "--overwrite should re-extract"
 
 
 def test_stage_rejects_unknown_model(cohort: Path) -> None:
     with pytest.raises(ValueError, match="Unknown feature model"):
-        prep_tile_features(datasets=[cohort], model=["not-a-model"])
+        prep_tile_features(datasets=[cohort], dirs=storage_dirs(cohort), model=["not-a-model"])
 
 
 def test_extraction_requests_reusable_workers(monkeypatch, cohort: Path) -> None:
@@ -91,14 +91,14 @@ def test_extraction_requests_reusable_workers(monkeypatch, cohort: Path) -> None
     monkeypatch.setattr("helios.stages.tile_features.run_work_units", dispatch)
     image_ids = ["FAKE-SKCM-P00000-S01-B1-I1", "FAKE-SKCM-P00001-S01-B1-I1"]
     _stage_tiles(cohort, image_ids)
-    prep_tile_features(datasets=[cohort], parallel=config)
+    prep_tile_features(datasets=[cohort], dirs=storage_dirs(cohort), parallel=config)
     assert len(calls) == 1
     assert calls[0]["persistent_workers"] is True
     assert calls[0]["num_gpus"] is None
 
 
 def test_cached_augmentation_reads_preprocessing_and_writes_features(monkeypatch, cohort: Path, tmp_path: Path) -> None:
-    roots = StorageRoots(preprocessing_root=tmp_path / "pre")
+    dirs = StorageDirs(preprocessing_dir=tmp_path / "pre")
     definition = Augmentation(
         tmp_path / "pre/augmentations/method=cyclegan/target=lab", cohort.name, "cyclegan",
         {"target": "lab"},
@@ -117,7 +117,7 @@ def test_cached_augmentation_reads_preprocessing_and_writes_features(monkeypatch
     monkeypatch.setattr("helios.components.augmentation.augment_stains", unexpected_augmentation)
     monkeypatch.setattr("helios.stages.augment.extract_features", _fake_extract)
     prep_augment(
-        datasets=[cohort], roots=roots, target=["lab"], model=["virchow2"], image_ids=[image_id],
+        datasets=[cohort], dirs=dirs, target=["lab"], model=["virchow2"], image_ids=[image_id],
     )
     assert store.path(
         "tile_augmentation", size_mm=0.25, image_id=image_id
@@ -146,7 +146,9 @@ def test_augmentation_separates_generator_and_encoder_work(monkeypatch, cohort: 
     monkeypatch.setattr("helios.stages.augment.extract_features", _fake_extract)
     image_ids = ["FAKE-SKCM-P00000-S01-B1-I1", "FAKE-SKCM-P00001-S01-B1-I1"]
     _stage_tiles(cohort, image_ids)
-    prep_augment(datasets=[cohort], target=["example"], parallel=config, model=["virchow2", "uni"])
+    prep_augment(
+        datasets=[cohort], dirs=storage_dirs(cohort), target=["example"], parallel=config, model=["virchow2", "uni"],
+    )
     generation, embeddings = calls
     assert len(generation[0]) == 2
     assert len(embeddings[0]) == 4

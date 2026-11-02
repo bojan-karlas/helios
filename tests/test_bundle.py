@@ -13,7 +13,7 @@ import pytest
 
 from helios.data.bundle import MANIFEST_NAME, MODEL_NAME, load_bundle, save_bundle
 from helios.data.io import ArtifactStore
-from helios.data.resolver import Resolver, Roots
+from helios.data.resolver import Dirs, Resolver
 
 
 class _Estimator:
@@ -25,7 +25,7 @@ class _Estimator:
 
 
 def test_store_bundle_round_trip(tmp_path: Path) -> None:
-    store = ArtifactStore(Resolver(Roots.single(tmp_path)))
+    store = ArtifactStore(Resolver(Dirs.single(tmp_path)))
     model = _Estimator(0.42)
 
     store.write("model_cellular", model, fold=0)
@@ -38,7 +38,7 @@ def test_store_bundle_round_trip(tmp_path: Path) -> None:
 
 
 def test_bundle_incomplete_until_manifest(tmp_path: Path) -> None:
-    store = ArtifactStore(Resolver(Roots.single(tmp_path)))
+    store = ArtifactStore(Resolver(Dirs.single(tmp_path)))
     bundle_dir = tmp_path / "models" / "cellular" / "fold=1"
     bundle_dir.mkdir(parents=True)
     (bundle_dir / MODEL_NAME).write_bytes(b"partial")

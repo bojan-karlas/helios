@@ -20,7 +20,7 @@ from helios.progress import DEFAULT_PROGRESS, Progress
 from helios.stages._runtime import (
     DatasetArgs,
     ParallelConfig,
-    StorageRoots,
+    StorageDirs,
     WorkContext,
     build_bundle_metadata,
     cohort_store,
@@ -61,7 +61,7 @@ class _TrainingParams(TypedDict):
 def fit_morphology(
     *,
     datasets: DatasetArgs,
-    roots: StorageRoots | None = None,
+    dirs: StorageDirs | None = None,
     parallel: ParallelConfig | None = None,
     target: str = DEFAULT_TARGET,
     attention_cutoff: float = DEFAULT_ATTENTION_CUTOFF,
@@ -84,14 +84,14 @@ def fit_morphology(
     Writes ``model_morphology`` keyed by fold. Each cohort's ``where`` filter
     optionally restricts training to a metadata subpopulation.
     """
-    resolved = resolve_datasets(datasets, roots=roots, require_models=True)
-    folds = folds_across(resolved, roots)
+    resolved = resolve_datasets(datasets, dirs=dirs, produces=("models",), progress=progress)
+    folds = folds_across(resolved, dirs)
     run_work_units(
         folds,
         partial(
             _fit_morphology_fold,
             resolved=resolved,
-            roots=roots,
+            dirs=dirs,
             target=target,
             attention_cutoff=attention_cutoff,
             n_pca=n_pca,
@@ -116,7 +116,7 @@ def _fit_morphology_fold(
     ctx: WorkContext,
     *,
     resolved: list[ResolvedDataset],
-    roots: StorageRoots | None,
+    dirs: StorageDirs | None,
     target: str,
     attention_cutoff: float,
     n_pca: int,
@@ -129,9 +129,9 @@ def _fit_morphology_fold(
     overwrite: bool,
 ) -> str:
     """Load, fit, and persist the morphology bundle for one fold."""
-    stores = [cohort_store(ds, roots) for ds in resolved]
+    stores = [cohort_store(ds, dirs) for ds in resolved]
     out = stores[0]
-    if not overwrite and out.exists("model_morphology", fold=fold):
+    if not overwrite and out.output_exists("model_morphology", fold=fold):
         ctx.progress.log(f"skip model_morphology fold={fold} (exists)")
         return "skipped"
 
@@ -140,7 +140,7 @@ def _fit_morphology_fold(
     labels: list[pd.DataFrame] = []
     for ds, store in zip(resolved, stores, strict=True):
         meta = ds.dataset().image_metadata.set_index("image_id")
-        ids = train_ids(ds, fold, where=ds.where, roots=roots)
+        ids = train_ids(ds, fold, where=ds.where, dirs=dirs)
         missing_meta = [i for i in ids if i not in meta.index]
         if missing_meta:
             raise ValueError(f"Missing image_metadata rows for training slides in {ds.name}: {missing_meta[:5]}")
@@ -179,18 +179,18 @@ def _fit_morphology_fold(
         "morphology",
         dict(params),
         resolved,
-        roots,
+        dirs,
         fold=fold,
     )
     out.write("model_morphology", bundle, metadata=meta, fold=fold)
-    ctx.progress.log(f"wrote model_morphology fold={fold}")
+    ctx.progress.log(f"computed model_morphology fold={fold}")
     return "completed"
 
 
 def predict_morphology(
     *,
     datasets: DatasetArgs,
-    roots: StorageRoots | None = None,
+    dirs: StorageDirs | None = None,
     parallel: ParallelConfig | None = None,
     image_ids: list[str] | None = None,
     overwrite: bool = False,
@@ -202,15 +202,15 @@ def predict_morphology(
     all fold models and reduces OOF/ensemble. Writes ``tile_clusters`` (per
     image), ``patch_morphology_presence`` and ``patch_morphology_risk_score``.
     """
-    resolved = resolve_datasets(datasets, roots=roots)
+    resolved = resolve_datasets(datasets, dirs=dirs, produces=("results",), progress=progress)
 
     for ds in resolved:
-        store = cohort_store(ds, roots)
+        store = cohort_store(ds, dirs)
         ids = select_image_ids(ds, store, image_ids)
         folds = model_folds(store, "model_morphology")
         if not folds:
             raise FileNotFoundError(f"No model_morphology bundle found under {ds.name}.")
-        if not overwrite and store.exists("patch_morphology_risk_score"):
+        if not overwrite and store.output_exists("patch_morphology_risk_score"):
             progress.log(f"skip morphology predictions {ds.name} (exists)")
             continue
 
@@ -223,13 +223,13 @@ def predict_morphology(
             fold: _stack_attention(store, fold, ids) for fold in folds
         }
         clusters, presence, risk_score = infer_morphology(
-            models, paths, attention, read_splits(ds, roots, progress=progress)
+            models, paths, attention, read_splits(ds, dirs, progress=progress)
         )
         for image_id, group in clusters.groupby("image_id"):
             store.write("tile_clusters", group, image_id=str(image_id))
         store.write("patch_morphology_presence", tag_dataset(presence, ds.name))
         store.write("patch_morphology_risk_score", tag_dataset(risk_score, ds.name))
-        progress.log(f"wrote morphology predictions {ds.name}")
+        progress.log(f"computed morphology predictions {ds.name}")
 
 
 def _stack_attention(store: ArtifactStore, fold: int | None, ids: list[str]) -> pd.DataFrame:

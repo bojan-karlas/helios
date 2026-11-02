@@ -1,7 +1,7 @@
 """Cohort-definition resolution tests.
 
-Covers the ``--dataset`` resolution layer: plain roots, cohort YAML files (union
-of roots + filter), ``ResolvedDataset`` pass-through/idempotency, and filter
+Covers the ``--dataset`` resolution layer: plain dirs, cohort YAML files (union
+of dirs + filter), ``ResolvedDataset`` pass-through/idempotency, and filter
 composition.
 """
 from __future__ import annotations
@@ -95,15 +95,15 @@ def test_extended_entries_preserve_constituent_storage_and_filters(tmp_path: Pat
         "name": "union",
         "filter": "a == 1",
         "datasets": [
-            {"source_root": "A", "preprocessing_root": "pre/A"},
+            {"source_dir": "A", "preprocessing_dir": "pre/A"},
             "B",
         ],
     }))
     a, b = resolve_datasets([path], where="b == 2")
     assert a.root == tmp_path / "A"
-    assert a.preprocessing_root == tmp_path / "pre/A"
+    assert a.preprocessing_dir == tmp_path / "pre/A"
     assert b.root == tmp_path / "B"
-    assert b.preprocessing_root is None
+    assert b.preprocessing_dir is None
     assert a.where == b.where == "(a == 1) and (b == 2)"
     assert resolve_datasets([a, b]) == [a, b]
 
@@ -112,7 +112,7 @@ def test_extended_entries_preserve_constituent_storage_and_filters(tmp_path: Pat
     "datasets: /data/A",
     "datasets: []",
     "datasets: [{features_root: /features}]",
-    "datasets: [{source_root: /data/A, feature_root: /features}]",
+    "datasets: [{source_dir: /data/A, feature_root: /features}]",
     "datasets: [42]",
     "datasets: [/data/A]\nfilter: 42",
 ])
@@ -137,19 +137,19 @@ def test_cli_forwards_storage_roots_to_every_stage(monkeypatch, tmp_path: Path) 
     from typer.testing import CliRunner
 
     from helios.cli.main import app
-    from helios.data.resolver import StorageRoots
+    from helios.data.resolver import StorageDirs
     from helios.stages import STAGES
 
-    roots = StorageRoots(
-        preprocessing_root=tmp_path / "pre",
-        models_root=tmp_path / "models",
-        results_root=tmp_path / "results",
+    dirs = StorageDirs(
+        preprocessing_dir=tmp_path / "pre",
+        models_dir=tmp_path / "models",
+        results_dir=tmp_path / "results",
     )
     options = [
         "--dataset", str(tmp_path / "source"),
-        "--preprocessing-root", str(roots.preprocessing_root),
-        "--models-root", str(roots.models_root),
-        "--results-root", str(roots.results_root),
+        "--preprocessing-dir", str(dirs.preprocessing_dir),
+        "--models-dir", str(dirs.models_dir),
+        "--results-dir", str(dirs.results_dir),
     ]
     monkeypatch.setattr("helios.config.stage_config.load_stage_params", lambda *args, **kwargs: {})
     runner = CliRunner()
@@ -158,16 +158,18 @@ def test_cli_forwards_storage_roots_to_every_stage(monkeypatch, tmp_path: Path) 
             seen = []
             with monkeypatch.context() as patch:
                 patch.setattr(f"{stage.__module__}.{stage.__name__}", lambda _seen=seen, **kwargs: _seen.append(kwargs))
-                patch.setattr("helios.cli._common.console_progress", lambda path, **kw: None)
+                from helios.progress import Progress
+
+                patch.setattr("helios.cli._common.console_progress", lambda **kw: Progress.null())
                 command = [verb] if verb == "report" else [verb, noun]
                 result = runner.invoke(app, command + options)
             assert result.exit_code == 0, (command, result.output, result.exception)
             assert len(seen) == 1
-            assert seen[0]["roots"] == roots
+            assert seen[0]["dirs"] == dirs
             assert seen[0]["datasets"] == [ResolvedDataset(tmp_path / "source")]
 
 
-def test_cli_rejects_old_output_root_with_migration_guidance(tmp_path: Path) -> None:
+def test_cli_rejects_old_output_root(tmp_path: Path) -> None:
     from typer.testing import CliRunner
 
     from helios.cli.main import app
@@ -176,6 +178,5 @@ def test_cli_rejects_old_output_root_with_migration_guidance(tmp_path: Path) -> 
         app, ["fit", "mil", "--dataset", str(tmp_path), "--output-root", str(tmp_path / "out")]
     )
     assert result.exit_code == 2
-    assert "--output-root has been removed" in result.output
-    assert "--models-root" in result.output
+    assert "No such option" in result.output
     assert not (tmp_path / "out").exists()

@@ -34,7 +34,7 @@ import pandas as pd
 from helios.data.bundle import is_complete_bundle, load_bundle, save_bundle
 from helios.data.catalog import get_artifact
 from helios.data.hdf5 import ArrayKind, array_dataset
-from helios.data.resolver import Resolver
+from helios.data.resolver import Resolver, render_path
 
 ARRAY_ARTIFACTS: dict[str, ArrayKind] = {
     "tiles": "tiles",
@@ -167,12 +167,47 @@ def _as_frame(obj: Any) -> pd.DataFrame:
 class ArtifactStore:
     """Read/write artifacts by id + key, resolving paths and formats from the spec."""
 
-    def __init__(self, resolver: Resolver):
+    def __init__(self, resolver: Resolver, *, output_resolver: Resolver | None = None):
         self.resolver = resolver
+        self.output_resolver = output_resolver or resolver
+        self._source_writable = output_resolver is None
+        self._memory: dict[str, Any] = {}
+        self._written: set[str] = set()
+
+    def _key(self, artifact_id: str, extra_hive: Mapping[str, Any] | None, keys: dict[str, Any]) -> str:
+        artifact = get_artifact(artifact_id)
+        if artifact.path is None:
+            raise ValueError(f"Artifact {artifact_id!r} has no path template.")
+        return f"{artifact_id}:{render_path(artifact.path, keys, extra_hive)}"
+
+    def output_path(
+        self, artifact_id: str, *, extra_hive: Mapping[str, Any] | None = None, **keys: Any,
+    ) -> Path | None:
+        role = get_artifact(artifact_id).role
+        if role != "source" and getattr(self.output_resolver.dirs, f"{role}_dir") is None:
+            return None
+        if role == "source" and not self._source_writable:
+            raise ValueError("Source artifacts cannot be written through a run store.")
+        return self.output_resolver.path(artifact_id, extra_hive=extra_hive, **keys)
+
+    def output_exists(
+        self, artifact_id: str, *, extra_hive: Mapping[str, Any] | None = None, **keys: Any,
+    ) -> bool:
+        path = self.output_path(artifact_id, extra_hive=extra_hive, **keys)
+        if path is None:
+            return False
+        artifact = get_artifact(artifact_id)
+        exists = is_complete_bundle(path) if artifact.format == "bundle" else path.exists()
+        if exists:
+            self._written.add(self._key(artifact_id, extra_hive, keys))
+        return exists
 
     def read(self, artifact_id: str, *, extra_hive: Mapping[str, Any] | None = None, **keys: Any) -> Any:
         artifact = get_artifact(artifact_id)
-        path = self.resolver.path(artifact_id, extra_hive=extra_hive, **keys)
+        key = self._key(artifact_id, extra_hive, keys)
+        if key in self._memory:
+            return self._memory[key]
+        path = self.path(artifact_id, extra_hive=extra_hive, **keys)
         if artifact_id in ARRAY_ARTIFACTS:
             import h5py
 
@@ -195,7 +230,11 @@ class ArtifactStore:
         a batch needs, rather than having :meth:`read` load the whole array into
         memory. :meth:`read` stays the convenient eager path for small artifacts.
         """
-        return self.resolver.path(artifact_id, extra_hive=extra_hive, **keys)
+        key = self._key(artifact_id, extra_hive, keys)
+        if key in self._memory:
+            raise ValueError(f"{artifact_id} exists only in memory; this operation requires a saved artifact.")
+        resolver = self.output_resolver if key in self._written else self.resolver
+        return resolver.path(artifact_id, extra_hive=extra_hive, **keys)
 
     def write(
         self,
@@ -205,11 +244,9 @@ class ArtifactStore:
         extra_hive: Mapping[str, Any] | None = None,
         metadata: Mapping[str, Any] | None = None,
         **keys: Any,
-    ) -> Path:
+    ) -> Path | None:
         artifact = get_artifact(artifact_id)
-        path = self.resolver.path(artifact_id, extra_hive=extra_hive, **keys)
-        if artifact.format.split("/")[0] == "bundle":
-            return save_bundle(obj, path, metadata=metadata)
+        path = self.output_path(artifact_id, extra_hive=extra_hive, **keys)
         if artifact_id in ARRAY_ARTIFACTS:
             kind = ARRAY_ARTIFACTS[artifact_id]
             array = np.asarray(obj[kind])
@@ -226,18 +263,35 @@ class ArtifactStore:
         elif artifact_id in ORDINAL_TABLES:
             table = ordinal_tile_table(_as_frame(obj))
             obj = table.drop(columns=["tile_id", "size_mm"], errors="ignore")
-        return write(obj, path, artifact.format)
+        key = self._key(artifact_id, extra_hive, keys)
+        if path is None:
+            if artifact_id in ORDINAL_TABLES:
+                obj = ordinal_tile_table(obj)
+                if artifact_id == "tile_metadata":
+                    obj["size_mm"] = keys["size_mm"]
+            self._memory[key] = obj
+        elif artifact.format.split("/")[0] == "bundle":
+            save_bundle(obj, path, metadata=metadata)
+        else:
+            write(obj, path, artifact.format)
+        self._written.add(key)
+        return path
 
     def exists(self, artifact_id: str, *, extra_hive: Mapping[str, Any] | None = None, **keys: Any) -> bool:
         artifact = get_artifact(artifact_id)
-        path = self.resolver.path(artifact_id, extra_hive=extra_hive, **keys)
+        if self._key(artifact_id, extra_hive, keys) in self._memory:
+            return True
+        path = self.path(artifact_id, extra_hive=extra_hive, **keys)
         if artifact.format.split("/")[0] == "bundle":
             return is_complete_bundle(path)
         return path.exists()
 
     def remove(self, artifact_id: str, *, extra_hive: Mapping[str, Any] | None = None, **keys: Any) -> None:
-        path = self.resolver.path(artifact_id, extra_hive=extra_hive, **keys)
-        if path.is_file():
+        key = self._key(artifact_id, extra_hive, keys)
+        self._memory.pop(key, None)
+        self._written.discard(key)
+        path = self.output_path(artifact_id, extra_hive=extra_hive, **keys)
+        if path is not None and path.is_file():
             path.unlink(missing_ok=True)
 
     def part_path(
@@ -247,8 +301,10 @@ class ArtifactStore:
         *,
         extra_hive: Mapping[str, Any] | None = None,
         **keys: Any,
-    ) -> Path:
-        table_path = self.resolver.path(artifact_id, extra_hive=extra_hive, **keys)
+    ) -> Path | None:
+        table_path = self.output_path(artifact_id, extra_hive=extra_hive, **keys)
+        if table_path is None:
+            return None
         return table_path.parent / f"{table_path.name}.parts" / f"{row_id}.csv"
 
     def part_exists(
@@ -259,7 +315,8 @@ class ArtifactStore:
         extra_hive: Mapping[str, Any] | None = None,
         **keys: Any,
     ) -> bool:
-        return self.part_path(artifact_id, row_id, extra_hive=extra_hive, **keys).is_file()
+        path = self.part_path(artifact_id, row_id, extra_hive=extra_hive, **keys)
+        return path is not None and path.is_file()
 
     def write_part(
         self,
@@ -269,8 +326,11 @@ class ArtifactStore:
         *,
         extra_hive: Mapping[str, Any] | None = None,
         **keys: Any,
-    ) -> Path:
+    ) -> Path | None:
         path = self.part_path(artifact_id, row_id, extra_hive=extra_hive, **keys)
+        if path is None:
+            self._memory[f"part:{row_id}:{self._key(artifact_id, extra_hive, keys)}"] = _as_frame(obj)
+            return None
         return write(obj, path, "csv")
 
     def read_parts(
@@ -283,7 +343,11 @@ class ArtifactStore:
     ) -> pd.DataFrame:
         frames: list[pd.DataFrame] = []
         for row_id in row_ids:
+            key = f"part:{row_id}:{self._key(artifact_id, extra_hive, keys)}"
+            if key in self._memory:
+                frames.append(self._memory[key])
+                continue
             path = self.part_path(artifact_id, row_id, extra_hive=extra_hive, **keys)
-            if path.is_file():
+            if path is not None and path.is_file():
                 frames.append(read(path, "csv"))
         return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()

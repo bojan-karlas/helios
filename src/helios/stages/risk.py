@@ -24,7 +24,7 @@ from helios.progress import DEFAULT_PROGRESS, Progress
 from helios.stages._runtime import (
     DatasetArgs,
     ParallelConfig,
-    StorageRoots,
+    StorageDirs,
     WorkContext,
     build_bundle_metadata,
     cohort_store,
@@ -72,7 +72,7 @@ _FUSION_INPUTS = (
 def fit_risk(
     *,
     datasets: DatasetArgs,
-    roots: StorageRoots | None = None,
+    dirs: StorageDirs | None = None,
     parallel: ParallelConfig | None = None,
     risk: list[str] = DEFAULT_RISK,
     target: str = DEFAULT_TARGET,
@@ -91,8 +91,8 @@ def fit_risk(
     subpopulation.
     """
     _validate(risk)
-    resolved = resolve_datasets(datasets, roots=roots, require_models=True)
-    folds = folds_across(resolved, roots)
+    resolved = resolve_datasets(datasets, dirs=dirs, produces=("models",), progress=progress)
+    folds = folds_across(resolved, dirs)
 
     for kind in _ordered(risk):
         run_work_units(
@@ -100,7 +100,7 @@ def fit_risk(
             partial(
                 _fit_risk_fold,
                 resolved=resolved,
-                roots=roots,
+                dirs=dirs,
                 kind=kind,
                 target=target,
                 staging_feature=staging_feature,
@@ -122,7 +122,7 @@ def _fit_risk_fold(
     ctx: WorkContext,
     *,
     resolved: list[ResolvedDataset],
-    roots: StorageRoots | None,
+    dirs: StorageDirs | None,
     kind: str,
     target: str,
     staging_feature: str,
@@ -133,9 +133,9 @@ def _fit_risk_fold(
 ) -> str:
     """Load, fit, and persist one risk kind for one fold."""
     model_id, _ = _ARTIFACTS[kind]
-    stores = [cohort_store(ds, roots) for ds in resolved]
+    stores = [cohort_store(ds, dirs) for ds in resolved]
     out = stores[0]
-    if not overwrite and out.exists(model_id, fold=fold):
+    if not overwrite and out.output_exists(model_id, fold=fold):
         ctx.progress.log(f"skip {model_id} fold={fold} (exists)")
         return "skipped"
 
@@ -143,7 +143,7 @@ def _fit_risk_fold(
     targets: list[pd.Series] = []
     for ds, store in zip(resolved, stores, strict=True):
         meta = ds.dataset().image_metadata.set_index("image_id")
-        ids = [i for i in train_ids(ds, fold, where=ds.where, roots=roots) if i in meta.index]
+        ids = [i for i in train_ids(ds, fold, where=ds.where, dirs=dirs) if i in meta.index]
         feat_df = _features(kind, store, ids, staging_feature, clinical_features, cellular_size_mm)
         present_ids = set(feat_df["image_id"].astype(str))
         missing_ids = [i for i in ids if str(i) not in present_ids]
@@ -171,18 +171,18 @@ def _fit_risk_fold(
             "cellular_size_mm": cellular_size_mm,
         },
         resolved,
-        roots,
+        dirs,
         fold=fold,
     )
     out.write(model_id, bundle, metadata=meta, fold=fold)
-    ctx.progress.log(f"wrote {model_id} fold={fold}")
+    ctx.progress.log(f"computed {model_id} fold={fold}")
     return "completed"
 
 
 def predict_risk(
     *,
     datasets: DatasetArgs,
-    roots: StorageRoots | None = None,
+    dirs: StorageDirs | None = None,
     parallel: ParallelConfig | None = None,
     risk: list[str] = DEFAULT_RISK,
     staging_feature: str = DEFAULT_STAGING_FEATURE,
@@ -198,10 +198,10 @@ def predict_risk(
     last, joins the other sub-scores, and also writes the ``survival_curve``.
     """
     _validate(risk)
-    resolved = resolve_datasets(datasets, roots=roots)
+    resolved = resolve_datasets(datasets, dirs=dirs, produces=("results",), progress=progress)
 
     for ds in resolved:
-        store = cohort_store(ds, roots)
+        store = cohort_store(ds, dirs)
         ids = select_image_ids(ds, store, image_ids)
 
         for kind in _ordered(risk):
@@ -209,17 +209,17 @@ def predict_risk(
             folds = model_folds(store, model_id)
             if not folds:
                 raise FileNotFoundError(f"No {model_id} bundle found under {ds.name}.")
-            if not overwrite and store.exists(score_id):
+            if not overwrite and store.output_exists(score_id):
                 progress.log(f"skip {score_id} {ds.name} (exists)")
                 continue
             models = {fold: store.read(model_id, fold=fold) for fold in folds}
             features = _features(kind, store, ids, staging_feature, clinical_features, cellular_size_mm)
-            scores = infer_risk_model(models, features, read_splits(ds, roots, progress=progress))
+            scores = infer_risk_model(models, features, read_splits(ds, dirs, progress=progress))
             store.write(score_id, tag_dataset(scores, ds.name))
-            progress.log(f"wrote {score_id} {ds.name}")
+            progress.log(f"computed {score_id} {ds.name}")
             if kind == "helios":
                 store.write("survival_curve", tag_dataset(compute_survival_curve(scores), ds.name))
-                progress.log(f"wrote survival_curve {ds.name}")
+                progress.log(f"computed survival_curve {ds.name}")
 
 
 def _features(

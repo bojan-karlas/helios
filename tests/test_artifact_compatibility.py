@@ -15,16 +15,17 @@ from helios.components.mil import _load_inference_bag, _peek_feature_dim, _read_
 from helios.components.tiling import extract_tiles
 from helios.data.hdf5 import array_dataset
 from helios.data.io import ArtifactStore, write
-from helios.data.resolver import Resolver, Roots, format_hive_value
+from helios.data.resolver import Dirs, Resolver, format_hive_value
+from helios.progress import Progress
 from helios.stages._ray import StageExecutionError
 from helios.stages.mil import fit_mil
 from helios.stages.tile_features import prep_tile_features
 from helios.stages.tiles import prep_tiles
-from tests.fixtures import make_cohort
+from tests.fixtures import make_cohort, storage_dirs
 
 
 def store_at(root: Path) -> ArtifactStore:
-    return ArtifactStore(Resolver(Roots.single(root)))
+    return ArtifactStore(Resolver(Dirs.single(root)))
 
 
 @pytest.mark.parametrize("kind", ["tiles", "features"])
@@ -142,7 +143,7 @@ def test_float_partitions_resolve_existing_spelling_for_all_store_operations(tmp
 
 
 def test_float_partitions_are_exact_and_string_labels_are_opaque(tmp_path):
-    resolver = Resolver(Roots.single(tmp_path))
+    resolver = Resolver(Dirs.single(tmp_path))
     root = tmp_path / "preprocessing/tiles"
     (root / "size_mm=0.25000000000001").mkdir(parents=True)
     assert resolver.path("tiles", size_mm=0.25, image_id="slide") == root / "size_mm=0.25/slide/slide.hdf5"
@@ -182,7 +183,7 @@ def test_mask_only_segments_image_and_does_not_touch_other_artifacts(tmp_path, m
     monkeypatch.setattr("helios.stages.tiles.extract_tiles", lambda *a, **k: pytest.fail("must not extract tiles"))
     monkeypatch.setattr("helios.stages.tiles.detect_background",
                         lambda *a, **k: pytest.fail("must not classify tiles"))
-    prep_tiles(datasets=[root], size_mm=[0.25], background_mask_only=True)
+    prep_tiles(datasets=[root], dirs=storage_dirs(root), size_mm=[0.25], background_mask_only=True)
     np.testing.assert_array_equal(store.read("background_mask", **keys), segment_background(thumbnail) * 255)
     for path, content in before.items():
         assert path.read_bytes() == content
@@ -190,9 +191,9 @@ def test_mask_only_segments_image_and_does_not_touch_other_artifacts(tmp_path, m
     assert not (root / "preprocessing/tile_metadata").exists()
     mask = store.path("background_mask", **keys)
     mtime = mask.stat().st_mtime_ns
-    prep_tiles(datasets=[root], size_mm=[0.25], background_mask_only=True)
+    prep_tiles(datasets=[root], dirs=storage_dirs(root), size_mm=[0.25], background_mask_only=True)
     assert mask.stat().st_mtime_ns == mtime
-    prep_tiles(datasets=[root], size_mm=[0.25], background_mask_only=True, overwrite=True)
+    prep_tiles(datasets=[root], dirs=storage_dirs(root), size_mm=[0.25], background_mask_only=True, overwrite=True)
     for path, content in before.items():
         assert path.read_bytes() == content
 
@@ -200,7 +201,7 @@ def test_mask_only_segments_image_and_does_not_touch_other_artifacts(tmp_path, m
 def test_mask_only_cli_passes_flag(monkeypatch, tmp_path):
     seen = []
     monkeypatch.setattr("helios.stages.tiles.prep_tiles", lambda **kw: seen.append(kw))
-    monkeypatch.setattr("helios.cli._common.console_progress", lambda *a, **kw: None)
+    monkeypatch.setattr("helios.cli._common.console_progress", lambda *a, **kw: Progress.null())
     result = CliRunner().invoke(app, ["prep", "tiles", "--dataset", str(tmp_path), "--background-mask-only"])
     assert result.exit_code == 0, result.output
     assert seen[0]["background_mask_only"] is True
@@ -214,7 +215,7 @@ def test_mil_checks_shared_metadata_row_count(tmp_path):
     store.write("tile_metadata", pd.DataFrame({"tile_x": [0, 1]}), **keys)
     store.write("tile_features", {"features": np.ones((3, 4))}, model="virchow2", **keys)
     with pytest.raises(ValueError, match="2 rows"):
-        fit_mil(datasets=[root])
+        fit_mil(datasets=[root], dirs=storage_dirs(root))
 
 
 def test_legacy_tile_feature_extraction_and_persistence(tmp_path, monkeypatch):
@@ -227,13 +228,13 @@ def test_legacy_tile_feature_extraction_and_persistence(tmp_path, monkeypatch):
     store.write("tile_metadata", pd.DataFrame({"tile_x": [0, 1, 2]}), **keys)
     monkeypatch.setattr("helios.stages.tile_features.extract_features",
                         lambda tiles, **kw: np.ones((len(tiles), 4), np.float32))
-    prep_tile_features(datasets=[root])
+    prep_tile_features(datasets=[root], dirs=storage_dirs(root))
     output = store.path("tile_features", model="virchow2", **keys)
     with h5py.File(output, "r") as file:
         assert set(file) == {"features"}
     store.write("tile_metadata", pd.DataFrame({"tile_x": [0, 1]}), **keys)
     with pytest.raises(StageExecutionError, match="2 rows"):
-        prep_tile_features(datasets=[root], overwrite=True)
+        prep_tile_features(datasets=[root], dirs=storage_dirs(root), overwrite=True)
 
 
 def test_partial_extraction_cannot_be_persisted_as_full_grid(tmp_path):

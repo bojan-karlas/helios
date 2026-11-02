@@ -9,10 +9,8 @@ import pytest
 import yaml
 
 from helios.config.introspect import build_default_config
-from helios.data.io import ArtifactStore
-from helios.data.resolver import Resolver, Roots
 from helios.stages import concept, mil, morphology, risk
-from tests.fixtures import make_cohort
+from tests.fixtures import make_cohort, prepared_store, storage_dirs
 
 
 @pytest.mark.parametrize(
@@ -38,7 +36,7 @@ from tests.fixtures import make_cohort
 )
 def test_fit_saves_effective_parameters(monkeypatch, tmp_path, module, noun, component_name, artifact, overrides):
     root = make_cohort(tmp_path / "example", n_images=2, n_patients=2)
-    store = ArtifactStore(Resolver(Roots.single(root)))
+    store = prepared_store(root)
     ids = store.read("image_metadata")["image_id"].tolist()
     for image_id in ids:
         store.write(
@@ -66,7 +64,7 @@ def test_fit_saves_effective_parameters(monkeypatch, tmp_path, module, noun, com
         return {"trained": True}
 
     monkeypatch.setattr(module, component_name, train)
-    getattr(module, f"fit_{noun}")(datasets=[root], **overrides)
+    getattr(module, f"fit_{noun}")(datasets=[root], dirs=storage_dirs(root), **overrides)
 
     expected = build_default_config()["fit"][noun] | overrides
     config = yaml.safe_load((store.path(artifact, fold=None) / "config.yaml").read_text())

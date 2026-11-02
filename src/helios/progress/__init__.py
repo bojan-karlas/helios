@@ -2,7 +2,7 @@
 
 from helios.progress.logging import (
     configure_logging,
-    create_run_log_dir,
+    create_run_logs_dir,
     generate_run_id,
     get_logger,
     normalize_run_tag,
@@ -18,7 +18,7 @@ __all__ = [
     "DEFAULT_PROGRESS",
     "configure_logging",
     "worker_log",
-    "create_run_log_dir",
+    "create_run_logs_dir",
     "generate_run_id",
     "normalize_run_tag",
     "get_logger",

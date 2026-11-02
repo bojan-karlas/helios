@@ -19,7 +19,7 @@ from helios.progress import DEFAULT_PROGRESS, Progress
 from helios.stages._runtime import (
     DatasetArgs,
     ParallelConfig,
-    StorageRoots,
+    StorageDirs,
     WorkContext,
     cohort_store,
     resolve_datasets,
@@ -58,7 +58,7 @@ def _threshold_hive(
 def prep_cell_features(
     *,
     datasets: DatasetArgs,
-    roots: StorageRoots | None = None,
+    dirs: StorageDirs | None = None,
     parallel: ParallelConfig | None = None,
     size_mm: float = DEFAULT_SIZE_MM,
     tissue_min_cells: int = DEFAULT_TISSUE_MIN_CELLS,
@@ -94,8 +94,11 @@ def prep_cell_features(
         "mitosis_min_count": mitosis_min_count,
     }
 
-    for ds in resolve_datasets(datasets, roots=roots):
-        store = cohort_store(ds, roots)
+    resolved = resolve_datasets(
+        datasets, dirs=dirs, produces=("preprocessing",), progress=progress, parallel=parallel, shared_outputs=True,
+    )
+    for ds in resolved:
+        store = cohort_store(ds, dirs)
         run_work_units(
             select_image_ids(ds, store, image_ids),
             partial(_cell_features, store=store, table_keys=table_keys, thresholds=thresholds, overwrite=overwrite),
@@ -109,7 +112,7 @@ def prep_cell_features(
         cohort_ids = select_image_ids(ds, store, None)
         reduced = store.read_parts("cellular_features", cohort_ids, **table_keys)
         store.write("cellular_features", tag_dataset(reduced, ds.name), **table_keys)
-        progress.log(f"wrote cellular_features {ds.name} ({len(reduced)} of {len(cohort_ids)} images)")
+        progress.log(f"computed cellular_features {ds.name} ({len(reduced)} of {len(cohort_ids)} images)")
 
 
 def _cell_features(
@@ -122,7 +125,7 @@ def _cell_features(
     overwrite: bool,
 ) -> str:
     size_mm = table_keys["size_mm"]
-    counts_ok = store.exists("tile_cell_counts", size_mm=size_mm, image_id=image_id)
+    counts_ok = store.output_exists("tile_cell_counts", size_mm=size_mm, image_id=image_id)
     if not overwrite and counts_ok and store.part_exists("cellular_features", image_id, **table_keys):
         ctx.progress.log(f"skip cell-features image={image_id} (exists)")
         return "skipped"

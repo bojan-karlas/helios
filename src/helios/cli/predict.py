@@ -13,14 +13,13 @@ from pathlib import Path
 import typer
 
 from helios.cli._common import (
-    LOG_DIR,
+    LOGS_DIR,
     MAX_CPUS,
-    MODELS_ROOT,
-    PREPROCESSING_ROOT,
+    MODELS_DIR,
+    OUTPUT_DIR,
+    PREPROCESSING_DIR,
     RAY_ADDRESS,
-    REMOVED_FEATURES_ROOT,
-    REMOVED_OUTPUT_ROOT,
-    RESULTS_ROOT,
+    RESULTS_DIR,
     RUN_TAG,
     SPLITS_FILE,
     csv,
@@ -42,16 +41,15 @@ _FILTER = typer.Option(
 @predict_app.command("mil")
 def mil(
     dataset: list[str] = _DATASET,
-    preprocessing_root: Path | None = PREPROCESSING_ROOT,
-    removed_features_root: Path | None = REMOVED_FEATURES_ROOT,
-    models_root: Path | None = MODELS_ROOT,
-    results_root: Path | None = RESULTS_ROOT,
+    preprocessing_dir: Path | None = PREPROCESSING_DIR,
+    models_dir: Path | None = MODELS_DIR,
+    results_dir: Path | None = RESULTS_DIR,
     splits_file: Path | None = SPLITS_FILE,
-    log_dir: Path | None = LOG_DIR,
+    logs_dir: Path | None = LOGS_DIR,
     run_tag: str | None = RUN_TAG,
     ray_address: str | None = RAY_ADDRESS,
     max_cpus: int | None = MAX_CPUS,
-    output_root: Path | None = REMOVED_OUTPUT_ROOT,
+    output_dir: Path | None = OUTPUT_DIR,
     size_mm: float | None = typer.Option(None, "--size-mm", help="Tile resolution to score on."),
     model: str | None = typer.Option(None, "--model", help="Foundation model providing tile features."),
     device: str | None = typer.Option(None, "--device", help="Torch device (cuda, cpu)."),
@@ -65,20 +63,20 @@ def mil(
 
     invocation = prepare_invocation(
         dataset,
-        preprocessing_root=preprocessing_root,
-        models_root=models_root,
-        results_root=results_root,
+        preprocessing_dir=preprocessing_dir,
+        models_dir=models_dir,
+        results_dir=results_dir,
         splits_file=splits_file,
         ray_address=ray_address,
         max_cpus=max_cpus,
         where=filter,
-        log_dir=log_dir,
-        run_tag=run_tag,
+        logs_dir=logs_dir,
+        run_tag=run_tag, output_dir=output_dir,
     )
     overrides = {"size_mm": size_mm, "model": model, "device": device}
     params = load_stage_params("predict", "mil", config_path=config, overrides=overrides)
     predict_mil(
-        datasets=invocation.datasets, roots=invocation.roots, parallel=invocation.parallel, overwrite=overwrite,
+        datasets=invocation.datasets, dirs=invocation.dirs, parallel=invocation.parallel, overwrite=overwrite,
         progress=invocation.progress(),
         **params,
     )
@@ -88,16 +86,15 @@ def mil(
 @predict_app.command("concept")
 def concept(
     dataset: list[str] = _DATASET,
-    preprocessing_root: Path | None = PREPROCESSING_ROOT,
-    removed_features_root: Path | None = REMOVED_FEATURES_ROOT,
-    models_root: Path | None = MODELS_ROOT,
-    results_root: Path | None = RESULTS_ROOT,
+    preprocessing_dir: Path | None = PREPROCESSING_DIR,
+    models_dir: Path | None = MODELS_DIR,
+    results_dir: Path | None = RESULTS_DIR,
     splits_file: Path | None = SPLITS_FILE,
-    log_dir: Path | None = LOG_DIR,
+    logs_dir: Path | None = LOGS_DIR,
     run_tag: str | None = RUN_TAG,
     ray_address: str | None = RAY_ADDRESS,
     max_cpus: int | None = MAX_CPUS,
-    output_root: Path | None = REMOVED_OUTPUT_ROOT,
+    output_dir: Path | None = OUTPUT_DIR,
     filter: str | None = _FILTER,
     config: Path | None = _CONFIG,
     overwrite: bool = _OVERWRITE,
@@ -108,19 +105,19 @@ def concept(
 
     invocation = prepare_invocation(
         dataset,
-        preprocessing_root=preprocessing_root,
-        models_root=models_root,
-        results_root=results_root,
+        preprocessing_dir=preprocessing_dir,
+        models_dir=models_dir,
+        results_dir=results_dir,
         splits_file=splits_file,
         ray_address=ray_address,
         max_cpus=max_cpus,
         where=filter,
-        log_dir=log_dir,
-        run_tag=run_tag,
+        logs_dir=logs_dir,
+        run_tag=run_tag, output_dir=output_dir,
     )
     params = load_stage_params("predict", "concept", config_path=config)
     predict_concept(
-        datasets=invocation.datasets, roots=invocation.roots, parallel=invocation.parallel, overwrite=overwrite,
+        datasets=invocation.datasets, dirs=invocation.dirs, parallel=invocation.parallel, overwrite=overwrite,
         progress=invocation.progress(),
         **params,
     )
@@ -130,16 +127,15 @@ def concept(
 @predict_app.command("morphology")
 def morphology(
     dataset: list[str] = _DATASET,
-    preprocessing_root: Path | None = PREPROCESSING_ROOT,
-    removed_features_root: Path | None = REMOVED_FEATURES_ROOT,
-    models_root: Path | None = MODELS_ROOT,
-    results_root: Path | None = RESULTS_ROOT,
+    preprocessing_dir: Path | None = PREPROCESSING_DIR,
+    models_dir: Path | None = MODELS_DIR,
+    results_dir: Path | None = RESULTS_DIR,
     splits_file: Path | None = SPLITS_FILE,
-    log_dir: Path | None = LOG_DIR,
+    logs_dir: Path | None = LOGS_DIR,
     run_tag: str | None = RUN_TAG,
     ray_address: str | None = RAY_ADDRESS,
     max_cpus: int | None = MAX_CPUS,
-    output_root: Path | None = REMOVED_OUTPUT_ROOT,
+    output_dir: Path | None = OUTPUT_DIR,
     filter: str | None = _FILTER,
     config: Path | None = _CONFIG,
     overwrite: bool = _OVERWRITE,
@@ -150,19 +146,19 @@ def morphology(
 
     invocation = prepare_invocation(
         dataset,
-        preprocessing_root=preprocessing_root,
-        models_root=models_root,
-        results_root=results_root,
+        preprocessing_dir=preprocessing_dir,
+        models_dir=models_dir,
+        results_dir=results_dir,
         splits_file=splits_file,
         ray_address=ray_address,
         max_cpus=max_cpus,
         where=filter,
-        log_dir=log_dir,
-        run_tag=run_tag,
+        logs_dir=logs_dir,
+        run_tag=run_tag, output_dir=output_dir,
     )
     params = load_stage_params("predict", "morphology", config_path=config)
     predict_morphology(
-        datasets=invocation.datasets, roots=invocation.roots, parallel=invocation.parallel, overwrite=overwrite,
+        datasets=invocation.datasets, dirs=invocation.dirs, parallel=invocation.parallel, overwrite=overwrite,
         progress=invocation.progress(),
         **params,
     )
@@ -172,16 +168,15 @@ def morphology(
 @predict_app.command("risk")
 def risk(
     dataset: list[str] = _DATASET,
-    preprocessing_root: Path | None = PREPROCESSING_ROOT,
-    removed_features_root: Path | None = REMOVED_FEATURES_ROOT,
-    models_root: Path | None = MODELS_ROOT,
-    results_root: Path | None = RESULTS_ROOT,
+    preprocessing_dir: Path | None = PREPROCESSING_DIR,
+    models_dir: Path | None = MODELS_DIR,
+    results_dir: Path | None = RESULTS_DIR,
     splits_file: Path | None = SPLITS_FILE,
-    log_dir: Path | None = LOG_DIR,
+    logs_dir: Path | None = LOGS_DIR,
     run_tag: str | None = RUN_TAG,
     ray_address: str | None = RAY_ADDRESS,
     max_cpus: int | None = MAX_CPUS,
-    output_root: Path | None = REMOVED_OUTPUT_ROOT,
+    output_dir: Path | None = OUTPUT_DIR,
     risk: str | None = typer.Option(
         None, "--risk", help="Comma list of risk kinds (cellular,staging,clinical,helios)."
     ),
@@ -195,19 +190,19 @@ def risk(
 
     invocation = prepare_invocation(
         dataset,
-        preprocessing_root=preprocessing_root,
-        models_root=models_root,
-        results_root=results_root,
+        preprocessing_dir=preprocessing_dir,
+        models_dir=models_dir,
+        results_dir=results_dir,
         splits_file=splits_file,
         ray_address=ray_address,
         max_cpus=max_cpus,
         where=filter,
-        log_dir=log_dir,
-        run_tag=run_tag,
+        logs_dir=logs_dir,
+        run_tag=run_tag, output_dir=output_dir,
     )
     params = load_stage_params("predict", "risk", config_path=config, overrides={"risk": csv(risk)})
     predict_risk(
-        datasets=invocation.datasets, roots=invocation.roots, parallel=invocation.parallel, overwrite=overwrite,
+        datasets=invocation.datasets, dirs=invocation.dirs, parallel=invocation.parallel, overwrite=overwrite,
         progress=invocation.progress(),
         **params,
     )

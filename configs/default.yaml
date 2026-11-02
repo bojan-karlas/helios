@@ -75,11 +75,11 @@ prep:
     method: cyclegan
     model:
     - virchow2
-    output_dir: null
+    augmentation_dir: null
     size_mm:
     - 0.25
     source: null
-    stain_model_root: src/helios/models/multistain_cyclegan
+    stain_model_dir: src/helios/models/multistain_cyclegan
     target: []
   cell-features:
     lymph_frac_threshold: 0.05

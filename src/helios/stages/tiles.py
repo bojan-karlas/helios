@@ -23,7 +23,7 @@ from helios.progress import DEFAULT_PROGRESS, Progress
 from helios.stages._runtime import (
     DatasetArgs,
     ParallelConfig,
-    StorageRoots,
+    StorageDirs,
     WorkContext,
     cohort_store,
     resolve_datasets,
@@ -42,7 +42,7 @@ DEFAULT_STRIDE_FRACTION: float = 0.5
 def prep_tiles(
     *,
     datasets: DatasetArgs,
-    roots: StorageRoots | None = None,
+    dirs: StorageDirs | None = None,
     parallel: ParallelConfig | None = None,
     size_mm: list[float] = DEFAULT_SIZE_MM,
     tile_px: int = DEFAULT_TILE_PX,
@@ -60,9 +60,9 @@ def prep_tiles(
     ``background_mask_only`` segments the thumbnail without reading WSI/tiles
     or changing tile metadata/background flags. Size only selects mask paths.
     """
-    for ds in resolve_datasets(datasets, roots=roots):
+    for ds in resolve_datasets(datasets, dirs=dirs, produces=("preprocessing",), progress=progress):
         cohort = ds.dataset()
-        store = cohort_store(ds, roots)
+        store = cohort_store(ds, dirs)
         ids = select_image_ids(ds, store, image_ids)
         run_work_units(
             [(s, i) for s in size_mm for i in ids],
@@ -101,14 +101,14 @@ def _tile(
 ) -> str:
     s, image_id = unit
     if background_mask_only:
-        if not overwrite and store.exists("background_mask", size_mm=s, image_id=image_id):
+        if not overwrite and store.output_exists("background_mask", size_mm=s, image_id=image_id):
             ctx.progress.log(f"skip background_mask image={image_id} size_mm={s} (exists)")
             return "skipped"
         mask = segment_background(store.read("thumbnail", image_id=image_id))
         store.write("background_mask", mask, size_mm=s, image_id=image_id)
-        ctx.progress.log(f"wrote background_mask only image={image_id} size_mm={s}")
+        ctx.progress.log(f"computed background_mask only image={image_id} size_mm={s}")
         return "completed"
-    if not overwrite and all(store.exists(a, size_mm=s, image_id=image_id) for a in TILE_OUTPUTS):
+    if not overwrite and all(store.output_exists(a, size_mm=s, image_id=image_id) for a in TILE_OUTPUTS):
         ctx.progress.log(f"skip tiles image={image_id} size_mm={s} (exists)")
         return "skipped"
     # The last output doubles as the unit's completion marker: clear it before recomputing.
@@ -128,5 +128,5 @@ def _tile(
     flags, mask = detect_background(thumbnail, meta)
     store.write("tile_background", flags, size_mm=s, image_id=image_id)
     store.write("background_mask", mask, size_mm=s, image_id=image_id)
-    ctx.progress.log(f"wrote tiles + background image={image_id} size_mm={s}")
+    ctx.progress.log(f"computed tiles + background image={image_id} size_mm={s}")
     return "completed"

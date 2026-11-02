@@ -10,11 +10,9 @@ import pandas as pd
 import pytest
 
 from helios.data.cohort import ResolvedDataset
-from helios.data.io import ArtifactStore
-from helios.data.resolver import Resolver, Roots
 from helios.stages import concept, morphology, risk
 from helios.stages._runtime import ParallelConfig, run_work_units
-from tests.fixtures import make_cohort
+from tests.fixtures import make_cohort, prepared_store, storage_dirs
 
 
 @pytest.mark.parametrize(
@@ -46,7 +44,7 @@ def test_fit_stages_submit_fold_units(
 
     monkeypatch.setattr(module, "run_work_units", capture)
     getattr(module, fit_name)(
-        datasets=[resolved[0].root],
+        datasets=[resolved[0].root], dirs=storage_dirs(resolved[0].root),
         parallel=parallel,
         **fit_options,
     )
@@ -96,7 +94,7 @@ def test_morphology_serial_fold_loads_inputs_and_writes_bundle(
     tmp_path: Path,
 ) -> None:
     root = make_cohort(tmp_path / "synthetic-set", n_images=2, n_patients=2)
-    store = ArtifactStore(Resolver(Roots.single(root)))
+    store = prepared_store(root)
     image_ids = store.read("image_metadata")["image_id"].tolist()
     for image_id in image_ids:
         store.write(
@@ -116,7 +114,7 @@ def test_morphology_serial_fold_loads_inputs_and_writes_bundle(
         return {"trained": True}
 
     monkeypatch.setattr(morphology, "train_morphology", fake_train)
-    morphology.fit_morphology(datasets=[root], parallel=ParallelConfig())
+    morphology.fit_morphology(datasets=[root], dirs=storage_dirs(root), parallel=ParallelConfig())
 
     assert store.exists("model_morphology", fold=None)
     assert set(captured["paths"]) == set(image_ids)

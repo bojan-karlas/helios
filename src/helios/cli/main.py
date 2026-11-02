@@ -15,14 +15,13 @@ from pathlib import Path
 import typer
 
 from helios.cli._common import (
-    LOG_DIR,
+    LOGS_DIR,
     MAX_CPUS,
-    MODELS_ROOT,
-    PREPROCESSING_ROOT,
+    MODELS_DIR,
+    OUTPUT_DIR,
+    PREPROCESSING_DIR,
     RAY_ADDRESS,
-    REMOVED_FEATURES_ROOT,
-    REMOVED_OUTPUT_ROOT,
-    RESULTS_ROOT,
+    RESULTS_DIR,
     RUN_TAG,
     datasets_arg,
     prepare_invocation,
@@ -41,15 +40,15 @@ app.add_typer(list_app, name="list")
 
 @list_app.command("augmentations")
 def list_augmentations(
-    dataset: list[str] | None = typer.Option(None, "--dataset", help="Dataset roots or cohort YAML files."),
+    dataset: list[str] | None = typer.Option(None, "--dataset", help="Dataset dirs or cohort YAML files."),
     root: Path | None = typer.Option(None, "--root", help="Search an explicit augmentation storage directory."),
-    preprocessing_root: Path | None = PREPROCESSING_ROOT,
+    preprocessing_dir: Path | None = PREPROCESSING_DIR,
 ) -> None:
     """List saved definitions and available files, not a guarantee of completeness."""
     import json
 
     from helios.data.augmentation import Augmentation, discover_augmentations
-    from helios.data.resolver import StorageRoots
+    from helios.data.resolver import StorageDirs
     from helios.stages._runtime import cohort_store, resolve_datasets
 
     if not dataset and root is None:
@@ -58,9 +57,9 @@ def list_augmentations(
     if root is not None:
         found.update((a.root, a) for a in discover_augmentations(root))
     if dataset:
-        roots = StorageRoots(preprocessing_root=preprocessing_root)
-        for ds in resolve_datasets(datasets_arg(dataset), roots=roots):
-            base = cohort_store(ds, roots).resolver.roots.for_role("preprocessing") / "augmentations"
+        dirs = StorageDirs(preprocessing_dir=preprocessing_dir)
+        for ds in resolve_datasets(datasets_arg(dataset), dirs=dirs):
+            base = cohort_store(ds, dirs).resolver.dirs.for_role("preprocessing") / "augmentations"
             if base.is_dir():
                 found.update((a.root, a) for a in discover_augmentations(base))
             for path in ds.augmentations:
@@ -86,15 +85,14 @@ def report(
     dataset: list[str] = typer.Option(
         ..., "--dataset", help="Cohort root(s) or cohort file(s) to report; repeatable or comma-separated."
     ),
-    preprocessing_root: Path | None = PREPROCESSING_ROOT,
-    removed_features_root: Path | None = REMOVED_FEATURES_ROOT,
-    models_root: Path | None = MODELS_ROOT,
-    results_root: Path | None = RESULTS_ROOT,
-    log_dir: Path | None = LOG_DIR,
+    preprocessing_dir: Path | None = PREPROCESSING_DIR,
+    models_dir: Path | None = MODELS_DIR,
+    results_dir: Path | None = RESULTS_DIR,
+    logs_dir: Path | None = LOGS_DIR,
     run_tag: str | None = RUN_TAG,
     ray_address: str | None = RAY_ADDRESS,
     max_cpus: int | None = MAX_CPUS,
-    output_root: Path | None = REMOVED_OUTPUT_ROOT,
+    output_dir: Path | None = OUTPUT_DIR,
     no_assets: bool = typer.Option(False, "--no-assets", help="Skip rendering PNG assets."),
     no_summarize: bool = typer.Option(False, "--no-summarize", help="Skip the cohort summary join."),
     config: Path | None = typer.Option(None, "--config", "-c", help="Override config YAML."),
@@ -106,13 +104,13 @@ def report(
 
     invocation = prepare_invocation(
         dataset,
-        preprocessing_root=preprocessing_root,
-        models_root=models_root,
-        results_root=results_root,
+        preprocessing_dir=preprocessing_dir,
+        models_dir=models_dir,
+        results_dir=results_dir,
         ray_address=ray_address,
         max_cpus=max_cpus,
-        log_dir=log_dir,
-        run_tag=run_tag,
+        logs_dir=logs_dir,
+        run_tag=run_tag, output_dir=output_dir,
     )
     overrides = {
         "assets": False if no_assets else None,
@@ -121,7 +119,7 @@ def report(
     params = load_stage_params("report", "build", config_path=config, overrides=overrides)
     build_report(
         datasets=invocation.datasets,
-        roots=invocation.roots,
+        dirs=invocation.dirs,
         parallel=invocation.parallel,
         overwrite=overwrite,
         progress=invocation.progress(),

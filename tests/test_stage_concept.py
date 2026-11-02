@@ -7,16 +7,15 @@ import numpy as np
 import pandas as pd
 
 from helios.data.io import ArtifactStore
-from helios.data.resolver import Resolver, Roots
 from helios.stages import concept
-from tests.fixtures import make_cohort
+from tests.fixtures import make_cohort, prepared_store, storage_dirs
 
 IMAGE_IDS = [f"FAKE-SKCM-P{i:05d}-S01-B1-I1" for i in range(4)]
 
 
 def _prepared_cohort(tmp_path: Path) -> tuple[Path, ArtifactStore]:
     root = make_cohort(tmp_path / "cohort", n_images=4, n_patients=4)
-    store = ArtifactStore(Resolver(Roots.single(root)))
+    store = prepared_store(root)
     for image_index, image_id in enumerate(IMAGE_IDS):
         store.write(
             "aligned_slide_embedding",
@@ -42,7 +41,7 @@ def test_fit_concept_aligns_embeddings_labels_and_risk(monkeypatch, tmp_path: Pa
         return {"fitted": True}
 
     monkeypatch.setattr("helios.stages.concept.train_concepts", fake_train)
-    concept.fit_concept(datasets=[root], n_bootstrap=2)
+    concept.fit_concept(datasets=[root], dirs=storage_dirs(root), n_bootstrap=2)
 
     assert store.exists("model_concepts", fold=None)
     assert captured["labels"]["image_id"].tolist() == IMAGE_IDS
@@ -61,7 +60,7 @@ def test_predict_concept_writes_reduced_outputs(monkeypatch, tmp_path: Path) -> 
         return predictions, scores
 
     monkeypatch.setattr("helios.stages.concept.infer_concepts", fake_infer)
-    concept.predict_concept(datasets=[root])
+    concept.predict_concept(datasets=[root], dirs=storage_dirs(root))
 
     predictions = store.read("path_concept_predictions")
     scores = store.read("path_concept_risk_score")

@@ -20,15 +20,17 @@ both the per-fold and the reduced instances.
 """
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from pathlib import Path
 
 import pandas as pd
 
+from helios.data.catalog import StorageRole
 from helios.data.cohort import DatasetArgs, ResolvedDataset
 from helios.data.cohort import resolve_datasets as resolve_dataset_args
 from helios.data.io import ArtifactStore, read
-from helios.data.resolver import Resolver, Roots, StorageRoots
+from helios.data.resolver import Dirs, Resolver, StorageDirs
 from helios.progress import DEFAULT_PROGRESS, Progress
 from helios.stages._ray import (
     ParallelConfig,
@@ -59,7 +61,7 @@ __all__ = [
     "filtered_ids",
     "select_image_ids",
     "cohort_store",
-    "StorageRoots",
+    "StorageDirs",
     "resolve_splits_path",
     "read_splits",
     "folds_of",
@@ -136,31 +138,53 @@ def resolve_datasets(
     datasets: DatasetArgs,
     *,
     where: str | None = None,
-    roots: StorageRoots | None = None,
-    require_models: bool = False,
+    dirs: StorageDirs | None = None,
+    produces: tuple[StorageRole, ...] = (),
+    progress: Progress = DEFAULT_PROGRESS,
+    parallel: ParallelConfig | None = None,
+    shared_outputs: bool = False,
 ) -> list[ResolvedDataset]:
     """Resolve constituents and reject ambiguous run destinations before I/O."""
     resolved = resolve_dataset_args(datasets, where=where)
-    overrides = roots or StorageRoots()
+    overrides = dirs or StorageDirs()
     if len(resolved) > 1:
-        if overrides.preprocessing_root is not None:
-            raise ValueError(
-                "For multiple datasets, set preprocessing_root per dataset in the cohort YAML."
-            )
-        if require_models and overrides.models_root is None:
-            raise ValueError("Pooled training requires an explicit models_root (--models-root).")
         _validate_unique_union_image_ids(resolved)
-    if overrides.results_root is not None:
+        if overrides.preprocessing_dir is not None:
+            ids: set[str] = set()
+            for ds in resolved:
+                selected = select_image_ids(ds, cohort_store(ds), None)
+                duplicates = ids.intersection(selected)
+                if duplicates:
+                    raise ValueError(f"Shared preprocessing has duplicate image_ids: {sorted(duplicates)[:5]}")
+                ids.update(selected)
+    if overrides.results_dir is not None or overrides.output_dir is not None:
         names = [ds.logical_name for ds in resolved]
-        if any(name in {"", ".", ".."} for name in names):
-            raise ValueError("A shared results_root requires nonempty cohort/dataset names.")
-        # Distinct physical roots must either share one named logical cohort or have distinct names.
+        if any(name in {"", ".", ".."} or Path(name).name != name for name in names):
+            raise ValueError("A shared results_dir requires single-directory cohort/dataset names.")
+        # Distinct physical dirs must either share one named logical cohort or have distinct names.
         by_name: dict[str, set[Path]] = {}
         for ds in resolved:
             if ds.cohort_name is None:
                 by_name.setdefault(ds.name, set()).add(ds.root)
         if any(len(paths) > 1 for paths in by_name.values()):
-            raise ValueError("A shared results_root requires distinct, nonempty dataset directory names.")
+            raise ValueError("A shared results_dir requires distinct, nonempty dataset directory names.")
+    for ds in resolved:
+        store = cohort_store(ds, overrides)
+        for role in produces:
+            location = getattr(store.output_resolver.dirs, f"{role}_dir")
+            if location is None:
+                message = f"{role} outputs will NOT be saved for {ds.logical_name}; no destination supplied."
+                if progress.enabled:
+                    progress.log(message, level=logging.WARNING)
+                else:
+                    logging.getLogger("helios").warning(message)
+                if shared_outputs and parallel is not None and parallel.enabled:
+                    raise ValueError(
+                        f"Parallel {role} reduction requires a saved destination; "
+                        "select its directory or use serial execution."
+                    )
+            else:
+                progress.log(f"save {role} dataset={ds.logical_name}: {location}")
     return resolved
 
 
@@ -192,28 +216,41 @@ def _validate_unique_union_image_ids(datasets: Sequence[ResolvedDataset]) -> Non
             )
 
 
-def cohort_store(dataset: str | Path | ResolvedDataset, roots: StorageRoots | None = None) -> ArtifactStore:
-    """Use constituent-local data roots and shared run model/results overrides."""
+def cohort_store(dataset: str | Path | ResolvedDataset, dirs: StorageDirs | None = None) -> ArtifactStore:
+    """Use constituent-local data dirs and shared run model/results overrides."""
     ds = dataset if isinstance(dataset, ResolvedDataset) else ResolvedDataset(Path(dataset))
-    overrides = roots or StorageRoots()
-    return ArtifactStore(Resolver(Roots(
-        source_root=ds.root,
-        preprocessing_root=overrides.preprocessing_root or ds.preprocessing_root,
-        models_root=overrides.models_root,
-        results_root=overrides.results_root / ds.logical_name if overrides.results_root is not None else None,
-    )))
+    overrides = dirs or StorageDirs()
+    results_input = Path(overrides.results_dir) / ds.logical_name if overrides.results_dir is not None else None
+    inputs = Dirs(
+        source_dir=ds.root,
+        preprocessing_dir=overrides.preprocessing_dir or ds.preprocessing_dir,
+        models_dir=overrides.models_dir,
+        results_dir=results_input,
+    )
+    results_output = overrides.destination("results")
+    outputs = Dirs(
+        source_dir=ds.root,
+        preprocessing_dir=overrides.preprocessing_dir or ds.preprocessing_dir,
+        models_dir=overrides.destination("models"),
+        results_dir=results_output / ds.logical_name if results_output is not None else None,
+    )
+    return ArtifactStore(Resolver(inputs), output_resolver=Resolver(outputs))
 
 
 def resolve_splits_path(
     dataset: ResolvedDataset | ArtifactStore,
-    roots: StorageRoots | None = None,
+    dirs: StorageDirs | None = None,
 ) -> Path:
     """Resolve the CV splits CSV path for a dataset or cohort."""
-    overrides = roots or StorageRoots()
+    overrides = dirs or StorageDirs()
     if overrides.splits_file is not None:
         return Path(overrides.splits_file)
     elif isinstance(dataset, ResolvedDataset) and dataset.splits_file is not None:
         return dataset.splits_file
+    elif isinstance(dataset, ResolvedDataset) and (
+        overrides.preprocessing_dir is not None or dataset.preprocessing_dir is not None
+    ):
+        return cohort_store(dataset, overrides).path("splits")
     elif isinstance(dataset, ResolvedDataset) and dataset.cohort_file is not None:
         return dataset.cohort_file.with_suffix(".splits.csv")
     elif isinstance(dataset, ArtifactStore):
@@ -225,14 +262,14 @@ def resolve_splits_path(
 
 def read_splits(
     store_or_ds: ArtifactStore | ResolvedDataset,
-    roots: StorageRoots | None = None,
+    dirs: StorageDirs | None = None,
     *,
     progress: Progress = DEFAULT_PROGRESS,
 ) -> pd.DataFrame | None:
     """Read the selected file; only an absent implicit default permits no CV."""
-    path = resolve_splits_path(store_or_ds, roots)
+    path = resolve_splits_path(store_or_ds, dirs)
     explicit = (
-        (roots is not None and roots.splits_file is not None)
+        (dirs is not None and dirs.splits_file is not None)
         or (isinstance(store_or_ds, ResolvedDataset) and store_or_ds.splits_file is not None)
     )
     if not path.exists() and not explicit:
@@ -246,10 +283,10 @@ def read_splits(
 
 def folds_of(
     store_or_ds: ArtifactStore | ResolvedDataset,
-    roots: StorageRoots | None = None,
+    dirs: StorageDirs | None = None,
 ) -> list[int | None]:
     """Folds defined by a cohort's ``splits`` (``[None]`` if trained without CV)."""
-    splits = read_splits(store_or_ds, roots)
+    splits = read_splits(store_or_ds, dirs)
     if splits is None or FOLD_COLUMN not in splits:
         return [None]
     folds: list[int | None] = [int(f) for f in sorted(splits[FOLD_COLUMN].dropna().unique())]
@@ -258,7 +295,7 @@ def folds_of(
 
 def folds_across(
     stores_or_datasets: Sequence[ArtifactStore | ResolvedDataset],
-    roots: StorageRoots | None = None,
+    dirs: StorageDirs | None = None,
 ) -> list[int | None]:
     """Union of folds across pooled training cohorts.
 
@@ -267,7 +304,7 @@ def folds_across(
     """
     seen: set[int] = set()
     for item in stores_or_datasets:
-        for fold in folds_of(item, roots):
+        for fold in folds_of(item, dirs):
             if fold is not None:
                 seen.add(fold)
     result: list[int | None] = [f for f in sorted(seen)]
@@ -279,7 +316,7 @@ def train_ids(
     fold: int | None,
     *,
     where: str | None = None,
-    roots: StorageRoots | None = None,
+    dirs: StorageDirs | None = None,
 ) -> list[str]:
     """Image ids in ``fold``'s train split (all images when there is no CV).
 
@@ -289,11 +326,11 @@ def train_ids(
     subpopulation (e.g. ``"path_stage in ['I', 'II']"``), composed *after* the
     fold's train split so filtering never leaks test images into training.
     """
-    store = cohort_store(store_or_ds, roots) if isinstance(store_or_ds, ResolvedDataset) else store_or_ds
+    store = cohort_store(store_or_ds, dirs) if isinstance(store_or_ds, ResolvedDataset) else store_or_ds
     effective_where = where if where is not None else (
         store_or_ds.where if isinstance(store_or_ds, ResolvedDataset) else None
     )
-    splits = read_splits(store_or_ds, roots)
+    splits = read_splits(store_or_ds, dirs)
     all_ids = [str(i) for i in store.read("image_metadata")[IMAGE_ID_COLUMN]]
     if splits is None or fold is None or FOLD_COLUMN not in splits:
         ids = all_ids
@@ -309,16 +346,16 @@ def train_ids(
 
 def build_cohort_provenance(
     datasets: Sequence[ResolvedDataset],
-    roots: StorageRoots | None = None,
+    dirs: StorageDirs | None = None,
 ) -> dict[str, object]:
     """Serialize resolved cohort constituents into a re-runnable ``cohort.yaml`` mapping."""
     lead = datasets[0]
     entries: list[dict[str, object]] = []
     for ds in datasets:
-        entry: dict[str, object] = {"source_root": str(ds.root.absolute())}
-        pre = (roots.preprocessing_root if roots else None) or ds.preprocessing_root
+        entry: dict[str, object] = {"source_dir": str(ds.root.absolute())}
+        pre = (dirs.preprocessing_dir if dirs else None) or ds.preprocessing_dir
         if pre is not None:
-            entry["preprocessing_root"] = str(Path(pre).absolute())
+            entry["preprocessing_dir"] = str(Path(pre).absolute())
         if ds.augmentations:
             entry["augmentations"] = [str(a.absolute()) for a in ds.augmentations]
         entries.append(entry)
@@ -328,7 +365,7 @@ def build_cohort_provenance(
     }
     if lead.where:
         doc["filter"] = lead.where
-    splits_path = resolve_splits_path(lead, roots)
+    splits_path = resolve_splits_path(lead, dirs)
     if splits_path.is_file():
         doc["splits"] = str(splits_path.absolute())
     return doc
@@ -338,14 +375,14 @@ def build_bundle_metadata(
     noun: str,
     params: dict[str, object],
     datasets: Sequence[ResolvedDataset],
-    roots: StorageRoots | None = None,
+    dirs: StorageDirs | None = None,
     *,
     fold: int | None = None,
 ) -> dict[str, object]:
     """Build re-runnable ``config.yaml`` + ``cohort.yaml`` metadata for a model bundle."""
     return {
         "config": {"fit": {noun: params}},
-        "cohort": build_cohort_provenance(datasets, roots),
+        "cohort": build_cohort_provenance(datasets, dirs),
         "stage": f"fit.{noun}",
         "fold": fold,
         "cohort_name": datasets[0].logical_name,

@@ -24,7 +24,7 @@ from helios.stages._ray import WorkContext, gpu_reservation, run_work_units
 from helios.stages._runtime import (
     DatasetArgs,
     ParallelConfig,
-    StorageRoots,
+    StorageDirs,
     build_bundle_metadata,
     cohort_store,
     folds_across,
@@ -58,7 +58,7 @@ DEFAULT_DEVICE: str = "cuda"
 def fit_mil(
     *,
     datasets: DatasetArgs,
-    roots: StorageRoots | None = None,
+    dirs: StorageDirs | None = None,
     parallel: ParallelConfig | None = None,
     size_mm: float = DEFAULT_SIZE_MM,
     model: str = DEFAULT_MODEL,
@@ -91,16 +91,16 @@ def fit_mil(
         raise ValueError(f"Unknown feature model {model!r}. Available: {list(FEATURE_MODELS)}.")
 
     resolved = select_augmentations(
-        resolve_datasets(datasets, roots=roots, require_models=True), augmentations,
+        resolve_datasets(datasets, dirs=dirs, produces=("models",), progress=progress), augmentations,
     )
-    stores = [cohort_store(ds, roots) for ds in resolved]
+    stores = [cohort_store(ds, dirs) for ds in resolved]
     out = stores[0]
-    folds = folds_across(resolved, roots)
+    folds = folds_across(resolved, dirs)
 
     slides_by_fold: dict[int | None, list[SlideFeatureRef]] = {}
     validated: set[tuple[Path, Path]] = set()
     for fold in folds:
-        if not overwrite and out.exists("model_mil", fold=fold):
+        if not overwrite and out.output_exists("model_mil", fold=fold):
             progress.log(f"skip model_mil fold={fold} (exists)")
             continue
         slides: list[SlideFeatureRef] = []
@@ -108,7 +108,7 @@ def fit_mil(
             labels = ds.dataset().image_metadata.set_index("image_id")
             if target not in labels:
                 raise ValueError(f"Missing MIL target column {target!r} in {ds.root}.")
-            selected = train_ids(ds, fold, where=ds.where, roots=roots)
+            selected = train_ids(ds, fold, where=ds.where, dirs=dirs)
             missing = labels.loc[selected, target].isna()
             if missing.any():
                 progress.log(
@@ -177,7 +177,7 @@ def fit_mil(
     }
     run_work_units(
         list(slides_by_fold),
-        partial(_fit_fold, slides_by_fold=slides_by_fold, out=out, params=params, resolved=resolved, roots=roots),
+        partial(_fit_fold, slides_by_fold=slides_by_fold, out=out, params=params, resolved=resolved, dirs=dirs),
         stage="fit mil", progress=progress, parallel=parallel,
         num_gpus=gpu_reservation(device, parallel),
     )
@@ -185,23 +185,23 @@ def fit_mil(
 
 def _fit_fold(
     fold: int | None, ctx: WorkContext, *, slides_by_fold: dict[int | None, list[SlideFeatureRef]],
-    out: ArtifactStore, params: dict[str, Any], resolved: list[ResolvedDataset], roots: StorageRoots | None,
+    out: ArtifactStore, params: dict[str, Any], resolved: list[ResolvedDataset], dirs: StorageDirs | None,
 ) -> str:
     slides = slides_by_fold[fold]
     training = {
         key: value for key, value in params.items() if key not in {"size_mm", "model", "target", "augmentations"}
     }
     bundle = train_mil(slides, **training, progress=ctx.progress, fold=fold)
-    meta = build_bundle_metadata("mil", params, resolved, roots, fold=fold)
+    meta = build_bundle_metadata("mil", params, resolved, dirs, fold=fold)
     out.write("model_mil", bundle, metadata=meta, fold=fold)
-    ctx.progress.log(f"wrote model_mil fold={fold} (n_train={len(slides)})")
+    ctx.progress.log(f"computed model_mil fold={fold} (n_train={len(slides)})")
     return "completed"
 
 
 def predict_mil(
     *,
     datasets: DatasetArgs,
-    roots: StorageRoots | None = None,
+    dirs: StorageDirs | None = None,
     parallel: ParallelConfig | None = None,
     size_mm: float = DEFAULT_SIZE_MM,
     model: str = DEFAULT_MODEL,
@@ -216,10 +216,12 @@ def predict_mil(
     reduce of the K whole-image scores to ``whole_image_risk_score_ensemble``.
     Folds are enumerated from the saved ``model_mil`` bundles.
     """
-    resolved = resolve_datasets(datasets, roots=roots)
+    resolved = resolve_datasets(
+        datasets, dirs=dirs, produces=("results",), progress=progress, parallel=parallel, shared_outputs=True,
+    )
 
     for ds in resolved:
-        store = cohort_store(ds, roots)
+        store = cohort_store(ds, dirs)
         ids = select_image_ids(ds, store, image_ids)
         cohort_ids = select_image_ids(ds, store, None)
         folds = model_folds(store, "model_mil")
@@ -243,10 +245,10 @@ def predict_mil(
 
         ensemble = reduce_whole_image_risk(
             pd.concat(per_fold_scores, ignore_index=True) if per_fold_scores else pd.DataFrame(),
-            read_splits(ds, roots, progress=progress),
+            read_splits(ds, dirs, progress=progress),
         )
         store.write("whole_image_risk_score_ensemble", tag_dataset(ensemble, ds.name))
-        progress.log(f"wrote whole_image_risk_score_ensemble {ds.name}")
+        progress.log(f"computed whole_image_risk_score_ensemble {ds.name}")
 
 
 @lru_cache(maxsize=1)
@@ -264,10 +266,10 @@ def _predict_slide(
     size_mm: float, model: str, device: str, overwrite: bool,
 ) -> str:
     complete = (
-        store.exists("aligned_patch_embeddings", fold=fold, image_id=image_id)
-        and store.exists("patch_attention", fold=fold, image_id=image_id)
-        and store.exists("aligned_slide_embedding", fold=fold, image_id=image_id)
-        and store.exists("aligned_slide_embedding_grad", fold=fold, image_id=image_id)
+        store.output_exists("aligned_patch_embeddings", fold=fold, image_id=image_id)
+        and store.output_exists("patch_attention", fold=fold, image_id=image_id)
+        and store.output_exists("aligned_slide_embedding", fold=fold, image_id=image_id)
+        and store.output_exists("aligned_slide_embedding_grad", fold=fold, image_id=image_id)
         and store.part_exists("whole_image_risk_score", image_id, fold=fold)
     )
     if not overwrite and complete:

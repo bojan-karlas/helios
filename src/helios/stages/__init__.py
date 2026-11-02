@@ -18,7 +18,7 @@ configurable the moment it is registered.
 Each stage's keyword parameters with defaults are the single source of truth for
 its configuration: ``scripts/gen_configs.py`` introspects them to generate
 ``configs/default.yaml`` (run ``make configs`` after changing a default).
-Framework seams (``datasets``, ``roots``, ``parallel``, ``image_ids``, ``overwrite``,
+Framework seams (``datasets``, ``dirs``, ``parallel``, ``image_ids``, ``overwrite``,
 ``progress``) are runtime arguments, not config keys.
 """
 from __future__ import annotations

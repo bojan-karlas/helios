@@ -12,8 +12,8 @@ from helios.components.background import detect_background
 from helios.components.thumbnails import extract_thumbnail
 from helios.components.tiling import extract_tiles
 from helios.data.io import read, write
-from helios.stages._runtime import cohort_store
 from helios.stages.tiles import prep_tiles
+from tests.fixtures import prepared_store, storage_dirs
 
 
 def _write_tiff(path: Path) -> np.ndarray:
@@ -78,10 +78,10 @@ def test_tiling_stage_passes_per_image_mpp(tmp_path):
     pd.DataFrame({"image_id": ["slide-a", "slide-b"], "image_mpp": [0.5, 1.0]}).to_csv(
         tmp_path / "metadata/image_metadata.csv", index=False,
     )
-    store = cohort_store(tmp_path)
+    store = prepared_store(tmp_path)
     for image_id in ("slide-a", "slide-b"):
         store.write("thumbnail", np.full((8, 12, 3), 255, np.uint8), image_id=image_id)
-    prep_tiles(datasets=[tmp_path], size_mm=[0.004], tile_px=4)
+    prep_tiles(datasets=[tmp_path], dirs=storage_dirs(tmp_path), size_mm=[0.004], tile_px=4)
     for image_id, edge in (("slide-a", 8), ("slide-b", 4)):
         table = store.read("tile_metadata", size_mm=0.004, image_id=image_id)
         assert table.tile_width.eq(edge).all()
@@ -162,11 +162,11 @@ def test_tiling_preserves_background_masks_for_each_size(tmp_path: Path) -> None
     pd.DataFrame({"image_id": ["slide"], "image_mpp": [1.0]}).to_csv(
         tmp_path / "metadata" / "image_metadata.csv", index=False
     )
-    store = cohort_store(tmp_path)
+    store = prepared_store(tmp_path)
     store.write("thumbnail", image, image_id="slide")
     sizes = [0.004, 0.008]
 
-    prep_tiles(datasets=[tmp_path], size_mm=sizes, tile_px=4)
+    prep_tiles(datasets=[tmp_path], dirs=storage_dirs(tmp_path), size_mm=sizes, tile_px=4)
 
     paths = []
     for size in sizes:
