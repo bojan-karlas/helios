@@ -15,6 +15,7 @@ never hidden inside the pure component.
 from __future__ import annotations
 
 import logging
+import sys
 from collections.abc import Iterable, Iterator
 from typing import Any, Protocol, TypeVar
 
@@ -122,7 +123,7 @@ class Progress:
             from tqdm.auto import tqdm
         except ImportError:
             return iterable
-        return tqdm(iterable, total=total, desc=desc)
+        return tqdm(iterable, total=total, desc=desc, disable=not sys.stderr.isatty())
 
 
 def _safe_len(iterable: Iterable[object]) -> int | None:

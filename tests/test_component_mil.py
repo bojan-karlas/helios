@@ -13,6 +13,7 @@ import h5py
 import numpy as np
 import pandas as pd
 import pytest
+import torch
 
 from helios.components.mil import (
     SlideFeatureRef,
@@ -21,6 +22,7 @@ from helios.components.mil import (
     reduce_whole_image_risk,
     train_mil,
 )
+from helios.progress import Progress
 
 D = 8  # tiny embedding dim for fast tests
 
@@ -78,6 +80,57 @@ def test_train_and_infer_roundtrip(slides: list[SlideFeatureRef]) -> None:
     assert out.slide_embedding.shape == (128,)  # fixed penultimate-bottleneck width
     assert out.slide_embedding_grad.shape == (128,)
     assert 0.0 <= out.risk_score <= 1.0
+
+
+@pytest.mark.parametrize("validation", [False, True])
+def test_training_logs_phases_summaries_and_stopping(slides, monkeypatch, caplog, validation):
+    if validation:
+        monkeypatch.setattr("helios.components.mil._validation_metrics", lambda *a, **k: (0.5, 0.6))
+    with caplog.at_level("INFO", logger="helios"):
+        train_mil(
+            slides, max_epochs=3, patience=1, val_frac=0.34 if validation else 0,
+            device="cpu", progress=Progress(use_tqdm=False), fold=2,
+        )
+    text = caplog.text
+    assert "[fold=2] MIL device=cpu" in text
+    assert "[fold=2] Epoch 1/3 train" in text
+    assert "loss=" in text and "skipped=0" in text and "elapsed=" in text
+    assert "ETA to 3 epochs=estimating" in text
+    assert "training complete" in text
+    if validation:
+        assert "val_auprc=0.5000 val_auroc=0.6000" in text
+        assert "patience=1/1" in text
+        assert "early stopping; restoring best_epoch=1" in text
+        assert "training complete epochs=2/3 selected_epoch=1" in text
+    else:
+        assert "epoch=3/3 loss=" in text
+        assert "epoch budget exhausted; selected_epoch=3" in text
+
+
+def test_validation_progress_and_empty_bag_counts(slides, tmp_path, caplog):
+    from helios.components.mil import MilAttentionModel, _validation_metrics
+    from helios.progress.training import TrainingProgress
+
+    empty = _make_slide(tmp_path, "empty", n_tiles=3, n_background=3, label=0)
+    model = MilAttentionModel()
+    model.input_dim = D
+    with caplog.at_level("INFO", logger="helios"):
+        with TrainingProgress(Progress(use_tqdm=False), 1, "").display() as feedback:
+            feedback.start_epoch()
+            _validation_metrics(
+                model._build_net(), [*slides, empty], device=torch.device("cpu"), feedback=feedback,
+            )
+            assert feedback.validation_skipped == 1
+    assert "Epoch 1/1 valid 7/7 slides" in caplog.text
+    assert "skipped=1" in caplog.text
+
+
+def test_feedback_does_not_change_trained_weights(slides, caplog):
+    with caplog.at_level("INFO", logger="helios"):
+        silent = train_mil(slides, max_epochs=1, val_frac=0, device="cpu")
+        visible = train_mil(slides, max_epochs=1, val_frac=0, device="cpu", progress=Progress(use_tqdm=False))
+    for key, tensor in silent._state_dict.items():
+        np.testing.assert_array_equal(tensor.numpy(), visible._state_dict[key].numpy())
 
 
 def test_inference_reuses_network_and_refit_invalidates_it(

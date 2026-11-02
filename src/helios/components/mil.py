@@ -77,6 +77,7 @@ from sklearn.model_selection import train_test_split
 
 from helios.models.base import Model, register_model
 from helios.progress import DEFAULT_PROGRESS, Progress
+from helios.progress.training import TrainingProgress, duration
 
 
 @dataclass(frozen=True)
@@ -396,42 +397,67 @@ class MilAttentionModel(Model):
         best_state: dict[str, torch.Tensor] | None = None
         best_auprc = -1.0
         epochs_no_improve = 0
+        best_epoch = 0
+        progress.log(
+            f"{prefix}MIL device={dev} train={len(train_refs)} validation={len(val_refs)} "
+            f"max_epochs={self.max_epochs} patience={self.patience} aug_mode={self.aug_mode} "
+            f"aug_swap_prob={self.aug_swap_prob}"
+        )
+        with TrainingProgress(progress, self.max_epochs, prefix).display() as feedback:
+            for _epoch in range(self.max_epochs):
+                feedback.start_epoch()
+                net.train()
+                shuffled = [train_refs[idx] for idx in rng.permutation(len(train_refs))]
+                for ref in feedback.phase(shuffled, "train"):
+                    bag = _load_training_bag(
+                        ref, aug_swap_prob=self.aug_swap_prob, aug_mode=self.aug_mode, rng=rng
+                    )
+                    if bag.shape[0] == 0:
+                        feedback.skipped += 1
+                        continue
+                    x = torch.from_numpy(bag).to(dev)
+                    y = torch.tensor(float(ref.label), device=dev)
+                    optimizer.zero_grad()
+                    loss = net.objective(x, y, w_pos, w_neg, lambda_div=self.lambda_div)
+                    loss.backward()
+                    optimizer.step()
+                    feedback.record_loss(float(loss.detach().item()))
 
-        for _epoch in range(self.max_epochs):
-            net.train()
-            for idx in rng.permutation(len(train_refs)):
-                ref = train_refs[idx]
-                bag = _load_training_bag(
-                    ref, aug_swap_prob=self.aug_swap_prob, aug_mode=self.aug_mode, rng=rng
-                )
-                if bag.shape[0] == 0:
-                    continue
-                x = torch.from_numpy(bag).to(dev)
-                y = torch.tensor(float(ref.label), device=dev)
-                optimizer.zero_grad()
-                loss = net.objective(x, y, w_pos, w_neg, lambda_div=self.lambda_div)
-                loss.backward()
-                optimizer.step()
-
-            if val_refs:
-                auprc, auroc = _validation_metrics(net, val_refs, device=dev)
-                improved = auprc > best_auprc
-                if improved:
-                    best_auprc = auprc
-                    best_state = {k: v.detach().cpu().clone() for k, v in net.state_dict().items()}
-                    epochs_no_improve = 0
+                metrics = ""
+                if val_refs:
+                    auprc, auroc = _validation_metrics(net, val_refs, device=dev, feedback=feedback)
+                    improved = auprc > best_auprc
+                    if improved:
+                        best_auprc = auprc
+                        best_epoch = _epoch + 1
+                        best_state = {k: v.detach().cpu().clone() for k, v in net.state_dict().items()}
+                        epochs_no_improve = 0
+                    else:
+                        epochs_no_improve += 1
+                    metrics = (
+                        f" val_auprc={auprc:.4f} val_auroc={auroc:.4f}"
+                        f"{' (best)' if improved else ''} best_epoch={best_epoch} "
+                        f"best_auprc={best_auprc:.4f} patience={epochs_no_improve}/{self.patience}"
+                    )
                 else:
-                    epochs_no_improve += 1
+                    best_state = {k: v.detach().cpu().clone() for k, v in net.state_dict().items()}
+                    best_epoch = _epoch + 1
+                elapsed = feedback.finish_epoch()
                 progress.log(
                     f"{prefix}epoch={_epoch + 1}/{self.max_epochs} "
-                    f"val_auprc={auprc:.4f} val_auroc={auroc:.4f}"
-                    f"{' (best)' if improved else ''}"
+                    f"loss={feedback.mean_loss} skipped={feedback.skipped} elapsed={duration(elapsed)}"
+                    f" validation_skipped={feedback.validation_skipped}"
+                    f"{metrics} ETA to {self.max_epochs} epochs={feedback.budget_eta()}"
                 )
-                if not improved and epochs_no_improve >= self.patience:
+                if val_refs and not improved and epochs_no_improve >= self.patience:
+                    progress.log(f"{prefix}early stopping; restoring best_epoch={best_epoch}")
                     break
             else:
-                # Fold too small for an internal val split: keep the final epoch's weights.
-                best_state = {k: v.detach().cpu().clone() for k, v in net.state_dict().items()}
+                progress.log(f"{prefix}epoch budget exhausted; selected_epoch={best_epoch}")
+            progress.log(
+                f"{prefix}training complete epochs={feedback.completed}/{self.max_epochs} "
+                f"selected_epoch={best_epoch} elapsed={duration(feedback.elapsed)}"
+            )
 
         self._state_dict = best_state
         return self
@@ -698,18 +724,21 @@ def _split_train_val(
 
 
 def _validation_metrics(
-    net: _MultiBranchGatedAMIL, val_refs: list[SlideFeatureRef], *, device: torch.device
+    net: _MultiBranchGatedAMIL, val_refs: list[SlideFeatureRef], *, device: torch.device,
+    feedback: TrainingProgress | None = None,
 ) -> tuple[float, float]:
     """Validation ``(auprc, auroc)``; ``auprc`` drives early stopping, ``auroc`` is reported alongside it."""
     net.eval()
     probs: list[float] = []
     labels: list[int] = []
     with torch.no_grad():
-        for ref in val_refs:
+        for ref in feedback.phase(val_refs, "valid") if feedback is not None else val_refs:
             bag = _read_hdf5_features(ref.features_path)
             is_background, _ = _read_tile_background(ref.background_path, len(bag))
             bag = bag[~is_background]
             if bag.shape[0] == 0:
+                if feedback is not None:
+                    feedback.validation_skipped += 1
                 continue
             x = torch.from_numpy(bag).to(device)
             prob, _, _, _ = net(x)
