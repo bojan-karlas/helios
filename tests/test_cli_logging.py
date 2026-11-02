@@ -89,6 +89,19 @@ def test_bare_prep_rejects_unsaved_intermediate_artifacts(tmp_path):
     assert not (tmp_path / "out").exists()
 
 
+@pytest.mark.parametrize("flag, expected", [([], True), (["--scores-only"], True), (["--no-scores-only"], False)])
+def test_mil_scores_only_config_and_cli_precedence(tmp_path, monkeypatch, flag, expected):
+    seen = []
+    monkeypatch.setattr("helios.stages.mil.predict_mil", lambda **kwargs: seen.append(kwargs))
+    config = tmp_path / "params.yaml"
+    config.write_text("predict:\n  mil:\n    scores_only: true\n")
+    result = CliRunner().invoke(app, [
+        "predict", "mil", "--dataset", str(tmp_path / "source"), "--config", str(config), *flag,
+    ])
+    assert result.exit_code == 0, (result.exception, result.output)
+    assert seen[0]["scores_only"] is expected
+
+
 @pytest.mark.parametrize("old_option", ["--models-root", "--results-root", "--preprocessing-root", "--log-dir"])
 def test_old_options_are_not_aliases(tmp_path, old_option):
     result = CliRunner().invoke(app, [

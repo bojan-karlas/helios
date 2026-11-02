@@ -19,6 +19,7 @@ from helios.components.mil import (
     SlideFeatureRef,
     _load_training_bag,
     infer_mil,
+    infer_mil_score,
     reduce_whole_image_risk,
     train_mil,
 )
@@ -176,6 +177,35 @@ def test_background_tiles_are_excluded(tmp_path: Path, slides: list[SlideFeature
     model = train_mil(slides, max_epochs=1, val_frac=0.0, device="cpu")
     out = infer_mil(model, features_path=slide.features_path, background_path=slide.background_path)
     assert len(out.attention) == 6  # 10 tiles - 4 background
+
+
+def test_score_only_matches_attribution_without_gradients(tmp_path, slides, monkeypatch):
+    from helios.components.mil import _inference_net
+
+    model = train_mil(slides, max_epochs=1, val_frac=0, device="cpu")
+    slide = _make_slide(tmp_path, "held-out", n_tiles=10, n_background=4, label=1)
+    expected = infer_mil(
+        model, features_path=slide.features_path, background_path=slide.background_path, device="cpu",
+    ).risk_score
+    net = _inference_net(model, "cpu")
+    net.zero_grad(set_to_none=True)
+    monkeypatch.setattr(net, "forward_with_attribution", lambda *a: pytest.fail("must not compute attribution"))
+    observed = []
+    hook = net.register_forward_pre_hook(lambda *a: observed.append(torch.is_inference_mode_enabled()))
+    try:
+        actual = infer_mil_score(
+            model, features_path=slide.features_path, background_path=slide.background_path, device="cpu",
+        )
+    finally:
+        hook.remove()
+    assert actual == pytest.approx(expected, abs=1e-7)
+    assert observed == [True]
+    assert all(parameter.grad is None for parameter in net.parameters())
+    empty = _make_slide(tmp_path, "empty-score", n_tiles=3, n_background=3, label=0)
+    with pytest.raises(ValueError, match="No foreground tiles"):
+        infer_mil_score(
+            model, features_path=empty.features_path, background_path=empty.background_path, device="cpu",
+        )
 
 
 def test_aug_mode_replace_swaps_in_place(tmp_path: Path) -> None:

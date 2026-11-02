@@ -52,6 +52,7 @@ predict:
   mil:
     device: cuda
     model: virchow2
+    scores_only: false
     size_mm: 0.25
   morphology: {}
   risk:

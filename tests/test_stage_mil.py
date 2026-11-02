@@ -157,6 +157,77 @@ def test_predict_scores_each_fold_then_reduces(monkeypatch, cohort: Path) -> Non
     assert (ensemble["dataset"] == Path(cohort).name).all(), "ensemble must carry dataset provenance"
 
 
+@pytest.mark.parametrize("scores_only", [False, True])
+@pytest.mark.parametrize("cv", [False, True])
+def test_pooled_predictions_preserve_all_constituents(tmp_path, monkeypatch, scores_only, cv):
+    from helios.data.io import write
+
+    roots = [make_cohort(tmp_path / name, n_images=2, n_patients=2) for name in ("left", "right")]
+    for idx, root in enumerate(roots):
+        table = pd.read_csv(root / "metadata/image_metadata.csv")
+        table["image_id"] = [f"image-{idx}-{i}" for i in range(2)]
+        table.to_csv(root / "metadata/image_metadata.csv", index=False)
+        store = prepared_store(root)
+        for image_id in table["image_id"]:
+            store.write("tile_features", {"features": np.ones((3, 4), np.float32)},
+                        size_mm=0.25, model="virchow2", image_id=image_id)
+    cohort_file = tmp_path / "pooled.yaml"
+    cohort_file.write_text("name: pooled\ndatasets:\n  - left\n  - right\n" + ("splits: splits.csv\n" if cv else ""))
+    ids = [f"image-{i}-{j}" for i in range(2) for j in range(2)]
+    if cv:
+        write(pd.DataFrame([
+            {"image_id": image_id, "fold": fold, "split": "test" if j % 2 == fold else "train"}
+            for fold in (0, 1) for j, image_id in enumerate(ids)
+        ]), tmp_path / "splits.csv", "csv")
+    dirs = StorageDirs(
+        output_dir=tmp_path / "output", models_dir=tmp_path / "output/models",
+        results_dir=tmp_path / "output/results",
+    )
+    store = cohort_store(resolve_datasets([cohort_file])[0], dirs)
+    for fold in (0, 1):
+        store.write("model_mil", {"fold": fold}, fold=fold)
+    calls = []
+
+    def score(model, **kwargs):
+        calls.append(kwargs["features_path"])
+        return 0.2 + 0.4 * model["fold"]
+
+    def full(model, **kwargs):
+        return MilSlideOutputs(
+            patch_embeddings=np.ones((3, 4), np.float32), attention=pd.DataFrame({"tile_id": [0, 1, 2]}),
+            slide_embedding=np.ones(4, np.float32), slide_embedding_grad=np.zeros(4, np.float32),
+            risk_score=score(model, **kwargs),
+        )
+
+    monkeypatch.setattr(mil, "infer_mil", full)
+    monkeypatch.setattr(mil, "infer_mil_score", score, raising=False)
+    mil.predict_mil(datasets=[cohort_file], dirs=dirs, scores_only=scores_only)
+    assert len(calls) == 8
+    for fold in (0, 1):
+        scores = store.read("whole_image_risk_score", fold=fold)
+        assert set(scores["image_id"]) == set(ids)
+        assert len(scores) == 4
+        for image_id in ids:
+            for artifact in (
+                "aligned_patch_embeddings", "patch_attention",
+                "aligned_slide_embedding", "aligned_slide_embedding_grad",
+            ):
+                assert store.output_exists(artifact, fold=fold, image_id=image_id) is not scores_only
+    ensemble = store.read("whole_image_risk_score_ensemble")
+    assert set(ensemble["image_id"]) == set(ids)
+    np.testing.assert_allclose(ensemble["risk_score"], [0.2, 0.6, 0.2, 0.6] if cv else [0.4] * 4)
+    assert set(ensemble["dataset"]) == {"left", "right"}
+    mil.predict_mil(datasets=[cohort_file], dirs=dirs, scores_only=scores_only)
+    assert len(calls) == 8
+    mil.predict_mil(datasets=[cohort_file], dirs=dirs, scores_only=scores_only, image_ids=[ids[0]], overwrite=True)
+    assert len(calls) == 10
+    assert set(store.read("whole_image_risk_score_ensemble")["image_id"]) == set(ids)
+    if scores_only:
+        mil.predict_mil(datasets=[cohort_file], dirs=dirs)
+        assert len(calls) == 18
+        assert store.output_exists("aligned_slide_embedding", fold=0, image_id=ids[0])
+
+
 def test_union_extract_fit_predict_and_downstream_fit_use_split_roots(monkeypatch, tmp_path: Path) -> None:
     datasets = []
     originals = {}

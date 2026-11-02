@@ -446,6 +446,10 @@ helios predict mil --dataset /data/COHORT1 \
   --models-dir /runs/exp1/models --output-dir /runs/deployment
 ```
 
+For probabilities without embeddings, attention, or gradients, use
+`helios predict mil --scores-only` (or `predict.mil.scores_only: true` in a config).
+Per-fold scores and OOF/ensemble reduction are unchanged.
+
 Saved logs contain `run.log`, `status.json`, `events.jsonl`, and worker logs.
 They never default to a dataset directory or depend on dataset ordering.
 `--run-tag` appends an optional kebab-case suffix to `<run_id>`.

@@ -14,7 +14,7 @@ from typing import Any, Literal
 import pandas as pd
 
 from helios.components.features import FEATURE_MODELS
-from helios.components.mil import SlideFeatureRef, infer_mil, reduce_whole_image_risk, train_mil
+from helios.components.mil import SlideFeatureRef, infer_mil, infer_mil_score, reduce_whole_image_risk, train_mil
 from helios.data.augmentation import Augmentation, select_augmentations, validate_feature_alignment
 from helios.data.bundle import MANIFEST_NAME, load_bundle
 from helios.data.cohort import ResolvedDataset
@@ -53,6 +53,7 @@ DEFAULT_PATIENCE: int = 5
 DEFAULT_VAL_FRAC: float = 0.15
 DEFAULT_SEED: int = 42
 DEFAULT_DEVICE: str = "cuda"
+DEFAULT_SCORES_ONLY: bool = False
 
 
 def fit_mil(
@@ -206,49 +207,76 @@ def predict_mil(
     size_mm: float = DEFAULT_SIZE_MM,
     model: str = DEFAULT_MODEL,
     device: str = DEFAULT_DEVICE,
+    scores_only: bool = DEFAULT_SCORES_ONLY,
     image_ids: list[str] | None = None,
     overwrite: bool = False,
     progress: Progress = DEFAULT_PROGRESS,
 ) -> None:
     """Score every image with each fold's A-MIL model, then reduce whole-image risk.
 
-    GRAIN CONTRACT: per (dataset, fold, image) inference, then a per-dataset
+    GRAIN CONTRACT: per (dataset, fold, image) inference, then a per-cohort
     reduce of the K whole-image scores to ``whole_image_risk_score_ensemble``.
-    Folds are enumerated from the saved ``model_mil`` bundles.
+    Folds are enumerated from the saved ``model_mil`` bundles. Score-only mode
+    skips attribution and saves only per-fold and reduced probabilities.
     """
     resolved = resolve_datasets(
         datasets, dirs=dirs, produces=("results",), progress=progress, parallel=parallel, shared_outputs=True,
     )
 
+    groups: dict[tuple[str, Path | None], list[ResolvedDataset]] = {}
     for ds in resolved:
-        store = cohort_store(ds, dirs)
-        ids = select_image_ids(ds, store, image_ids)
-        cohort_ids = select_image_ids(ds, store, None)
-        folds = model_folds(store, "model_mil")
+        destination = cohort_store(ds, dirs).output_path("whole_image_risk_score_ensemble")
+        groups.setdefault((ds.logical_name, destination), []).append(ds)
+
+    for constituents in groups.values():
+        stores = [cohort_store(ds, dirs) for ds in constituents]
+        out = stores[0]
+        folds = model_folds(out, "model_mil")
         if not folds:
-            raise FileNotFoundError(f"No model_mil bundle found under {ds.name}.")
+            raise FileNotFoundError(f"No model_mil bundle found under {constituents[0].name}.")
+        if any(model_folds(store, "model_mil") != folds for store in stores[1:]):
+            raise ValueError("Pooled MIL prediction requires the same model folds for every constituent.")
+        split_tables = [read_splits(ds, dirs, progress=progress) for ds in constituents]
+        if any(table is None for table in split_tables) and any(table is not None for table in split_tables):
+            raise ValueError("Pooled MIL prediction cannot mix CV and ensemble-only constituents.")
+        splits = (
+            pd.concat([table for table in split_tables if table is not None], ignore_index=True).drop_duplicates()
+            if split_tables[0] is not None else None
+        )
 
         per_fold_scores: list[pd.DataFrame] = []
         for fold in folds:
-            run_work_units(
-                ids,
-                partial(_predict_slide, store=store, fold=fold, size_mm=size_mm, model=model,
-                        device=device, overwrite=overwrite),
-                stage=f"mil infer fold={fold} {ds.name}", progress=progress, parallel=parallel,
-                num_gpus=gpu_reservation(device, parallel), persistent_workers=True,
-            )
-            # Reduce over the whole cohort so a partial re-run never shrinks the table.
-            scores = store.read_parts("whole_image_risk_score", cohort_ids, fold=fold)
+            pieces: list[pd.DataFrame] = []
+            for ds, store in zip(constituents, stores, strict=True):
+                cohort_ids = select_image_ids(ds, store, None)
+                ids = (
+                    cohort_ids if image_ids is None
+                    else [image_id for image_id in cohort_ids if image_id in image_ids]
+                )
+                run_work_units(
+                    ids,
+                    partial(_predict_slide, store=store, fold=fold, size_mm=size_mm, model=model,
+                            device=device, overwrite=overwrite, scores_only=scores_only),
+                    stage=f"mil infer fold={fold} {ds.name}", progress=progress, parallel=parallel,
+                    num_gpus=gpu_reservation(device, parallel), persistent_workers=True,
+                )
+                # Include completed parts outside image_ids so partial reruns preserve the cohort.
+                pieces.append(store.read_parts("whole_image_risk_score", cohort_ids, fold=fold))
+            scores = pd.concat(pieces, ignore_index=True)
             if not scores.empty:
-                store.write("whole_image_risk_score", scores, fold=fold)
+                out.write("whole_image_risk_score", scores, fold=fold)
                 per_fold_scores.append(scores)
 
         ensemble = reduce_whole_image_risk(
             pd.concat(per_fold_scores, ignore_index=True) if per_fold_scores else pd.DataFrame(),
-            read_splits(ds, dirs, progress=progress),
+            splits,
         )
-        store.write("whole_image_risk_score_ensemble", tag_dataset(ensemble, ds.name))
-        progress.log(f"computed whole_image_risk_score_ensemble {ds.name}")
+        tagged = [
+            tag_dataset(ensemble[ensemble["image_id"].isin(select_image_ids(ds, store, None))], ds.name)
+            for ds, store in zip(constituents, stores, strict=True)
+        ]
+        out.write("whole_image_risk_score_ensemble", pd.concat(tagged, ignore_index=True))
+        progress.log(f"computed whole_image_risk_score_ensemble {constituents[0].logical_name}")
 
 
 @lru_cache(maxsize=1)
@@ -264,19 +292,30 @@ def _load_inference_bundle(path: Path) -> Any:
 def _predict_slide(
     image_id: str, ctx: WorkContext, *, store: ArtifactStore, fold: int | None,
     size_mm: float, model: str, device: str, overwrite: bool,
+    scores_only: bool = DEFAULT_SCORES_ONLY,
 ) -> str:
-    complete = (
+    complete = store.part_exists("whole_image_risk_score", image_id, fold=fold) and (scores_only or (
         store.output_exists("aligned_patch_embeddings", fold=fold, image_id=image_id)
         and store.output_exists("patch_attention", fold=fold, image_id=image_id)
         and store.output_exists("aligned_slide_embedding", fold=fold, image_id=image_id)
         and store.output_exists("aligned_slide_embedding_grad", fold=fold, image_id=image_id)
-        and store.part_exists("whole_image_risk_score", image_id, fold=fold)
-    )
+    ))
     if not overwrite and complete:
         return "skipped"
     mil_model = _load_inference_bundle(store.path("model_mil", fold=fold))
     features_path = store.path("tile_features", size_mm=size_mm, model=model, image_id=image_id)
     _validate_feature_count(store, features_path, size_mm=size_mm, image_id=image_id)
+    if scores_only:
+        probability = infer_mil_score(
+            mil_model, features_path=features_path,
+            background_path=store.path("tile_background", size_mm=size_mm, image_id=image_id),
+            device=device,
+        )
+        store.write_part(
+            "whole_image_risk_score", image_id,
+            [{"image_id": image_id, "risk_score": probability, "fold": fold}], fold=fold,
+        )
+        return "completed"
     out = infer_mil(
         mil_model,
         features_path=features_path,

@@ -462,6 +462,15 @@ class MilAttentionModel(Model):
         self._state_dict = best_state
         return self
 
+    def predict_score(self, inputs: NDArray[np.float32], *, device: str | None = None) -> float:
+        """Return the slide probability without attribution or gradient tracking."""
+        dev = torch.device(_resolve_device(device or self.device))
+        net = _inference_net(self, str(dev))
+        with torch.inference_mode():
+            x = torch.from_numpy(np.asarray(inputs, dtype=np.float32)).to(dev)
+            probability, _, _, _ = net(x)
+            return float(probability.item())
+
     def predict(
         self, inputs: NDArray[np.float32], *, device: str | None = None
     ) -> tuple[
@@ -553,6 +562,20 @@ def train_mil(
         device=device,
     )
     return model.fit(slides, progress=progress, fold_label=fold)
+
+
+def infer_mil_score(
+    model: MilAttentionModel,
+    *,
+    features_path: Path,
+    background_path: Path | None = None,
+    device: str = "cuda",
+) -> float:
+    """Score one foreground tile bag without generating attribution artifacts."""
+    feats, _ = _load_inference_bag(features_path, background_path)
+    if feats.shape[0] == 0:
+        raise ValueError(f"No foreground tiles found for {features_path}.")
+    return model.predict_score(feats, device=device)
 
 
 def infer_mil(

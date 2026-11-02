@@ -53,6 +53,10 @@ def mil(
     size_mm: float | None = typer.Option(None, "--size-mm", help="Tile resolution to score on."),
     model: str | None = typer.Option(None, "--model", help="Foundation model providing tile features."),
     device: str | None = typer.Option(None, "--device", help="Torch device (cuda, cpu)."),
+    scores_only: bool | None = typer.Option(
+        None, "--scores-only/--no-scores-only",
+        help="Save probabilities only; skip embeddings, attention, and gradients.",
+    ),
     filter: str | None = _FILTER,
     config: Path | None = _CONFIG,
     overwrite: bool = _OVERWRITE,
@@ -73,7 +77,7 @@ def mil(
         logs_dir=logs_dir,
         run_tag=run_tag, output_dir=output_dir,
     )
-    overrides = {"size_mm": size_mm, "model": model, "device": device}
+    overrides = {"size_mm": size_mm, "model": model, "device": device, "scores_only": scores_only}
     params = load_stage_params("predict", "mil", config_path=config, overrides=overrides)
     predict_mil(
         datasets=invocation.datasets, dirs=invocation.dirs, parallel=invocation.parallel, overwrite=overwrite,

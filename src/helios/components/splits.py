@@ -124,7 +124,7 @@ def generate_splits(
 
 
 def _composite_key(image_metadata: pd.DataFrame, columns: list[str]) -> np.ndarray:
-    return image_metadata[columns].astype(str).agg("_".join, axis=1).to_numpy()
+    return image_metadata[columns].map(str).agg("_".join, axis=1).to_numpy()
 
 
 def _carve_val(
