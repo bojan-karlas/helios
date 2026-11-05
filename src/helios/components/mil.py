@@ -60,7 +60,7 @@ scripts, were resolved as follows:
 from __future__ import annotations
 
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
@@ -338,9 +338,11 @@ class MilAttentionModel(Model):
         val_frac: float = 0.15,
         seed: int = 42,
         aug_swap_prob: float = 0.5,
-        aug_mode: Literal["replace", "augment"] = "replace",
+        aug_mode: Literal["replace", "augment", "separate"] = "replace",
         device: str = "cuda",
     ) -> None:
+        if aug_mode not in ("replace", "augment", "separate"):
+            raise ValueError(f"Unknown MIL augmentation mode: {aug_mode!r}.")
         self.n_branches = n_branches
         self.num_heads = num_heads
         self.dropout_rate = dropout_rate
@@ -384,6 +386,13 @@ class MilAttentionModel(Model):
         dev = torch.device(_resolve_device(self.device))
 
         train_refs, val_refs = _split_train_val(slides, val_frac=self.val_frac, seed=self.seed)
+        n_train_slides = len(train_refs)
+        if self.aug_mode == "separate":
+            train_refs = [
+                replace(ref, features_path=path, aug_features_paths=())
+                for ref in train_refs
+                for path in (ref.features_path, *ref.aug_features_paths)
+            ]
         self.input_dim = _peek_feature_dim(train_refs[0].features_path)
 
         net = self._build_net().to(dev)
@@ -400,6 +409,7 @@ class MilAttentionModel(Model):
         best_epoch = 0
         progress.log(
             f"{prefix}MIL device={dev} train={len(train_refs)} validation={len(val_refs)} "
+            f"train_slides={n_train_slides} "
             f"max_epochs={self.max_epochs} patience={self.patience} aug_mode={self.aug_mode} "
             f"aug_swap_prob={self.aug_swap_prob}"
         )
@@ -514,7 +524,7 @@ def train_mil(
     slides: list[SlideFeatureRef],
     *,
     aug_swap_prob: float = 0.5,
-    aug_mode: Literal["replace", "augment"] = "replace",
+    aug_mode: Literal["replace", "augment", "separate"] = "replace",
     n_branches: int = 4,
     num_heads: int = 4,
     dropout_rate: float = 0.1,
@@ -538,7 +548,10 @@ def train_mil(
     (default), each tile swaps with probability ``aug_swap_prob``, choosing
     uniformly among the attached augmentations. With ``aug_mode="augment"``,
     originals are retained and each augmentation independently appends tile
-    embeddings with probability ``aug_swap_prob``.
+    embeddings with probability ``aug_swap_prob``. With ``aug_mode="separate"``,
+    every original and each augmentation is a separate, independently shuffled
+    training bag; ``aug_swap_prob`` is not used. Expansion happens after the
+    train/validation split, and validation uses originals only.
 
     Early stopping monitors AUPRC on an internal ``val_frac`` split carved out
     of ``slides`` (this fold's CV test slides are never visible here -- they are
@@ -689,7 +702,7 @@ def _load_training_bag(
     ref: SlideFeatureRef,
     *,
     aug_swap_prob: float,
-    aug_mode: Literal["replace", "augment"],
+    aug_mode: Literal["replace", "augment", "separate"],
     rng: np.random.Generator,
 ) -> NDArray[np.float32]:
     feats = _read_hdf5_features(ref.features_path)
@@ -698,6 +711,8 @@ def _load_training_bag(
     feats = feats[foreground]
 
     aug_paths = ref.aug_features_paths
+    if aug_mode == "separate" and aug_paths:
+        raise ValueError("Separate-bag training references must be expanded before loading.")
     if aug_paths and aug_swap_prob > 0 and feats.shape[0] > 0:
         aug_stacks = [_read_hdf5_features(p)[foreground] for p in aug_paths]
         if aug_mode == "replace":

@@ -41,7 +41,7 @@ DEFAULT_SIZE_MM: float = 0.25
 DEFAULT_MODEL: str = "virchow2"
 DEFAULT_TARGET: str = "disease_pfs_recurred_5yfu"
 DEFAULT_AUG_SWAP_PROB: float = 0.5
-DEFAULT_AUG_MODE: Literal["replace", "augment"] = "replace"
+DEFAULT_AUG_MODE: Literal["replace", "augment", "separate"] = "replace"
 DEFAULT_N_BRANCHES: int = 4
 DEFAULT_NUM_HEADS: int = 4
 DEFAULT_DROPOUT_RATE: float = 0.1
@@ -66,7 +66,7 @@ def fit_mil(
     target: str = DEFAULT_TARGET,
     augmentations: list[str] | None = None,
     aug_swap_prob: float = DEFAULT_AUG_SWAP_PROB,
-    aug_mode: Literal["replace", "augment"] = DEFAULT_AUG_MODE,
+    aug_mode: Literal["replace", "augment", "separate"] = DEFAULT_AUG_MODE,
     n_branches: int = DEFAULT_N_BRANCHES,
     num_heads: int = DEFAULT_NUM_HEADS,
     dropout_rate: float = DEFAULT_DROPOUT_RATE,

@@ -450,6 +450,12 @@ For probabilities without embeddings, attention, or gradients, use
 `helios predict mil --scores-only` (or `predict.mil.scores_only: true` in a config).
 Per-fold scores and OOF/ensemble reduction are unchanged.
 
+For separate original and augmented slide examples, use `helios fit mil --aug-mode separate`.
+Each original and each selected augmentation contributes one independently shuffled bag
+per epoch, after the train/validation split. Validation and inference use originals only.
+This mode ignores `--aug-swap-prob`; `replace` and `augment` retain their existing
+tile-replacement and within-bag concatenation behavior.
+
 Saved logs contain `run.log`, `status.json`, `events.jsonl`, and worker logs.
 They never default to a dataset directory or depend on dataset ordering.
 `--run-tag` appends an optional kebab-case suffix to `<run_id>`.

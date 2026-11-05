@@ -66,7 +66,9 @@ def mil(
         None, "--aug-swap-prob", help="Per-tile probability of swapping in the stain-augmented embedding."
     ),
     aug_mode: str | None = typer.Option(
-        None, "--aug-mode", help="'replace' swaps a tile's embedding in place; 'augment' appends it to the bag."
+        None, "--aug-mode",
+        help="'replace' swaps tiles; 'augment' appends tiles; 'separate' trains original and augmented bags separately "
+        "(ignores --aug-swap-prob).",
     ),
     n_branches: int | None = typer.Option(None, "--n-branches", help="Number of gated-attention branches (K)."),
     num_heads: int | None = typer.Option(None, "--num-heads", help="Attention heads per branch."),

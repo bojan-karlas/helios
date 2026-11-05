@@ -102,6 +102,19 @@ def test_mil_scores_only_config_and_cli_precedence(tmp_path, monkeypatch, flag, 
     assert seen[0]["scores_only"] is expected
 
 
+def test_mil_separate_bags_config_and_cli(tmp_path, monkeypatch):
+    seen = []
+    monkeypatch.setattr("helios.stages.mil.fit_mil", lambda **kwargs: seen.append(kwargs))
+    config = tmp_path / "params.yaml"
+    config.write_text("fit:\n  mil:\n    aug_mode: separate\n")
+    for flags in ([], ["--aug-mode", "separate"]):
+        result = CliRunner().invoke(app, [
+            "fit", "mil", "--dataset", str(tmp_path / "source"), "--config", str(config), *flags,
+        ])
+        assert result.exit_code == 0, (result.exception, result.output)
+        assert seen[-1]["aug_mode"] == "separate"
+
+
 @pytest.mark.parametrize("old_option", ["--models-root", "--results-root", "--preprocessing-root", "--log-dir"])
 def test_old_options_are_not_aliases(tmp_path, old_option):
     result = CliRunner().invoke(app, [
