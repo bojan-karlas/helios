@@ -16,7 +16,7 @@ from helios.data.cohort import ResolvedDataset
 from helios.data.resolver import StorageDirs
 from helios.stages import concept as concept_stage
 from helios.stages import mil
-from helios.stages._runtime import cohort_store, resolve_datasets
+from helios.stages._runtime import cohort_store, heldout_ids, read_splits, resolve_datasets, train_ids
 from helios.stages.tile_features import prep_tile_features
 from tests.fixtures import make_cohort, prepared_store, storage_dirs
 
@@ -298,3 +298,117 @@ def test_union_extract_fit_predict_and_downstream_fit_use_split_roots(monkeypatc
         assert not (ds.root / "models").exists()
         assert not (ds.root / "preprocessing").exists()
         assert not (ds.root / "results").exists()
+
+
+def _flat_folds(tmp_path: Path, image_ids: list[str], folds: list[int]) -> StorageDirs:
+    path = tmp_path / "folds.csv"
+    pd.DataFrame({"image_id": image_ids, "fold": folds, "ignored": "x"}).to_csv(path, index=False)
+    return StorageDirs(splits_file=path, models_dir=tmp_path / "models")
+
+
+def _set_labels(root: Path, labels: list[int]) -> None:
+    path = root / "metadata" / "image_metadata.csv"
+    metadata = pd.read_csv(path)
+    metadata[mil.DEFAULT_TARGET] = labels
+    metadata.to_csv(path, index=False)
+
+
+def test_flat_fold_file_reads_fold_as_the_test_fold(cohort: Path, tmp_path: Path) -> None:
+    dirs = _flat_folds(tmp_path, IMAGE_IDS, [0, 0, 1, 1])
+    ds = resolve_datasets([str(cohort)], dirs=dirs)[0]
+    assert sorted(train_ids(ds, 0, dirs=dirs)) == IMAGE_IDS[2:]
+    assert sorted(heldout_ids(ds, 0, dirs=dirs)) == IMAGE_IDS[:2]
+    long = read_splits(ds, dirs)
+    assert list(long.columns) == ["image_id", "fold", "split"]
+    assert len(long) == 2 * len(IMAGE_IDS)
+
+
+def test_flat_fold_file_rejects_an_image_in_two_folds(cohort: Path, tmp_path: Path) -> None:
+    dirs = _flat_folds(tmp_path, [IMAGE_IDS[0], IMAGE_IDS[0]], [0, 1])
+    ds = resolve_datasets([str(cohort)], dirs=dirs)[0]
+    with pytest.raises(ValueError, match="more than once"):
+        read_splits(ds, dirs)
+
+
+def test_fit_test_fold_validates_on_the_folds_test_slides(monkeypatch, cohort: Path, tmp_path: Path) -> None:
+    _set_labels(cohort, [0, 1, 0, 1])
+    seen = {}
+
+    def fake_train(slides, **kwargs):
+        seen[kwargs["fold"]] = (
+            sorted(s.image_id for s in slides), sorted(s.image_id for s in kwargs["val_slides"]), kwargs["val_frac"],
+        )
+        return {}
+
+    monkeypatch.setattr(mil, "train_mil", fake_train)
+    dirs = _flat_folds(tmp_path, IMAGE_IDS, [0, 0, 1, 1])
+    mil.fit_mil(datasets=[str(cohort)], dirs=dirs, val_source="test_fold")
+    assert seen == {
+        0: (IMAGE_IDS[2:], IMAGE_IDS[:2], 0.0),
+        1: (IMAGE_IDS[:2], IMAGE_IDS[2:], 0.0),
+    }
+
+
+def test_fit_default_gives_no_validation_slides(monkeypatch, cohort: Path) -> None:
+    _set_labels(cohort, [0, 1, 0, 1])
+    seen = []
+
+    def fake_train(slides, **kwargs):
+        seen.append(kwargs["val_slides"])
+        return {}
+
+    monkeypatch.setattr(mil, "train_mil", fake_train)
+    mil.fit_mil(datasets=[str(cohort)], dirs=StorageDirs(models_dir=cohort / "models"))
+    assert seen == [None, None]
+
+
+def test_fit_test_fold_requires_folds(cohort: Path, tmp_path: Path) -> None:
+    _set_labels(cohort, [0, 1, 0, 1])
+    (cohort / "preprocessing" / "splits.csv").unlink()
+    with pytest.raises(ValueError, match="requires a fold assignment"):
+        mil.fit_mil(datasets=[str(cohort)], dirs=StorageDirs(models_dir=tmp_path / "m"), val_source="test_fold")
+
+
+def test_fit_test_fold_needs_both_classes_in_each_test_fold(cohort: Path, tmp_path: Path) -> None:
+    _set_labels(cohort, [0, 0, 1, 1])
+    dirs = _flat_folds(tmp_path, IMAGE_IDS, [0, 0, 1, 1])
+    with pytest.raises(ValueError, match="needs both classes"):
+        mil.fit_mil(datasets=[str(cohort)], dirs=dirs, val_source="test_fold")
+
+
+@pytest.mark.parametrize(
+    ("rows", "message"),
+    [
+        (
+            [(IMAGE_IDS[0], 0, "train"), (IMAGE_IDS[0], 0, "test"), (IMAGE_IDS[1], 0, "test"),
+             (IMAGE_IDS[2], 0, "train")],
+            "both train and test",
+        ),
+        (
+            [(IMAGE_IDS[0], 0, "test"), (IMAGE_IDS[1], 0, "test"), (IMAGE_IDS[2], 0, "train"),
+             (IMAGE_IDS[3], 0, "train")],
+            "not held out in exactly one fold",
+        ),
+    ],
+)
+def test_fit_test_fold_rejects_inconsistent_folds(cohort: Path, tmp_path: Path, rows, message) -> None:
+    _set_labels(cohort, [0, 1, 0, 1])
+    path = tmp_path / "long.csv"
+    pd.DataFrame(rows, columns=["image_id", "fold", "split"]).to_csv(path, index=False)
+    dirs = StorageDirs(splits_file=path, models_dir=tmp_path / "models")
+    with pytest.raises(ValueError, match=message):
+        mil.fit_mil(datasets=[str(cohort)], dirs=dirs, val_source="test_fold")
+
+
+def test_fit_val_aug_mode_separate_requires_an_augmentation(cohort: Path, tmp_path: Path) -> None:
+    _set_labels(cohort, [0, 1, 0, 1])
+    with pytest.raises(ValueError, match="requires an augmentation"):
+        mil.fit_mil(datasets=[str(cohort)], dirs=StorageDirs(models_dir=tmp_path / "m"), val_aug_mode="separate")
+
+
+def test_fit_rejects_unknown_validation_modes(cohort: Path, tmp_path: Path) -> None:
+    dirs = StorageDirs(models_dir=tmp_path / "m")
+    with pytest.raises(ValueError, match="Unknown val_source"):
+        mil.fit_mil(datasets=[str(cohort)], dirs=dirs, val_source="test")
+    with pytest.raises(ValueError, match="Unknown val_aug_mode"):
+        mil.fit_mil(datasets=[str(cohort)], dirs=dirs, val_aug_mode="both")

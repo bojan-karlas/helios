@@ -82,7 +82,7 @@ OUTPUT_DIR = typer.Option(None, "--output-dir", help="Save defaults: DIR/models,
 PREPROCESSING_DIR = typer.Option(None, "--preprocessing-dir", help="Read/write preprocessing directory.")
 MODELS_DIR = typer.Option(None, "--models-dir", help="Read/write model directory; overrides output default.")
 RESULTS_DIR = typer.Option(None, "--results-dir", help="Results base; artifacts are grouped by cohort name.")
-SPLITS_FILE = typer.Option(None, "--splits-file", help="Explicit cross-validation splits CSV path.")
+SPLITS_FILE = typer.Option(None, "--splits-file", help="Explicit cross-validation splits CSV path: image_id, fold, split, or image_id and test fold.")
 LOGS_DIR = typer.Option(None, "--logs-dir", help="Base directory for run logs (<logs_dir>/<run_id>/).")
 RUN_TAG = typer.Option(None, "--run-tag", help="Optional tag appended to <run_id> in ASCII kebab-case.")
 RAY_ADDRESS = typer.Option(None, "--ray-address", help="Attach to an existing Ray cluster (enables parallelism).")

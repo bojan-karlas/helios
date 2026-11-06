@@ -28,6 +28,7 @@ from helios.stages._runtime import (
     build_bundle_metadata,
     cohort_store,
     folds_across,
+    heldout_ids,
     model_folds,
     read_splits,
     resolve_datasets,
@@ -51,6 +52,8 @@ DEFAULT_WEIGHT_DECAY: float = 1e-4
 DEFAULT_MAX_EPOCHS: int = 20
 DEFAULT_PATIENCE: int = 5
 DEFAULT_VAL_FRAC: float = 0.15
+DEFAULT_VAL_SOURCE: Literal["internal", "test_fold"] = "internal"
+DEFAULT_VAL_AUG_MODE: Literal["originals", "separate"] = "originals"
 DEFAULT_SEED: int = 42
 DEFAULT_DEVICE: str = "cuda"
 DEFAULT_SCORES_ONLY: bool = False
@@ -76,6 +79,8 @@ def fit_mil(
     max_epochs: int = DEFAULT_MAX_EPOCHS,
     patience: int = DEFAULT_PATIENCE,
     val_frac: float = DEFAULT_VAL_FRAC,
+    val_source: Literal["internal", "test_fold"] = DEFAULT_VAL_SOURCE,
+    val_aug_mode: Literal["originals", "separate"] = DEFAULT_VAL_AUG_MODE,
     seed: int = DEFAULT_SEED,
     device: str = DEFAULT_DEVICE,
     overwrite: bool = False,
@@ -87,9 +92,21 @@ def fit_mil(
     across every ``--dataset``; tile features are referenced by path (streamed
     lazily by the component). Writes ``model_mil`` keyed by fold. Each cohort's
     ``where`` filter optionally restricts training to a metadata subpopulation.
+
+    ``val_source`` selects the slides that choose the best epoch: ``"internal"``
+    carves ``val_frac`` out of the fold's train slides, ``"test_fold"`` trains on
+    all of them and uses the fold's test slides. The latter requires a consistent
+    fold assignment (see :func:`_check_test_fold_assignment`) and makes out-of-fold
+    scores optimistic, because the test slides also choose the saved epoch.
+    ``val_aug_mode="separate"`` also scores each validation slide's augmentations as
+    separate bags, and requires an augmentation on every cohort.
     """
     if model not in FEATURE_MODELS:
         raise ValueError(f"Unknown feature model {model!r}. Available: {list(FEATURE_MODELS)}.")
+    if val_source not in ("internal", "test_fold"):
+        raise ValueError(f"Unknown val_source {val_source!r}. Available: ['internal', 'test_fold'].")
+    if val_aug_mode not in ("originals", "separate"):
+        raise ValueError(f"Unknown val_aug_mode {val_aug_mode!r}. Available: ['originals', 'separate'].")
 
     resolved = select_augmentations(
         resolve_datasets(datasets, dirs=dirs, produces=("models",), progress=progress), augmentations,
@@ -98,65 +115,35 @@ def fit_mil(
     out = stores[0]
     folds = folds_across(resolved, dirs)
 
+    for ds in resolved:
+        if val_aug_mode == "separate" and not ds.augmentations:
+            raise ValueError(f"val_aug_mode='separate' requires an augmentation, but {ds.name} has none selected.")
+    for ds in resolved:
+        if target not in ds.dataset().image_metadata:
+            raise ValueError(f"Missing MIL target column {target!r} in {ds.root}.")
+    if val_source == "test_fold":
+        _check_test_fold_assignment(resolved, folds, target=target, dirs=dirs)
+
     slides_by_fold: dict[int | None, list[SlideFeatureRef]] = {}
+    val_slides_by_fold: dict[int | None, list[SlideFeatureRef]] = {}
     validated: set[tuple[Path, Path]] = set()
     for fold in folds:
         if not overwrite and out.output_exists("model_mil", fold=fold):
             progress.log(f"skip model_mil fold={fold} (exists)")
             continue
         slides: list[SlideFeatureRef] = []
+        val_slides: list[SlideFeatureRef] = []
         for ds, store in zip(resolved, stores, strict=True):
-            labels = ds.dataset().image_metadata.set_index("image_id")
-            if target not in labels:
-                raise ValueError(f"Missing MIL target column {target!r} in {ds.root}.")
-            selected = train_ids(ds, fold, where=ds.where, dirs=dirs)
-            missing = labels.loc[selected, target].isna()
-            if missing.any():
-                progress.log(
-                    f"excluding {int(missing.sum())} unlabeled training images "
-                    f"dataset={ds.name} fold={fold} target={target}"
-                )
-            aug_stores = [Augmentation.load(path).store() for path in ds.augmentations]
-            for image_id in selected:
-                if missing.loc[image_id]:
-                    continue
-                label = _label(labels, image_id, target)
-                aug_paths = tuple(
-                    aug_store.path(
-                        "tile_augmentation_features",
-                        size_mm=size_mm,
-                        model=model,
-                        image_id=image_id,
-                    )
-                    for aug_store in aug_stores
-                )
-                feat_path = store.path(
-                    "tile_features", size_mm=size_mm, model=model, image_id=image_id
-                )
-                if not feat_path.exists():
-                    raise FileNotFoundError(
-                        f"Missing tile_features for training slide {image_id!r} in {ds.name}: {feat_path}"
-                    )
-                _validate_feature_count(store, feat_path, size_mm=size_mm, image_id=image_id)
-                for ap in aug_paths:
-                    if not ap.exists():
-                        raise FileNotFoundError(
-                            f"Missing tile_augmentation_features for training slide {image_id!r} in {ds.name}: {ap}"
-                        )
-                    pair = (feat_path, ap)
-                    if pair not in validated:
-                        validate_feature_alignment(feat_path, ap)
-                        validated.add(pair)
-                slides.append(
-                    SlideFeatureRef(
-                        image_id=image_id,
-                        features_path=feat_path,
-                        background_path=store.path("tile_background", size_mm=size_mm, image_id=image_id),
-                        aug_features_paths=aug_paths,
-                        label=label,
-                    )
-                )
+            collect = partial(
+                _slide_refs, ds, store, fold=fold, target=target, size_mm=size_mm, model=model,
+                validated=validated, progress=progress,
+            )
+            slides.extend(collect(train_ids(ds, fold, where=ds.where, dirs=dirs), role="training"))
+            if val_source == "test_fold":
+                val_slides.extend(collect(heldout_ids(ds, fold, where=ds.where, dirs=dirs), role="test-fold"))
         slides_by_fold[fold] = slides
+        if val_source == "test_fold":
+            val_slides_by_fold[fold] = val_slides
     params = {
         "size_mm": size_mm,
         "model": model,
@@ -172,27 +159,137 @@ def fit_mil(
         "weight_decay": weight_decay,
         "max_epochs": max_epochs,
         "patience": patience,
-        "val_frac": val_frac,
+        "val_frac": 0.0 if val_source == "test_fold" else val_frac,
+        "val_source": val_source,
+        "val_aug_mode": val_aug_mode,
         "seed": seed,
         "device": device,
     }
     run_work_units(
         list(slides_by_fold),
-        partial(_fit_fold, slides_by_fold=slides_by_fold, out=out, params=params, resolved=resolved, dirs=dirs),
+        partial(
+            _fit_fold, slides_by_fold=slides_by_fold, val_slides_by_fold=val_slides_by_fold, out=out, params=params,
+            resolved=resolved, dirs=dirs,
+        ),
         stage="fit mil", progress=progress, parallel=parallel,
         num_gpus=gpu_reservation(device, parallel),
     )
 
 
+def _slide_refs(
+    ds: ResolvedDataset, store: ArtifactStore, image_ids: list[str], *, role: str, fold: int | None, target: str,
+    size_mm: float, model: str, validated: set[tuple[Path, Path]], progress: Progress,
+) -> list[SlideFeatureRef]:
+    """Resolve and check the feature paths of one cohort's labeled ``image_ids``."""
+    labels = ds.dataset().image_metadata.set_index("image_id")
+    missing = labels.loc[image_ids, target].isna()
+    if missing.any():
+        progress.log(
+            f"excluding {int(missing.sum())} unlabeled {role} images "
+            f"dataset={ds.name} fold={fold} target={target}"
+        )
+    aug_stores = [Augmentation.load(path).store() for path in ds.augmentations]
+    refs: list[SlideFeatureRef] = []
+    for image_id in image_ids:
+        if missing.loc[image_id]:
+            continue
+        label = _label(labels, image_id, target)
+        aug_paths = tuple(
+            aug_store.path(
+                "tile_augmentation_features",
+                size_mm=size_mm,
+                model=model,
+                image_id=image_id,
+            )
+            for aug_store in aug_stores
+        )
+        feat_path = store.path(
+            "tile_features", size_mm=size_mm, model=model, image_id=image_id
+        )
+        if not feat_path.exists():
+            raise FileNotFoundError(
+                f"Missing tile_features for {role} slide {image_id!r} in {ds.name}: {feat_path}"
+            )
+        _validate_feature_count(store, feat_path, size_mm=size_mm, image_id=image_id)
+        for ap in aug_paths:
+            if not ap.exists():
+                raise FileNotFoundError(
+                    f"Missing tile_augmentation_features for {role} slide {image_id!r} in {ds.name}: {ap}"
+                )
+            pair = (feat_path, ap)
+            if pair not in validated:
+                validate_feature_alignment(feat_path, ap)
+                validated.add(pair)
+        refs.append(
+            SlideFeatureRef(
+                image_id=image_id,
+                features_path=feat_path,
+                background_path=store.path("tile_background", size_mm=size_mm, image_id=image_id),
+                aug_features_paths=aug_paths,
+                label=label,
+            )
+        )
+    return refs
+
+
+def _check_test_fold_assignment(
+    resolved: list[ResolvedDataset], folds: list[int | None], *, target: str, dirs: StorageDirs | None,
+) -> None:
+    """Refuse a fold assignment that cannot support selecting the epoch on the test fold.
+
+    Over the pooled cohorts' labeled slides: there must be folds; in each fold, a slide
+    cannot be both train and test, there must be train slides, and the test slides must
+    contain both classes (AUPRC is undefined otherwise); and every slide trained on must
+    be held out in exactly one fold, so each gets one out-of-fold score.
+    """
+    if folds == [None]:
+        raise ValueError(
+            "val_source='test_fold' requires a fold assignment. Provide one with --splits-file: "
+            "a CSV with image_id and fold (the fold that holds the image out), or image_id, fold and split."
+        )
+    times_held_out: dict[str, int] = {}
+    trained: set[str] = set()
+    for fold in folds:
+        train: set[str] = set()
+        test: set[str] = set()
+        classes: set[object] = set()
+        for ds in resolved:
+            labels = ds.dataset().image_metadata.set_index("image_id")[target]
+            labeled = {str(i) for i in labels[labels.notna()].index}
+            train |= labeled.intersection(train_ids(ds, fold, where=ds.where, dirs=dirs))
+            held_out = labeled.intersection(heldout_ids(ds, fold, where=ds.where, dirs=dirs))
+            test |= held_out
+            classes |= set(labels.loc[sorted(held_out)])
+        both = sorted(train & test)
+        if both:
+            raise ValueError(f"Fold {fold} has {len(both)} slide(s) in both train and test: {both[:5]}")
+        if not train:
+            raise ValueError(f"Fold {fold} has no training slides; does the fold assignment match the cohort?")
+        if len(classes) < 2:
+            raise ValueError(
+                f"Fold {fold} has {len(test)} test slide(s) and {len(classes)} class(es) of {target!r}; "
+                "selecting the best epoch by AUPRC needs both classes in the test fold."
+            )
+        trained |= train
+        for image_id in test:
+            times_held_out[image_id] = times_held_out.get(image_id, 0) + 1
+    inconsistent = sorted(i for i in trained if times_held_out.get(i, 0) != 1)
+    if inconsistent:
+        raise ValueError(
+            f"{len(inconsistent)} training slide(s) are not held out in exactly one fold: {inconsistent[:5]}"
+        )
+
+
 def _fit_fold(
     fold: int | None, ctx: WorkContext, *, slides_by_fold: dict[int | None, list[SlideFeatureRef]],
-    out: ArtifactStore, params: dict[str, Any], resolved: list[ResolvedDataset], dirs: StorageDirs | None,
+    val_slides_by_fold: dict[int | None, list[SlideFeatureRef]], out: ArtifactStore, params: dict[str, Any], resolved: list[ResolvedDataset], dirs: StorageDirs | None,
 ) -> str:
     slides = slides_by_fold[fold]
     training = {
-        key: value for key, value in params.items() if key not in {"size_mm", "model", "target", "augmentations"}
+        key: value for key, value in params.items()
+        if key not in {"size_mm", "model", "target", "augmentations", "val_source"}
     }
-    bundle = train_mil(slides, **training, progress=ctx.progress, fold=fold)
+    bundle = train_mil(slides, **training, progress=ctx.progress, fold=fold, val_slides=val_slides_by_fold.get(fold))
     meta = build_bundle_metadata("mil", params, resolved, dirs, fold=fold)
     out.write("model_mil", bundle, metadata=meta, fold=fold)
     ctx.progress.log(f"computed model_mil fold={fold} (n_train={len(slides)})")
