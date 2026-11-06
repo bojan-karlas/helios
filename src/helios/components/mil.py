@@ -11,12 +11,13 @@ inference take *resolved paths* and open them lazily (per the streaming seam,
 arrays. The owning stages live in :mod:`helios.stages.mil`.
 
 The multi-branch gated-attention architecture and training loop are ported from
-the project's reference augmented A-MIL training script; one
-difference from that script is required by the HELIOS stage contract:
-``train_mil`` only ever sees one fold's *train* slides (the CV test fold is
-scored later by :func:`infer_mil`), so early stopping is done against an
-internal train/val split carved out of the training slides rather than against
-the held-out test fold.
+the project's reference augmented A-MIL training script. By default, ``train_mil``
+only ever sees one fold's *train* slides (the CV test fold is scored later by
+:func:`infer_mil`), so early stopping is done against an internal train/val split
+carved out of the training slides. The reference script instead selected the epoch
+on the held-out test fold, scoring its original and augmented bags; ``val_slides``
+and ``val_aug_mode="separate"`` select that way. Selecting on the test fold makes its
+out-of-fold scores optimistic, because those slides also choose the saved epoch.
 
 :func:`infer_mil`'s gradient-based attribution outputs (``patch_embeddings``,
 the gradient-weighted per-tile ``attention`` + ``tile_gradient`` saliency, and
@@ -340,10 +341,13 @@ class MilAttentionModel(Model):
         seed: int = 42,
         aug_swap_prob: float = 0.5,
         aug_mode: Literal["replace", "augment", "separate"] = "replace",
+        val_aug_mode: Literal["originals", "separate"] = "originals",
         device: str = "cuda",
     ) -> None:
         if aug_mode not in ("replace", "augment", "separate"):
             raise ValueError(f"Unknown MIL augmentation mode: {aug_mode!r}.")
+        if val_aug_mode not in ("originals", "separate"):
+            raise ValueError(f"Unknown MIL validation augmentation mode: {val_aug_mode!r}.")
         self.n_branches = n_branches
         self.num_heads = num_heads
         self.dropout_rate = dropout_rate
@@ -356,6 +360,7 @@ class MilAttentionModel(Model):
         self.seed = seed
         self.aug_swap_prob = aug_swap_prob
         self.aug_mode = aug_mode
+        self.val_aug_mode = val_aug_mode
         self.device = device
         self.input_dim: int | None = None
         self._state_dict: dict[str, torch.Tensor] | None = None
@@ -409,14 +414,16 @@ class MilAttentionModel(Model):
         rng = np.random.default_rng(self.seed)
         dev = torch.device(_resolve_device(self.device))
 
-        train_refs, val_refs = _split_train_val(slides, val_frac=self.val_frac, seed=self.seed)
+        val_slides: list[SlideFeatureRef] | None = params.get("val_slides")
+        if val_slides is not None:
+            train_refs, val_refs = list(slides), list(val_slides)
+        else:
+            train_refs, val_refs = _split_train_val(slides, val_frac=self.val_frac, seed=self.seed)
         n_train_slides = len(train_refs)
         if self.aug_mode == "separate":
-            train_refs = [
-                replace(ref, features_path=path, aug_features_paths=())
-                for ref in train_refs
-                for path in (ref.features_path, *ref.aug_features_paths)
-            ]
+            train_refs = _separate_bags(train_refs)
+        if self.val_aug_mode == "separate":
+            val_refs = _separate_bags(val_refs)
         self.input_dim = _peek_feature_dim(train_refs[0].features_path)
 
         net = self._build_net().to(dev)
@@ -433,7 +440,8 @@ class MilAttentionModel(Model):
         best_epoch = 0
         progress.log(
             f"{prefix}MIL device={dev} train={len(train_refs)} validation={len(val_refs)} "
-            f"train_slides={n_train_slides} "
+            f"train_slides={n_train_slides} validation_source={'provided' if val_slides is not None else 'internal'} "
+            f"val_aug_mode={self.val_aug_mode} "
             f"max_epochs={self.max_epochs} patience={self.patience} aug_mode={self.aug_mode} "
             f"aug_swap_prob={self.aug_swap_prob}"
         )
@@ -549,6 +557,7 @@ def train_mil(
     *,
     aug_swap_prob: float = 0.5,
     aug_mode: Literal["replace", "augment", "separate"] = "replace",
+    val_aug_mode: Literal["originals", "separate"] = "originals",
     n_branches: int = 4,
     num_heads: int = 4,
     dropout_rate: float = 0.1,
@@ -562,6 +571,7 @@ def train_mil(
     device: str = "cuda",
     progress: Progress = DEFAULT_PROGRESS,
     fold: int | None = None,
+    val_slides: list[SlideFeatureRef] | None = None,
 ) -> Model:
     """Fit one A-MIL model on a fold's training slides.
 
@@ -575,7 +585,13 @@ def train_mil(
     embeddings with probability ``aug_swap_prob``. With ``aug_mode="separate"``,
     every original and each augmentation is a separate, independently shuffled
     training bag; ``aug_swap_prob`` is not used. Expansion happens after the
-    train/validation split, and validation uses originals only.
+    train/validation split.
+
+    Early stopping monitors AUPRC on an internal ``val_frac`` split carved out of
+    ``slides``. When ``val_slides`` is given, it monitors those slides instead, every
+    slide in ``slides`` is trained on, and ``val_frac`` is not used. Validation scores
+    original bags only, unless ``val_aug_mode="separate"``: then each original and
+    each augmentation of a validation slide is a separate validation bag.
 
     Early stopping monitors AUPRC on an internal ``val_frac`` split carved out
     of ``slides`` (this fold's CV test slides are never visible here -- they are
@@ -596,9 +612,10 @@ def train_mil(
         seed=seed,
         aug_swap_prob=aug_swap_prob,
         aug_mode=aug_mode,
+        val_aug_mode=val_aug_mode,
         device=device,
     )
-    return model.fit(slides, progress=progress, fold_label=fold)
+    return model.fit(slides, progress=progress, fold_label=fold, val_slides=val_slides)
 
 
 def infer_mil_score(
@@ -720,6 +737,15 @@ def _read_tile_background(path: Path | None, n_tiles: int) -> tuple[NDArray[np.b
         raise ValueError(f"{path}: background has {len(table)} rows, but features have {n_tiles}.")
     flag_column = "tile_background" if "tile_background" in table.columns else "is_background"
     return table[flag_column].to_numpy(dtype=bool), table["tile_id"].to_numpy(dtype=np.int64)
+
+
+def _separate_bags(refs: list[SlideFeatureRef]) -> list[SlideFeatureRef]:
+    """One reference per bag: each slide's original, then each of its augmentations."""
+    return [
+        replace(ref, features_path=path, aug_features_paths=())
+        for ref in refs
+        for path in (ref.features_path, *ref.aug_features_paths)
+    ]
 
 
 def _load_training_bag(

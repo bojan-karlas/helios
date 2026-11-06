@@ -16,6 +16,7 @@ import pandas as pd
 import pytest
 import torch
 
+from helios.components import mil as mil_component
 from helios.components.mil import (
     SlideFeatureRef,
     _load_training_bag,
@@ -387,3 +388,56 @@ def test_bundle_rejects_config_that_does_not_match_the_weights(tmp_path: Path, s
     )
     with pytest.raises(RuntimeError, match="state_dict"):
         load_bundle(bundle_dir)
+
+
+def _augmented(tmp_path: Path, slide: SlideFeatureRef) -> SlideFeatureRef:
+    aug_path = tmp_path / f"{slide.image_id}_aug.hdf5"
+    with h5py.File(slide.features_path, "r") as h:
+        _write_features(aug_path, h["features"][:] + 1.0)
+    return replace(slide, aug_features_paths=(aug_path,))
+
+
+def _recorded_validation(monkeypatch) -> list[list[Path]]:
+    validated: list[list[Path]] = []
+    original = mil_component._validation_metrics
+
+    def recording(net, val_refs, **kwargs):
+        validated.append([ref.features_path for ref in val_refs])
+        return original(net, val_refs, **kwargs)
+
+    monkeypatch.setattr(mil_component, "_validation_metrics", recording)
+    return validated
+
+
+def test_val_slides_choose_the_epoch_and_all_slides_train(monkeypatch, slides: list[SlideFeatureRef]) -> None:
+    train, held_out = slides[:4], slides[4:]
+    validated = _recorded_validation(monkeypatch)
+    trained: list[str] = []
+    load = mil_component._load_training_bag
+
+    def recording_load(ref, **kwargs):
+        trained.append(ref.image_id)
+        return load(ref, **kwargs)
+
+    monkeypatch.setattr(mil_component, "_load_training_bag", recording_load)
+    train_mil(train, val_slides=held_out, max_epochs=1, val_frac=0.5, device="cpu")
+    assert validated == [[ref.features_path for ref in held_out]]
+    assert sorted(trained) == sorted(ref.image_id for ref in train)
+
+
+@pytest.mark.parametrize("val_aug_mode", ["originals", "separate"])
+def test_val_aug_mode_selects_the_validation_bags(
+    monkeypatch, tmp_path: Path, slides: list[SlideFeatureRef], val_aug_mode: str
+) -> None:
+    augmented = [_augmented(tmp_path, slide) for slide in slides]
+    train, held_out = augmented[:4], augmented[4:]
+    validated = _recorded_validation(monkeypatch)
+    train_mil(
+        train, val_slides=held_out, max_epochs=1, aug_mode="separate", val_aug_mode=val_aug_mode, device="cpu"
+    )
+    originals = [ref.features_path for ref in held_out]
+    expected = originals if val_aug_mode == "originals" else [
+        path for ref in held_out for path in (ref.features_path, *ref.aug_features_paths)
+    ]
+    assert validated == [expected]
+

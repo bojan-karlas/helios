@@ -22,6 +22,8 @@ fit:
     size_mm: 0.25
     target: disease_pfs_recurred_5yfu
     val_frac: 0.15
+    val_aug_mode: originals
+    val_source: internal
     weight_decay: 0.0001
   morphology:
     attention_cutoff: 0.8

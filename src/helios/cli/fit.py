@@ -83,6 +83,20 @@ def mil(
     val_frac: float | None = typer.Option(
         None, "--val-frac", help="Fraction of each fold's train slides held out for early-stopping."
     ),
+    val_source: str | None = typer.Option(
+        None,
+        "--val-source",
+        help=(
+            "Slides that choose the best epoch: 'internal' holds out --val-frac of the train slides; "
+            "'test_fold' trains on all of them and uses the fold's test slides, which makes "
+            "out-of-fold scores optimistic."
+        ),
+    ),
+    val_aug_mode: str | None = typer.Option(
+        None,
+        "--val-aug-mode",
+        help="'originals' validates on original bags; 'separate' also validates on each augmented copy as its own bag.",
+    ),
     seed: int | None = typer.Option(None, "--seed", help="Random seed."),
     device: str | None = typer.Option(None, "--device", help="Torch device (cuda, cpu)."),
     filter: str | None = _FILTER,
@@ -123,6 +137,8 @@ def mil(
         "max_epochs": max_epochs,
         "patience": patience,
         "val_frac": val_frac,
+        "val_source": val_source,
+        "val_aug_mode": val_aug_mode,
         "seed": seed,
         "device": device,
     }
