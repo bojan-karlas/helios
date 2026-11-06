@@ -22,7 +22,7 @@ from helios.progress import DEFAULT_PROGRESS, Progress
 from helios.stages._runtime import (
     DatasetArgs,
     ParallelConfig,
-    StorageRoots,
+    StorageDirs,
     WorkContext,
     available_cpu_count,
     available_gpu_count,
@@ -61,7 +61,7 @@ def _mpp_magnification_fallback(image_metadata: pd.DataFrame, image_id: str) -> 
 def prep_cells(
     *,
     datasets: DatasetArgs,
-    roots: StorageRoots | None = None,
+    dirs: StorageDirs | None = None,
     parallel: ParallelConfig | None = None,
     patch_px: int = DEFAULT_PATCH_PX,
     device: str = DEFAULT_DEVICE,
@@ -83,9 +83,9 @@ def prep_cells(
     total_cpus = available_cpu_count(cfg.max_cpus)
     cpus_per_slide = max(4, min(32, total_cpus // max(1, n_gpus)))
 
-    for ds in resolve_datasets(datasets, roots=roots):
+    for ds in resolve_datasets(datasets, dirs=dirs, produces=("preprocessing",), progress=progress):
         cohort = ds.dataset()
-        store = cohort_store(ds, roots)
+        store = cohort_store(ds, dirs)
         run_work_units(
             select_image_ids(ds, store, image_ids),
             partial(
@@ -119,7 +119,7 @@ def _cells(
     overwrite: bool,
 ) -> str:
     wsi_path = str(slides[image_id])
-    if not overwrite and all(store.exists(a, image_id=image_id) for a in CELL_OUTPUTS):
+    if not overwrite and all(store.output_exists(a, image_id=image_id) for a in CELL_OUTPUTS):
         ctx.progress.log(f"skip cells image={image_id} (exists)")
         return "skipped"
     # The last output doubles as the unit's completion marker: clear it before recomputing.
@@ -142,5 +142,5 @@ def _cells(
 
     mitotic = classify_mitoses(patches, patch_index, device=device)
     store.write("mitotic_cells", mitotic, image_id=image_id)
-    ctx.progress.log(f"wrote cells + mitotic image={image_id}")
+    ctx.progress.log(f"computed cells + mitotic image={image_id}")
     return "completed"

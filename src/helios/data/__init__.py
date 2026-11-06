@@ -9,9 +9,9 @@ from helios.data.catalog import (
 from helios.data.dataset import Dataset
 from helios.data.io import ArtifactStore, read, write
 from helios.data.resolver import (
+    Dirs,
     Resolver,
-    Roots,
-    StorageRoots,
+    StorageDirs,
     format_hive_subpath,
     format_hive_value,
     parse_hive_value,
@@ -30,8 +30,8 @@ __all__ = [
     "save_bundle",
     "load_bundle",
     "Resolver",
-    "Roots",
-    "StorageRoots",
+    "Dirs",
+    "StorageDirs",
     "render_path",
     "format_hive_value",
     "parse_hive_value",

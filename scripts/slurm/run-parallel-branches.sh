@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
 # Run the independent cell and tile/feature preparation branches concurrently
-# against a shared Ray cluster. Each command writes to its own <log_dir>/<run_id>
+# against a shared Ray cluster. Each command writes to its own <logs_dir>/<run_id>
 # directory and attaches without shutting down the shared Ray runtime.
 #
 # Usage:
-#   scripts/slurm/run-parallel-branches.sh <dataset-or-cohort.yaml> [ray-address]
+#   scripts/slurm/run-parallel-branches.sh <dataset-or-cohort.yaml> <preprocessing-dir> <output-dir> [ray-address]
 
 set -euo pipefail
 
-DATASET="${1:?Usage: $0 <dataset-or-cohort.yaml> [ray-address]}"
-RAY_ADDR="${2:-}"
+DATASET="${1:?Supply dataset-or-cohort.yaml, preprocessing-dir, output-dir, and optional ray-address}"
+PREPROCESSING_DIR="${2:?Supply preprocessing-dir}"
+OUTPUT_DIR="${3:?Supply output-dir for logs}"
+RAY_ADDR="${4:-}"
 
 started_local_ray=0
 cleanup() {
@@ -26,16 +28,19 @@ if [ -z "$RAY_ADDR" ]; then
     started_local_ray=1
 fi
 
-helios prep thumbnails --dataset "$DATASET" --ray-address "$RAY_ADDR" --run-tag thumbnails
-helios prep tiles --dataset "$DATASET" --ray-address "$RAY_ADDR" --run-tag tiles
+COMMON=(--dataset "$DATASET" --preprocessing-dir "$PREPROCESSING_DIR" --output-dir "$OUTPUT_DIR"
+        --ray-address "$RAY_ADDR")
 
-helios prep tile-features --dataset "$DATASET" --ray-address "$RAY_ADDR" --run-tag tile-features &
+helios prep thumbnails "${COMMON[@]}" --run-tag thumbnails
+helios prep tiles "${COMMON[@]}" --run-tag tiles
+
+helios prep tile-features "${COMMON[@]}" --run-tag tile-features &
 pid_features=$!
 
-helios prep cells --dataset "$DATASET" --ray-address "$RAY_ADDR" --run-tag cells &
+helios prep cells "${COMMON[@]}" --run-tag cells &
 pid_cells=$!
 
 wait "$pid_features"
 wait "$pid_cells"
 
-helios prep cell-features --dataset "$DATASET" --ray-address "$RAY_ADDR" --run-tag cell-features
+helios prep cell-features "${COMMON[@]}" --run-tag cell-features

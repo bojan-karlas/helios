@@ -13,13 +13,12 @@ import pytest
 
 from helios.components.mil import MilSlideOutputs
 from helios.data.cohort import ResolvedDataset
-from helios.data.io import ArtifactStore
-from helios.data.resolver import Resolver, Roots, StorageRoots
+from helios.data.resolver import StorageDirs
 from helios.stages import concept as concept_stage
 from helios.stages import mil
 from helios.stages._runtime import cohort_store, resolve_datasets
 from helios.stages.tile_features import prep_tile_features
-from tests.fixtures import make_cohort
+from tests.fixtures import make_cohort, prepared_store, storage_dirs
 
 IMAGE_IDS = [f"FAKE-SKCM-P{i:05d}-S01-B1-I1" for i in range(4)]
 
@@ -27,7 +26,7 @@ IMAGE_IDS = [f"FAKE-SKCM-P{i:05d}-S01-B1-I1" for i in range(4)]
 @pytest.fixture()
 def cohort(tmp_path: Path) -> Path:
     root = make_cohort(tmp_path / "cohort", n_images=4, n_patients=4)
-    store = ArtifactStore(Resolver(Roots.single(root)))
+    store = prepared_store(root)
     rows = []
     for fold in (0, 1):
         for idx, image_id in enumerate(IMAGE_IDS):
@@ -58,9 +57,9 @@ def test_fit_pools_train_ids_per_fold(monkeypatch, cohort: Path) -> None:
 
     monkeypatch.setattr("helios.stages.mil.train_mil", _fake_train)
 
-    mil.fit_mil(datasets=[cohort])
+    mil.fit_mil(datasets=[cohort], dirs=storage_dirs(cohort))
 
-    store = ArtifactStore(Resolver(Roots.single(cohort)))
+    store = prepared_store(cohort)
     assert store.exists("model_mil", fold=0)
     assert store.exists("model_mil", fold=1)
     assert seen[0] == IMAGE_IDS[:2]
@@ -77,7 +76,9 @@ def test_fit_filter_subsets_train_ids(monkeypatch, cohort: Path) -> None:
     monkeypatch.setattr("helios.stages.mil.train_mil", _fake_train)
 
     # P00000 is the only train image of fold 0; restrict to it via metadata query.
-    mil.fit_mil(datasets=[ResolvedDataset(cohort, where="patient_id == 'P00000'")])
+    mil.fit_mil(
+        datasets=[ResolvedDataset(cohort, where="patient_id == 'P00000'")], dirs=storage_dirs(cohort),
+    )
 
     assert seen[0] == [IMAGE_IDS[0]], "filter must intersect the fold's train split"
     assert seen[1] == [], "no fold-1 train image matches the filter"
@@ -86,11 +87,44 @@ def test_fit_filter_subsets_train_ids(monkeypatch, cohort: Path) -> None:
 def test_fit_mil_raises_on_missing_slide_features(tmp_path: Path) -> None:
     root = make_cohort(tmp_path / "incomplete", n_images=2, n_patients=2)
     with pytest.raises(FileNotFoundError, match="Missing tile_features"):
-        mil.fit_mil(datasets=[root])
+        mil.fit_mil(datasets=[root], dirs=storage_dirs(root))
+
+
+def test_fit_rejects_missing_target_column_before_training(monkeypatch, cohort):
+    monkeypatch.setattr(mil, "train_mil", lambda *a, **k: pytest.fail("must not train"))
+    with pytest.raises(ValueError, match="Missing MIL target column 'unknown'"):
+        mil.fit_mil(datasets=[cohort], dirs=storage_dirs(cohort), target="unknown")
+
+
+def test_fit_excludes_unlabeled_images_and_logs_count(monkeypatch, cohort, caplog):
+    from helios.progress import Progress
+
+    path = cohort / "metadata/image_metadata.csv"
+    table = pd.read_csv(path)
+    table.loc[0, mil.DEFAULT_TARGET] = np.nan
+    table.to_csv(path, index=False)
+    seen = []
+    monkeypatch.setattr(mil, "train_mil", lambda slides, **kw: seen.append(slides) or {})
+    with caplog.at_level("INFO", logger="helios"):
+        mil.fit_mil(datasets=[cohort], dirs=storage_dirs(cohort), progress=Progress(use_tqdm=False))
+    assert [s.image_id for s in seen[0]] == [IMAGE_IDS[1]]
+    assert [s.image_id for s in seen[1]] == IMAGE_IDS[2:]
+    assert "excluding 1 unlabeled training images" in caplog.text
+    assert all(s.label in (0, 1) for slides in seen for s in slides)
+
+
+def test_fit_rejects_nonbinary_labels(monkeypatch, cohort):
+    path = cohort / "metadata/image_metadata.csv"
+    table = pd.read_csv(path)
+    table.loc[0, mil.DEFAULT_TARGET] = 2
+    table.to_csv(path, index=False)
+    monkeypatch.setattr(mil, "train_mil", lambda *a, **k: pytest.fail("must not train"))
+    with pytest.raises(ValueError, match="must be binary"):
+        mil.fit_mil(datasets=[cohort], dirs=storage_dirs(cohort))
 
 
 def test_predict_scores_each_fold_then_reduces(monkeypatch, cohort: Path) -> None:
-    store = ArtifactStore(Resolver(Roots.single(cohort)))
+    store = prepared_store(cohort)
     for fold in (0, 1):
         store.write("model_mil", {"fold": fold}, fold=fold)
 
@@ -111,7 +145,7 @@ def test_predict_scores_each_fold_then_reduces(monkeypatch, cohort: Path) -> Non
     monkeypatch.setattr("helios.stages.mil.infer_mil", _fake_infer)
     monkeypatch.setattr("helios.stages.mil.reduce_whole_image_risk", _fake_reduce)
 
-    mil.predict_mil(datasets=[cohort])
+    mil.predict_mil(datasets=[cohort], dirs=storage_dirs(cohort))
 
     for fold in (0, 1):
         assert store.exists("whole_image_risk_score", fold=fold)
@@ -123,6 +157,77 @@ def test_predict_scores_each_fold_then_reduces(monkeypatch, cohort: Path) -> Non
     assert (ensemble["dataset"] == Path(cohort).name).all(), "ensemble must carry dataset provenance"
 
 
+@pytest.mark.parametrize("scores_only", [False, True])
+@pytest.mark.parametrize("cv", [False, True])
+def test_pooled_predictions_preserve_all_constituents(tmp_path, monkeypatch, scores_only, cv):
+    from helios.data.io import write
+
+    roots = [make_cohort(tmp_path / name, n_images=2, n_patients=2) for name in ("left", "right")]
+    for idx, root in enumerate(roots):
+        table = pd.read_csv(root / "metadata/image_metadata.csv")
+        table["image_id"] = [f"image-{idx}-{i}" for i in range(2)]
+        table.to_csv(root / "metadata/image_metadata.csv", index=False)
+        store = prepared_store(root)
+        for image_id in table["image_id"]:
+            store.write("tile_features", {"features": np.ones((3, 4), np.float32)},
+                        size_mm=0.25, model="virchow2", image_id=image_id)
+    cohort_file = tmp_path / "pooled.yaml"
+    cohort_file.write_text("name: pooled\ndatasets:\n  - left\n  - right\n" + ("splits: splits.csv\n" if cv else ""))
+    ids = [f"image-{i}-{j}" for i in range(2) for j in range(2)]
+    if cv:
+        write(pd.DataFrame([
+            {"image_id": image_id, "fold": fold, "split": "test" if j % 2 == fold else "train"}
+            for fold in (0, 1) for j, image_id in enumerate(ids)
+        ]), tmp_path / "splits.csv", "csv")
+    dirs = StorageDirs(
+        output_dir=tmp_path / "output", models_dir=tmp_path / "output/models",
+        results_dir=tmp_path / "output/results",
+    )
+    store = cohort_store(resolve_datasets([cohort_file])[0], dirs)
+    for fold in (0, 1):
+        store.write("model_mil", {"fold": fold}, fold=fold)
+    calls = []
+
+    def score(model, **kwargs):
+        calls.append(kwargs["features_path"])
+        return 0.2 + 0.4 * model["fold"]
+
+    def full(model, **kwargs):
+        return MilSlideOutputs(
+            patch_embeddings=np.ones((3, 4), np.float32), attention=pd.DataFrame({"tile_id": [0, 1, 2]}),
+            slide_embedding=np.ones(4, np.float32), slide_embedding_grad=np.zeros(4, np.float32),
+            risk_score=score(model, **kwargs),
+        )
+
+    monkeypatch.setattr(mil, "infer_mil", full)
+    monkeypatch.setattr(mil, "infer_mil_score", score, raising=False)
+    mil.predict_mil(datasets=[cohort_file], dirs=dirs, scores_only=scores_only)
+    assert len(calls) == 8
+    for fold in (0, 1):
+        scores = store.read("whole_image_risk_score", fold=fold)
+        assert set(scores["image_id"]) == set(ids)
+        assert len(scores) == 4
+        for image_id in ids:
+            for artifact in (
+                "aligned_patch_embeddings", "patch_attention",
+                "aligned_slide_embedding", "aligned_slide_embedding_grad",
+            ):
+                assert store.output_exists(artifact, fold=fold, image_id=image_id) is not scores_only
+    ensemble = store.read("whole_image_risk_score_ensemble")
+    assert set(ensemble["image_id"]) == set(ids)
+    np.testing.assert_allclose(ensemble["risk_score"], [0.2, 0.6, 0.2, 0.6] if cv else [0.4] * 4)
+    assert set(ensemble["dataset"]) == {"left", "right"}
+    mil.predict_mil(datasets=[cohort_file], dirs=dirs, scores_only=scores_only)
+    assert len(calls) == 8
+    mil.predict_mil(datasets=[cohort_file], dirs=dirs, scores_only=scores_only, image_ids=[ids[0]], overwrite=True)
+    assert len(calls) == 10
+    assert set(store.read("whole_image_risk_score_ensemble")["image_id"]) == set(ids)
+    if scores_only:
+        mil.predict_mil(datasets=[cohort_file], dirs=dirs)
+        assert len(calls) == 18
+        assert store.output_exists("aligned_slide_embedding", fold=0, image_id=ids[0])
+
+
 def test_union_extract_fit_predict_and_downstream_fit_use_split_roots(monkeypatch, tmp_path: Path) -> None:
     datasets = []
     originals = {}
@@ -130,19 +235,19 @@ def test_union_extract_fit_predict_and_downstream_fit_use_split_roots(monkeypatc
         source = make_cohort(tmp_path / name, n_images=2, n_patients=2)
         originals.update({p: p.read_bytes() for p in source.rglob("*") if p.is_file()})
         ds = ResolvedDataset(
-            source, preprocessing_root=tmp_path / "pre" / name
+            source, preprocessing_dir=tmp_path / "pre" / name
         )
         datasets.append(ds)
         store = cohort_store(ds)
         for image_id in ds.dataset().image_ids:
             store.write("tiles", {"tiles": np.zeros((3, 4, 4, 3), np.uint8)}, size_mm=0.25, image_id=image_id)
-    roots = StorageRoots(models_root=tmp_path / "experiment", results_root=tmp_path / "experiment")
+    dirs = StorageDirs(models_dir=tmp_path / "experiment", results_dir=tmp_path / "experiment")
 
     monkeypatch.setattr(
         "helios.stages.tile_features.extract_features",
         lambda tiles, **kwargs: np.ones((len(tiles), 4), np.float32),
     )
-    prep_tile_features(datasets=datasets, roots=roots)
+    prep_tile_features(datasets=datasets, dirs=dirs)
 
     def fake_train(slides, **kwargs):
         assert len(slides) == 4
@@ -153,7 +258,7 @@ def test_union_extract_fit_predict_and_downstream_fit_use_split_roots(monkeypatc
         return {"trained": True}
 
     monkeypatch.setattr(mil, "train_mil", fake_train)
-    mil.fit_mil(datasets=datasets, roots=roots)
+    mil.fit_mil(datasets=datasets, dirs=dirs)
     assert (tmp_path / "experiment/mil").is_dir()
 
     def fake_infer(model, *, features_path, **kwargs):
@@ -168,16 +273,16 @@ def test_union_extract_fit_predict_and_downstream_fit_use_split_roots(monkeypatc
         )
 
     monkeypatch.setattr(mil, "infer_mil", fake_infer)
-    mil.predict_mil(datasets=datasets, roots=roots)
+    mil.predict_mil(datasets=datasets, dirs=dirs)
     for ds in datasets:
-        store = cohort_store(ds, roots)
+        store = cohort_store(ds, dirs)
         table = store.read("whole_image_risk_score_ensemble")
         assert len(table) == 2
         assert set(table["dataset"]) == {ds.name}
         assert store.path("aligned_slide_embedding", fold=None, image_id=ds.dataset().image_ids[0]).exists()
         # Reading a constituent alone must use the outputs written by the union.
-        (single,) = resolve_datasets([ds], roots=roots)
-        assert cohort_store(single, roots).path("whole_image_risk_score_ensemble").exists()
+        (single,) = resolve_datasets([ds], dirs=dirs)
+        assert cohort_store(single, dirs).path("whole_image_risk_score_ensemble").exists()
 
     def fake_train_concepts(embeddings, labels, risk, **kwargs):
         assert embeddings.shape == (4, 4)
@@ -185,8 +290,8 @@ def test_union_extract_fit_predict_and_downstream_fit_use_split_roots(monkeypatc
         return {"downstream": True}
 
     monkeypatch.setattr(concept_stage, "train_concepts", fake_train_concepts)
-    concept_stage.fit_concept(datasets=datasets, roots=roots)
-    assert cohort_store(datasets[0], roots).read("model_concepts", fold=None)["downstream"]
+    concept_stage.fit_concept(datasets=datasets, dirs=dirs)
+    assert cohort_store(datasets[0], dirs).read("model_concepts", fold=None)["downstream"]
     for p, contents in originals.items():
         assert p.read_bytes() == contents
     for ds in datasets:

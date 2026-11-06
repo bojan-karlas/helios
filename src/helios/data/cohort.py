@@ -1,6 +1,6 @@
 """Named, versioned cohort definitions.
 
-A *cohort definition* is a small YAML naming a union of dataset roots plus an
+A *cohort definition* is a small YAML naming a union of dataset dirs plus an
 optional row filter, so a training / evaluation population can be defined once,
 reused, and version-controlled. It is accepted anywhere ``--dataset`` is::
 
@@ -12,11 +12,11 @@ reused, and version-controlled. It is accepted anywhere ``--dataset`` is::
     name: TRAIN_COHORT
     datasets:
       - /data/COHORT1
-      - source_root: ../cohorts/COHORT2
+      - source_dir: ../cohorts/COHORT2
     filter: "path_stage in ['I', 'II']"   # optional pandas-query over image_metadata
 
 A bare path (``--dataset /data/COHORT1``) is just a single-root cohort with no
-filter, so cohort files and plain roots are interchangeable and composable
+filter, so cohort files and plain dirs are interchangeable and composable
 (repeated ``--dataset`` flags still union). Resolution flattens every input into
 a list of :class:`ResolvedDataset` -- one physical root plus the effective row
 filter selecting its population. Filters compose with logical *and* (a cohort
@@ -48,7 +48,7 @@ class ResolvedDataset:
 
     root: Path
     where: str | None = None
-    preprocessing_root: Path | None = None
+    preprocessing_dir: Path | None = None
     augmentations: tuple[Path, ...] = ()
     cohort_name: str | None = None
     cohort_file: Path | None = None
@@ -75,7 +75,7 @@ class ResolvedDataset:
 
 @dataclass(frozen=True)
 class CohortSpec:
-    """A parsed cohort-definition file: a named union of roots + optional filter."""
+    """A parsed cohort-definition file: a named union of dirs + optional filter."""
 
     name: str
     datasets: tuple[ResolvedDataset, ...]
@@ -93,7 +93,7 @@ def is_cohort_file(arg: str | Path | ResolvedDataset) -> bool:
 
 
 def load_cohort_spec(path: str | Path) -> CohortSpec:
-    """Parse a cohort-definition YAML, resolving roots relative to the file."""
+    """Parse a cohort-definition YAML, resolving dirs relative to the file."""
     cohort_path = Path(path).absolute()
     data = yaml.safe_load(cohort_path.read_text())
     if not isinstance(data, dict):
@@ -111,7 +111,7 @@ def load_cohort_spec(path: str | Path) -> CohortSpec:
 
     def location(value: object) -> Path:
         if not isinstance(value, str) or not value.strip():
-            raise ValueError(f"Dataset roots in {path} must be nonempty path strings.")
+            raise ValueError(f"Dataset dirs in {path} must be nonempty path strings.")
         p = Path(value)
         return p if p.is_absolute() else base / p
 
@@ -134,10 +134,10 @@ def load_cohort_spec(path: str | Path) -> CohortSpec:
         elif isinstance(entry, dict):
             if "features_root" in entry:
                 raise ValueError(
-                    "features_root has been removed; move embeddings to preprocessing_root/features "
-                    "and use preprocessing_root instead."
+                    "features_root has been removed; move embeddings to preprocessing_dir/tile_features "
+                    "and use preprocessing_dir instead."
                 )
-            unknown = set(entry) - {"source_root", "preprocessing_root", "augmentations"}
+            unknown = set(entry) - {"source_dir", "preprocessing_dir", "augmentations"}
             if unknown:
                 raise ValueError(f"Unknown dataset fields in {path}: {sorted(unknown)}")
             raw_augs = entry.get("augmentations", [])
@@ -149,8 +149,8 @@ def load_cohort_spec(path: str | Path) -> CohortSpec:
                 )
             augs = tuple(dict.fromkeys(location(a) for a in raw_augs))
             resolved.append(ResolvedDataset(
-                root=location(entry.get("source_root")),
-                preprocessing_root=location(entry["preprocessing_root"]) if "preprocessing_root" in entry else None,
+                root=location(entry.get("source_dir")),
+                preprocessing_dir=location(entry["preprocessing_dir"]) if "preprocessing_dir" in entry else None,
                 augmentations=augs,
                 cohort_name=cohort_name,
                 cohort_file=cohort_path,
@@ -174,7 +174,7 @@ def resolve_datasets(
 ) -> list[ResolvedDataset]:
     """Flatten ``--dataset`` inputs into the list of :class:`ResolvedDataset`.
 
-    Each item is either a cohort file (expanded to its member roots, carrying the
+    Each item is either a cohort file (expanded to its member dirs, carrying the
     file's ``filter``), a plain root, or an already-resolved dataset (passed
     through). An extra ``where`` (e.g. an ad-hoc ``--filter``) is AND-combined
     onto every result. The function is idempotent on :class:`ResolvedDataset`, so

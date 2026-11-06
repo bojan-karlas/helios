@@ -1,107 +1,124 @@
-"""CLI logs follow the resolved results role, independently of model storage."""
+"""Explicit directory selection and console-only CLI operation."""
 import pytest
 from typer.testing import CliRunner
 
-from helios.cli._common import console_progress, resolved_results_root
+from helios.cli._common import console_progress, prepare_invocation
 from helios.cli.main import app
-from helios.data.cohort import ResolvedDataset
-from helios.data.resolver import StorageRoots
+from helios.stages._runtime import cohort_store
 
 
-@pytest.mark.parametrize("explicit_results", [False, True])
-def test_log_base_matches_results_role(tmp_path, explicit_results):
-    ds = ResolvedDataset(tmp_path / "source", cohort_name="experiment")
-    roots = StorageRoots(
-        models_root=tmp_path / "models",
-        results_root=tmp_path / "results" if explicit_results else None,
+def test_console_only_progress_creates_no_files(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    progress = console_progress()
+    progress.log("visible")
+    assert progress.reporter is None
+    assert "visible" in capsys.readouterr().err
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_explicit_logs_directory(tmp_path):
+    progress = console_progress(logs_dir=tmp_path / "logs", run_tag="example")
+    progress.log("saved")
+    paths = list((tmp_path / "logs").glob("*/run.log"))
+    assert len(paths) == 1
+    assert "saved" in paths[0].read_text()
+
+
+def test_output_defaults_do_not_redirect_inputs(tmp_path):
+    invocation = prepare_invocation(
+        [str(tmp_path / "source")], output_dir=tmp_path / "experiment",
     )
-    expected = tmp_path / "results/experiment" if explicit_results else ds.root / "results"
-    assert resolved_results_root(ds, roots) == expected
+    store = cohort_store(invocation.datasets[0], invocation.dirs)
+    assert store.path("thumbnail", image_id="slide") == tmp_path / "source/preprocessing/thumbnails/slide.png"
+    assert store.output_path("thumbnail", image_id="slide") is None
+    assert store.output_path("model_mil", fold=None) == tmp_path / "experiment/models/mil/fold=None"
+    with pytest.raises(ValueError, match="explicit --models-dir"):
+        store.path("model_mil", fold=None)
+    assert invocation.logs_dir == tmp_path / "experiment/logs"
 
 
-def test_explicit_log_dir_overrides_default(tmp_path, monkeypatch):
-    seen = []
-
-    def create(base, tag):
-        seen.append((base, tag))
-        return "run", tmp_path / "run"
-
-    class Reporter:
-        def __init__(self, path):
-            pass
-
-        def update(self, **kwargs):
-            pass
-
-    import logging
-
-    monkeypatch.setattr("helios.cli._common.create_run_log_dir", create)
-    monkeypatch.setattr("helios.cli._common.configure_logging", lambda path: logging.getLogger("test"))
-    monkeypatch.setattr("helios.cli._common.ProgressReporter", Reporter)
-    console_progress(tmp_path / "results", log_dir=tmp_path / "custom", run_tag="example")
-    assert seen == [(tmp_path / "custom", "example")]
-    console_progress(tmp_path / "results")
-    assert seen[-1] == (tmp_path / "results/logs", None)
+def test_role_directories_override_output_defaults(tmp_path):
+    invocation = prepare_invocation(
+        [str(tmp_path / "source")], output_dir=tmp_path / "experiment",
+        models_dir=tmp_path / "models", results_dir=tmp_path / "results",
+        preprocessing_dir=tmp_path / "pre", logs_dir=tmp_path / "logs",
+        splits_file=tmp_path / "assignments.csv", where="path_thickness > 1",
+        ray_address="auto", max_cpus=3,
+    )
+    store = cohort_store(invocation.datasets[0], invocation.dirs)
+    assert store.output_resolver.dirs.models_dir == tmp_path / "models"
+    assert store.output_resolver.dirs.results_dir == tmp_path / "results/source"
+    assert store.resolver.dirs.preprocessing_dir == tmp_path / "pre"
+    assert invocation.logs_dir == tmp_path / "logs"
+    assert invocation.parallel.max_cpus == 3
+    assert invocation.datasets[0].where == "path_thickness > 1"
+    assert invocation.dirs.splits_file == tmp_path / "assignments.csv"
 
 
-def test_every_output_command_uses_resolved_results_root(monkeypatch, tmp_path):
+def test_every_output_command_accepts_directory_options(monkeypatch, tmp_path):
     from helios.stages import STAGES
 
-    runner = CliRunner()
     for verb, stages in STAGES.items():
         for noun, stage in stages.items():
             seen = []
             with monkeypatch.context() as patch:
-                patch.setattr(f"{stage.__module__}.{stage.__name__}", lambda **kwargs: None)
-                patch.setattr("helios.config.stage_config.load_stage_params", lambda *a, **k: {})
                 patch.setattr(
-                    "helios.cli._common.console_progress", lambda path, _seen=seen, **kwargs: _seen.append(path)
+                    f"{stage.__module__}.{stage.__name__}", lambda _seen=seen, **kwargs: _seen.append(kwargs),
                 )
+                patch.setattr("helios.config.stage_config.load_stage_params", lambda *a, **k: {})
                 command = [verb] if verb == "report" else [verb, noun]
-                result = runner.invoke(app, command + [
-                    "--dataset", str(tmp_path / "source"), "--models-root", str(tmp_path / "models"),
+                result = CliRunner().invoke(app, command + [
+                    "--dataset", str(tmp_path / "source"),
+                    "--output-dir", str(tmp_path / "experiment"),
+                    "--models-dir", str(tmp_path / "trained-models"),
+                    "--preprocessing-dir", str(tmp_path / "pre"),
                 ])
-                assert result.exit_code == 0, (command, result.exception)
-            assert seen == [tmp_path / "source/results"]
+                assert result.exit_code == 0, (command, result.exception, result.output)
+            assert seen[0]["dirs"].output_dir == tmp_path / "experiment"
+            assert seen[0]["dirs"].models_dir == tmp_path / "trained-models"
+            assert not (tmp_path / "source").exists()
 
 
-def test_bare_prep_uses_resolved_results_root(monkeypatch, tmp_path):
+def test_bare_prep_rejects_unsaved_intermediate_artifacts(tmp_path):
+    result = CliRunner().invoke(app, [
+        "prep", "--dataset", str(tmp_path / "source"), "--output-dir", str(tmp_path / "out"),
+    ])
+    assert result.exit_code != 0
+    assert "Full prep requires" in result.output
+    assert not (tmp_path / "source").exists()
+    assert not (tmp_path / "out").exists()
+
+
+@pytest.mark.parametrize("flag, expected", [([], True), (["--scores-only"], True), (["--no-scores-only"], False)])
+def test_mil_scores_only_config_and_cli_precedence(tmp_path, monkeypatch, flag, expected):
     seen = []
-    monkeypatch.setattr("helios.stages.STAGES", {"prep": {}})
-    monkeypatch.setattr("helios.cli._common.console_progress", lambda path, **kw: seen.append(path))
-    result = CliRunner().invoke(app, ["prep", "--dataset", str(tmp_path / "source")])
-    assert result.exit_code == 0, result.exception
-    assert seen == [tmp_path / "source/results"]
+    monkeypatch.setattr("helios.stages.mil.predict_mil", lambda **kwargs: seen.append(kwargs))
+    config = tmp_path / "params.yaml"
+    config.write_text("predict:\n  mil:\n    scores_only: true\n")
+    result = CliRunner().invoke(app, [
+        "predict", "mil", "--dataset", str(tmp_path / "source"), "--config", str(config), *flag,
+    ])
+    assert result.exit_code == 0, (result.exception, result.output)
+    assert seen[0]["scores_only"] is expected
 
 
-def test_shared_invocation_preserves_roots_filters_and_execution(monkeypatch, tmp_path):
-    from helios.cli._common import prepare_invocation
-
+def test_mil_separate_bags_config_and_cli(tmp_path, monkeypatch):
     seen = []
-    monkeypatch.setattr(
-        "helios.cli._common.console_progress", lambda path, **kwargs: seen.append((path, kwargs))
-    )
-    invocation = prepare_invocation(
-        [f"{tmp_path / 'first'},{tmp_path / 'second'}"],
-        models_root=tmp_path / "models", results_root=tmp_path / "results",
-        splits_file=tmp_path / "assignments.csv", where="path_thickness > 1",
-        ray_address="auto", max_cpus=3, require_models=True,
-        log_dir=tmp_path / "custom-logs", run_tag="example",
-    )
-    assert [ds.root for ds in invocation.datasets] == [tmp_path / "first", tmp_path / "second"]
-    assert all(ds.where == "path_thickness > 1" for ds in invocation.datasets)
-    assert invocation.roots.models_root == tmp_path / "models"
-    assert invocation.roots.results_root == tmp_path / "results"
-    assert invocation.roots.splits_file == tmp_path / "assignments.csv"
-    assert invocation.parallel.ray_address == "auto"
-    assert invocation.parallel.max_cpus == 3
-    assert not seen
-    invocation.progress()
-    assert seen == [(tmp_path / "results/first", {"log_dir": tmp_path / "custom-logs", "run_tag": "example"})]
+    monkeypatch.setattr("helios.stages.mil.fit_mil", lambda **kwargs: seen.append(kwargs))
+    config = tmp_path / "params.yaml"
+    config.write_text("fit:\n  mil:\n    aug_mode: separate\n")
+    for flags in ([], ["--aug-mode", "separate"]):
+        result = CliRunner().invoke(app, [
+            "fit", "mil", "--dataset", str(tmp_path / "source"), "--config", str(config), *flags,
+        ])
+        assert result.exit_code == 0, (result.exception, result.output)
+        assert seen[-1]["aug_mode"] == "separate"
 
 
-def test_shared_invocation_preserves_pooled_training_requirement(tmp_path):
-    from helios.cli._common import prepare_invocation
-
-    with pytest.raises(ValueError, match="Pooled training requires"):
-        prepare_invocation([str(tmp_path / "first"), str(tmp_path / "second")], require_models=True)
+@pytest.mark.parametrize("old_option", ["--models-root", "--results-root", "--preprocessing-root", "--log-dir"])
+def test_old_options_are_not_aliases(tmp_path, old_option):
+    result = CliRunner().invoke(app, [
+        "fit", "mil", "--dataset", str(tmp_path / "source"), old_option, str(tmp_path / "out"),
+    ])
+    assert result.exit_code != 0
+    assert "No such option" in result.output

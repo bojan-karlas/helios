@@ -6,6 +6,7 @@ import logging
 from functools import partial
 from pathlib import Path
 from typing import cast
+from urllib.parse import quote
 
 from helios.components.augmentation import AUGMENTATION_METHODS, apply_augmentation
 from helios.components.features import FEATURE_MODELS, FeatureModel, extract_features
@@ -17,7 +18,7 @@ from helios.stages._runtime import (
     DatasetArgs,
     ParallelConfig,
     ResolvedDataset,
-    StorageRoots,
+    StorageDirs,
     cohort_store,
     resolve_datasets,
     select_image_ids,
@@ -28,7 +29,7 @@ DEFAULT_METHOD: str = "cyclegan"
 DEFAULT_SOURCE: str | None = None
 DEFAULT_TARGETS: list[str] = []
 DEFAULT_CHECKPOINTS: list[str] = []
-DEFAULT_STAIN_MODEL_ROOT: str = "src/helios/models/multistain_cyclegan"
+DEFAULT_STAIN_MODEL_DIR: str = "src/helios/models/multistain_cyclegan"
 DEFAULT_SIZE_MM: list[float] = [0.25]
 DEFAULT_MODELS: list[str] = ["virchow2"]
 DEFAULT_BATCH_SIZE: int = 64
@@ -39,14 +40,14 @@ DEFAULT_DEVICE: str = "cuda"
 def prep_augment(
     *,
     datasets: DatasetArgs,
-    roots: StorageRoots | None = None,
+    dirs: StorageDirs | None = None,
     parallel: ParallelConfig | None = None,
     method: str = DEFAULT_METHOD,
     source: str | None = DEFAULT_SOURCE,
     target: list[str] = DEFAULT_TARGETS,
     checkpoint: list[str] = DEFAULT_CHECKPOINTS,
-    stain_model_root: str | Path = DEFAULT_STAIN_MODEL_ROOT,
-    output_dir: str | None = None,
+    stain_model_dir: str | Path = DEFAULT_STAIN_MODEL_DIR,
+    augmentation_dir: str | None = None,
     size_mm: list[float] = DEFAULT_SIZE_MM,
     model: list[str] = DEFAULT_MODELS,
     batch_size: int = DEFAULT_BATCH_SIZE,
@@ -57,9 +58,17 @@ def prep_augment(
     progress: Progress = DEFAULT_PROGRESS,
 ) -> None:
     """Prepare tiles and features; existing artifacts are skipped unless overwritten."""
-    resolved = resolve_datasets(datasets, roots=roots)
-    if output_dir is not None and (len(resolved) != 1 or len(target) != 1):
-        raise ValueError("output_dir requires exactly one dataset and one explicit target.")
+    resolved = resolve_datasets(datasets, dirs=dirs)
+    if target and augmentation_dir is None and any(
+        (dirs is None or dirs.preprocessing_dir is None) and ds.preprocessing_dir is None
+        for ds in resolved
+    ):
+        raise ValueError(
+            "Augmentation preparation requires --preprocessing-dir or --augmentation-dir: "
+            "its tile and feature steps exchange saved artifacts."
+        )
+    if augmentation_dir is not None and (len(resolved) != 1 or len(target) != 1):
+        raise ValueError("augmentation_dir requires exactly one dataset and one explicit target.")
     if checkpoint and not target:
         raise ValueError("Explicit checkpoints require explicit targets.")
     unknown = [m for m in model if m not in FEATURE_MODELS]
@@ -67,16 +76,17 @@ def prep_augment(
         raise ValueError(f"Unknown feature model(s) {unknown}. Available: {list(FEATURE_MODELS)}.")
 
     for ds in resolved:
-        store = cohort_store(ds, roots)
+        store = cohort_store(ds, dirs)
         definitions = _definitions(
             ds,
-            roots=roots,
+            dirs=dirs,
             method=method,
             source=source,
             targets=target,
             checkpoints=checkpoint,
-            stain_model_root=Path(stain_model_root),
-            output_dir=output_dir,
+            stain_model_dir=Path(stain_model_dir),
+            augmentation_dir=augmentation_dir,
+            shared_preprocessing=len(resolved) > 1 and dirs is not None and dirs.preprocessing_dir is not None,
         )
         ids = select_image_ids(ds, store, image_ids)
         if not definitions:
@@ -161,7 +171,7 @@ def _augment_slide(
 ) -> str:
     s, image_id = unit
     aug_store = definition.store()
-    if not overwrite and aug_store.exists("tile_augmentation", size_mm=s, image_id=image_id):
+    if not overwrite and aug_store.output_exists("tile_augmentation", size_mm=s, image_id=image_id):
         return "skipped"
     tiles = _tiles_array(store.read("tiles", size_mm=s, image_id=image_id))
     _validate_tile_count(store, size_mm=s, image_id=image_id, n_tiles=len(tiles))
@@ -195,7 +205,7 @@ def _embed_augmentation(
 ) -> str:
     s, m, image_id = unit
     store = definition.store()
-    if not overwrite and store.exists("tile_augmentation_features", size_mm=s, image_id=image_id, model=m):
+    if not overwrite and store.output_exists("tile_augmentation_features", size_mm=s, image_id=image_id, model=m):
         return "skipped"
     payload = store.read("tile_augmentation", size_mm=s, image_id=image_id)
     embeddings = extract_features(
@@ -220,13 +230,14 @@ def _embed_augmentation(
 def _definitions(
     ds: ResolvedDataset,
     *,
-    roots: StorageRoots | None,
+    dirs: StorageDirs | None,
     method: str,
     source: str | None,
     targets: list[str],
     checkpoints: list[str],
-    stain_model_root: Path,
-    output_dir: str | None,
+    stain_model_dir: Path,
+    augmentation_dir: str | None,
+    shared_preprocessing: bool = False,
 ) -> list[Augmentation]:
     if not targets:
         return [Augmentation.load(path) for path in ds.augmentations]
@@ -237,18 +248,23 @@ def _definitions(
     for value in (method, source, *targets):
         if value is not None and (not value.strip() or "/" in value or "\\" in value or value in {".", ".."}):
             raise ValueError(f"Invalid augmentation directory label: {value!r}.")
-    base = cohort_store(ds, roots).resolver.roots.for_role("preprocessing") / "augmentations"
+    base = cohort_store(ds, dirs).resolver.dirs.for_role("preprocessing") / "augmentations"
+    if shared_preprocessing:
+        base /= f"dataset={quote(ds.dataset().descriptor.id, safe='')}"
     parts = [f"method={method}"]
     if source is not None:
         parts.append(f"source={source}")
     return [
         Augmentation(
-            root=Path(output_dir).absolute() if output_dir is not None else base.joinpath(*parts, f"target={t}"),
+            root=(
+                Path(augmentation_dir).absolute() if augmentation_dir is not None
+                else base.joinpath(*parts, f"target={t}")
+            ),
             source_dataset_id=ds.dataset().descriptor.id,
             method=method,
             parameters={**({"source": source} if source is not None else {}), "target": t},
             checkpoint=(
-                Path(checkpoints[i]) if checkpoints else stain_model_root / t / "latest_net_G_A.pth"
+                Path(checkpoints[i]) if checkpoints else stain_model_dir / t / "latest_net_G_A.pth"
             ).absolute(),
         )
         for i, t in enumerate(targets)

@@ -12,14 +12,13 @@ from pathlib import Path
 import typer
 
 from helios.cli._common import (
-    LOG_DIR,
+    LOGS_DIR,
     MAX_CPUS,
-    MODELS_ROOT,
-    PREPROCESSING_ROOT,
+    MODELS_DIR,
+    OUTPUT_DIR,
+    PREPROCESSING_DIR,
     RAY_ADDRESS,
-    REMOVED_FEATURES_ROOT,
-    REMOVED_OUTPUT_ROOT,
-    RESULTS_ROOT,
+    RESULTS_DIR,
     RUN_TAG,
     SPLITS_FILE,
     csv,
@@ -44,16 +43,15 @@ def _reject_augmentation_target(value: str | None) -> None:
 @fit_app.command("mil")
 def mil(
     dataset: list[str] = _DATASET,
-    preprocessing_root: Path | None = PREPROCESSING_ROOT,
-    features_root: Path | None = REMOVED_FEATURES_ROOT,
-    models_root: Path | None = MODELS_ROOT,
-    results_root: Path | None = RESULTS_ROOT,
+    preprocessing_dir: Path | None = PREPROCESSING_DIR,
+    models_dir: Path | None = MODELS_DIR,
+    results_dir: Path | None = RESULTS_DIR,
     splits_file: Path | None = SPLITS_FILE,
-    log_dir: Path | None = LOG_DIR,
+    logs_dir: Path | None = LOGS_DIR,
     run_tag: str | None = RUN_TAG,
     ray_address: str | None = RAY_ADDRESS,
     max_cpus: int | None = MAX_CPUS,
-    output_root: Path | None = REMOVED_OUTPUT_ROOT,
+    output_dir: Path | None = OUTPUT_DIR,
     size_mm: float | None = typer.Option(None, "--size-mm", help="Tile resolution to train on."),
     model: str | None = typer.Option(None, "--model", help="Foundation model providing tile features."),
     target: str | None = typer.Option(None, "--target", help="Outcome column to train against."),
@@ -68,7 +66,9 @@ def mil(
         None, "--aug-swap-prob", help="Per-tile probability of swapping in the stain-augmented embedding."
     ),
     aug_mode: str | None = typer.Option(
-        None, "--aug-mode", help="'replace' swaps a tile's embedding in place; 'augment' appends it to the bag."
+        None, "--aug-mode",
+        help="'replace' swaps tiles; 'augment' appends tiles; 'separate' trains original and augmented bags separately "
+        "(ignores --aug-swap-prob).",
     ),
     n_branches: int | None = typer.Option(None, "--n-branches", help="Number of gated-attention branches (K)."),
     num_heads: int | None = typer.Option(None, "--num-heads", help="Attention heads per branch."),
@@ -95,16 +95,15 @@ def mil(
 
     invocation = prepare_invocation(
         dataset,
-        preprocessing_root=preprocessing_root,
-        models_root=models_root,
-        results_root=results_root,
+        preprocessing_dir=preprocessing_dir,
+        models_dir=models_dir,
+        results_dir=results_dir,
         splits_file=splits_file,
         ray_address=ray_address,
         max_cpus=max_cpus,
         where=filter,
-        require_models=True,
-        log_dir=log_dir,
-        run_tag=run_tag,
+        logs_dir=logs_dir,
+        run_tag=run_tag, output_dir=output_dir,
     )
     if no_augmentations and augmentation:
         raise typer.BadParameter("--augmentation and --no-augmentations are mutually exclusive.")
@@ -129,7 +128,7 @@ def mil(
     }
     params = load_stage_params("fit", "mil", config_path=config, overrides=overrides)
     fit_mil(
-        datasets=invocation.datasets, roots=invocation.roots, parallel=invocation.parallel, overwrite=overwrite,
+        datasets=invocation.datasets, dirs=invocation.dirs, parallel=invocation.parallel, overwrite=overwrite,
         progress=invocation.progress(),
         **params,
     )
@@ -139,16 +138,15 @@ def mil(
 @fit_app.command("concept")
 def concept(
     dataset: list[str] = _DATASET,
-    preprocessing_root: Path | None = PREPROCESSING_ROOT,
-    features_root: Path | None = REMOVED_FEATURES_ROOT,
-    models_root: Path | None = MODELS_ROOT,
-    results_root: Path | None = RESULTS_ROOT,
+    preprocessing_dir: Path | None = PREPROCESSING_DIR,
+    models_dir: Path | None = MODELS_DIR,
+    results_dir: Path | None = RESULTS_DIR,
     splits_file: Path | None = SPLITS_FILE,
-    log_dir: Path | None = LOG_DIR,
+    logs_dir: Path | None = LOGS_DIR,
     run_tag: str | None = RUN_TAG,
     ray_address: str | None = RAY_ADDRESS,
     max_cpus: int | None = MAX_CPUS,
-    output_root: Path | None = REMOVED_OUTPUT_ROOT,
+    output_dir: Path | None = OUTPUT_DIR,
     n_bootstrap: int | None = typer.Option(None, "--n-bootstrap", help="Bootstrap replicas per concept."),
     filter: str | None = _FILTER,
     config: Path | None = _CONFIG,
@@ -160,20 +158,19 @@ def concept(
 
     invocation = prepare_invocation(
         dataset,
-        preprocessing_root=preprocessing_root,
-        models_root=models_root,
-        results_root=results_root,
+        preprocessing_dir=preprocessing_dir,
+        models_dir=models_dir,
+        results_dir=results_dir,
         splits_file=splits_file,
         ray_address=ray_address,
         max_cpus=max_cpus,
         where=filter,
-        require_models=True,
-        log_dir=log_dir,
-        run_tag=run_tag,
+        logs_dir=logs_dir,
+        run_tag=run_tag, output_dir=output_dir,
     )
     params = load_stage_params("fit", "concept", config_path=config, overrides={"n_bootstrap": n_bootstrap})
     fit_concept(
-        datasets=invocation.datasets, roots=invocation.roots, parallel=invocation.parallel, overwrite=overwrite,
+        datasets=invocation.datasets, dirs=invocation.dirs, parallel=invocation.parallel, overwrite=overwrite,
         progress=invocation.progress(),
         **params,
     )
@@ -183,16 +180,15 @@ def concept(
 @fit_app.command("morphology")
 def morphology(
     dataset: list[str] = _DATASET,
-    preprocessing_root: Path | None = PREPROCESSING_ROOT,
-    features_root: Path | None = REMOVED_FEATURES_ROOT,
-    models_root: Path | None = MODELS_ROOT,
-    results_root: Path | None = RESULTS_ROOT,
+    preprocessing_dir: Path | None = PREPROCESSING_DIR,
+    models_dir: Path | None = MODELS_DIR,
+    results_dir: Path | None = RESULTS_DIR,
     splits_file: Path | None = SPLITS_FILE,
-    log_dir: Path | None = LOG_DIR,
+    logs_dir: Path | None = LOGS_DIR,
     run_tag: str | None = RUN_TAG,
     ray_address: str | None = RAY_ADDRESS,
     max_cpus: int | None = MAX_CPUS,
-    output_root: Path | None = REMOVED_OUTPUT_ROOT,
+    output_dir: Path | None = OUTPUT_DIR,
     target: str | None = typer.Option(None, "--target", help="Outcome column to train against."),
     attention_cutoff: float | None = typer.Option(
         None, "--attention-cutoff", help="Cumulative attention-mass cutoff for the tile filter."
@@ -216,16 +212,15 @@ def morphology(
 
     invocation = prepare_invocation(
         dataset,
-        preprocessing_root=preprocessing_root,
-        models_root=models_root,
-        results_root=results_root,
+        preprocessing_dir=preprocessing_dir,
+        models_dir=models_dir,
+        results_dir=results_dir,
         splits_file=splits_file,
         ray_address=ray_address,
         max_cpus=max_cpus,
         where=filter,
-        require_models=True,
-        log_dir=log_dir,
-        run_tag=run_tag,
+        logs_dir=logs_dir,
+        run_tag=run_tag, output_dir=output_dir,
     )
     overrides = {
         "target": target,
@@ -240,7 +235,7 @@ def morphology(
     }
     params = load_stage_params("fit", "morphology", config_path=config, overrides=overrides)
     fit_morphology(
-        datasets=invocation.datasets, roots=invocation.roots, parallel=invocation.parallel, overwrite=overwrite,
+        datasets=invocation.datasets, dirs=invocation.dirs, parallel=invocation.parallel, overwrite=overwrite,
         progress=invocation.progress(),
         **params,
     )
@@ -250,16 +245,15 @@ def morphology(
 @fit_app.command("risk")
 def risk(
     dataset: list[str] = _DATASET,
-    preprocessing_root: Path | None = PREPROCESSING_ROOT,
-    features_root: Path | None = REMOVED_FEATURES_ROOT,
-    models_root: Path | None = MODELS_ROOT,
-    results_root: Path | None = RESULTS_ROOT,
+    preprocessing_dir: Path | None = PREPROCESSING_DIR,
+    models_dir: Path | None = MODELS_DIR,
+    results_dir: Path | None = RESULTS_DIR,
     splits_file: Path | None = SPLITS_FILE,
-    log_dir: Path | None = LOG_DIR,
+    logs_dir: Path | None = LOGS_DIR,
     run_tag: str | None = RUN_TAG,
     ray_address: str | None = RAY_ADDRESS,
     max_cpus: int | None = MAX_CPUS,
-    output_root: Path | None = REMOVED_OUTPUT_ROOT,
+    output_dir: Path | None = OUTPUT_DIR,
     risk: str | None = typer.Option(
         None, "--risk", help="Comma list of risk kinds (cellular,staging,clinical,helios)."
     ),
@@ -275,21 +269,20 @@ def risk(
 
     invocation = prepare_invocation(
         dataset,
-        preprocessing_root=preprocessing_root,
-        models_root=models_root,
-        results_root=results_root,
+        preprocessing_dir=preprocessing_dir,
+        models_dir=models_dir,
+        results_dir=results_dir,
         splits_file=splits_file,
         ray_address=ray_address,
         max_cpus=max_cpus,
         where=filter,
-        require_models=True,
-        log_dir=log_dir,
-        run_tag=run_tag,
+        logs_dir=logs_dir,
+        run_tag=run_tag, output_dir=output_dir,
     )
     overrides = {"risk": csv(risk), "target": target, "estimator": estimator}
     params = load_stage_params("fit", "risk", config_path=config, overrides=overrides)
     fit_risk(
-        datasets=invocation.datasets, roots=invocation.roots, parallel=invocation.parallel, overwrite=overwrite,
+        datasets=invocation.datasets, dirs=invocation.dirs, parallel=invocation.parallel, overwrite=overwrite,
         progress=invocation.progress(),
         **params,
     )

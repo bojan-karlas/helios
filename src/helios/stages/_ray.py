@@ -301,14 +301,14 @@ def _execute_unit(
     item: T,
     work_id: str,
     stage: str,
-    log_dir: str | None,
+    logs_dir: str | None,
     actor_handle: Any,
     num_cpus: float,
 ) -> WorkResult:
     """Ray task body: run one unit with a worker-local Progress and return a WorkResult."""
     os.environ.setdefault("OMP_NUM_THREADS", str(max(1, int(num_cpus))))
     worker_id = worker_identity("ray")
-    with worker_log(log_dir, worker_id) as (logger, log_path):
+    with worker_log(logs_dir, worker_id) as (logger, log_path):
         sink = _ActorSink(actor_handle, worker_id, work_id)
         ctx = WorkContext(Progress(reporter=sink, use_tqdm=False, logger=logger), worker_id, log_path)
         sink.event("start", log_path=ctx.log_path_str)
@@ -355,7 +355,7 @@ def run_work_units(
         raise ValueError(f"{stage}: work unit IDs must be unique.")
     tracker = RunStatusTracker(stage, work_ids)
     reporter = progress.reporter if isinstance(progress.reporter, ProgressReporter) else None
-    run_log_dir = reporter.out_dir if reporter is not None else None
+    run_logs_dir = reporter.out_dir if reporter is not None else None
     failures: list[WorkFailure] = []
     results: list[WorkStatus] = ["queued"] * len(units)
 
@@ -389,7 +389,7 @@ def run_work_units(
 
     if not cfg.enabled or not units:
         worker_id = worker_identity("local")
-        with worker_log(run_log_dir, worker_id) as (logger, log_path):
+        with worker_log(run_logs_dir, worker_id) as (logger, log_path):
             ctx = WorkContext(progress, worker_id, log_path)
             for idx, (item, wid) in enumerate(zip(progress.task(units, desc=stage), work_ids, strict=True)):
                 tracker.on_start(wid, worker_id, ctx.log_path_str)
@@ -453,7 +453,7 @@ def run_work_units(
                 ray.kill(workers[slot], no_restart=True)
                 workers[slot] = remote_actor.remote(fn)
 
-            log_dir_str = str(run_log_dir) if run_log_dir is not None else None
+            logs_dir_str = str(run_logs_dir) if run_logs_dir is not None else None
             queue = iter(enumerate(zip(units, work_ids, strict=True)))
             refs: dict[Any, tuple[int, str, int]] = {}
 
@@ -462,7 +462,7 @@ def run_work_units(
                 if next_unit is None:
                     return None
                 idx, (item, wid) = next_unit
-                ref = submit(slot, item, wid, stage, log_dir_str, actor, num_cpus)
+                ref = submit(slot, item, wid, stage, logs_dir_str, actor, num_cpus)
                 refs[ref] = (idx, wid, slot)
                 return ref
 

@@ -19,7 +19,7 @@ from helios.stages._ray import gpu_reservation
 from helios.stages._runtime import (
     DatasetArgs,
     ParallelConfig,
-    StorageRoots,
+    StorageDirs,
     WorkContext,
     cohort_store,
     resolve_datasets,
@@ -37,7 +37,7 @@ DEFAULT_DEVICE: str = "cuda"
 def prep_tile_features(
     *,
     datasets: DatasetArgs,
-    roots: StorageRoots | None = None,
+    dirs: StorageDirs | None = None,
     parallel: ParallelConfig | None = None,
     size_mm: list[float] = DEFAULT_SIZE_MM,
     model: list[str] = DEFAULT_MODELS,
@@ -57,10 +57,10 @@ def prep_tile_features(
     Parameters
     ----------
     datasets:
-        One or more cohort roots, each holding ``metadata/image_metadata.csv``
+        One or more cohort dirs, each holding ``metadata/image_metadata.csv``
         and staged ``tiles``. Each dataset's outputs are written under its own
-        roots unless overridden.
-    roots:
+        dirs unless overridden.
+    dirs:
         Role-specific storage overrides. Tile inputs and embedding outputs
         use the preprocessing root.
     parallel:
@@ -85,8 +85,8 @@ def prep_tile_features(
     _validate_models(model)
     gpu_budget = gpu_reservation(device, parallel)
 
-    for ds in resolve_datasets(datasets, roots=roots):
-        store = cohort_store(ds, roots)
+    for ds in resolve_datasets(datasets, dirs=dirs, produces=("preprocessing",), progress=progress):
+        store = cohort_store(ds, dirs)
         ids = select_image_ids(ds, store, image_ids)
         run_work_units(
             [(s, m, i) for s in size_mm for m in model for i in ids],
@@ -114,7 +114,7 @@ def _embed(
     overwrite: bool,
 ) -> str:
     s, m, image_id = unit
-    if not overwrite and store.exists("tile_features", size_mm=s, model=m, image_id=image_id):
+    if not overwrite and store.output_exists("tile_features", size_mm=s, model=m, image_id=image_id):
         ctx.progress.log(f"skip tile_features image={image_id} size_mm={s} model={m} (exists)")
         return "skipped"
     tiles = _tiles_array(store.read("tiles", size_mm=s, image_id=image_id))
@@ -129,7 +129,7 @@ def _embed(
         model=m,
         image_id=image_id,
     )
-    ctx.progress.log(f"wrote tile_features image={image_id} size_mm={s} model={m}")
+    ctx.progress.log(f"computed tile_features image={image_id} size_mm={s} model={m}")
     return "completed"
 
 

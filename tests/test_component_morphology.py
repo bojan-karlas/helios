@@ -62,7 +62,7 @@ def cohort(tmp_path: Path) -> dict:
         attention_frames.append(
             pd.DataFrame({"tile_id": np.arange(N_TILES), "attention": attn, "image_id": image_id})
         )
-        label_rows.append({"image_id": image_id, "disease_pfs_recurrence_5yfu": int(i % 2 == 0)})
+        label_rows.append({"image_id": image_id, "disease_pfs_recurred_5yfu": int(i % 2 == 0)})
 
     attention = pd.concat(attention_frames, ignore_index=True)
     labels = pd.DataFrame(label_rows)

@@ -61,7 +61,7 @@ from __future__ import annotations
 
 import inspect
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
@@ -78,6 +78,7 @@ from sklearn.model_selection import train_test_split
 
 from helios.models.base import Model, register_model
 from helios.progress import DEFAULT_PROGRESS, Progress
+from helios.progress.training import TrainingProgress, duration
 
 
 @dataclass(frozen=True)
@@ -338,9 +339,11 @@ class MilAttentionModel(Model):
         val_frac: float = 0.15,
         seed: int = 42,
         aug_swap_prob: float = 0.5,
-        aug_mode: Literal["replace", "augment"] = "replace",
+        aug_mode: Literal["replace", "augment", "separate"] = "replace",
         device: str = "cuda",
     ) -> None:
+        if aug_mode not in ("replace", "augment", "separate"):
+            raise ValueError(f"Unknown MIL augmentation mode: {aug_mode!r}.")
         self.n_branches = n_branches
         self.num_heads = num_heads
         self.dropout_rate = dropout_rate
@@ -407,6 +410,13 @@ class MilAttentionModel(Model):
         dev = torch.device(_resolve_device(self.device))
 
         train_refs, val_refs = _split_train_val(slides, val_frac=self.val_frac, seed=self.seed)
+        n_train_slides = len(train_refs)
+        if self.aug_mode == "separate":
+            train_refs = [
+                replace(ref, features_path=path, aug_features_paths=())
+                for ref in train_refs
+                for path in (ref.features_path, *ref.aug_features_paths)
+            ]
         self.input_dim = _peek_feature_dim(train_refs[0].features_path)
 
         net = self._build_net().to(dev)
@@ -420,45 +430,80 @@ class MilAttentionModel(Model):
         best_state: dict[str, torch.Tensor] | None = None
         best_auprc = -1.0
         epochs_no_improve = 0
+        best_epoch = 0
+        progress.log(
+            f"{prefix}MIL device={dev} train={len(train_refs)} validation={len(val_refs)} "
+            f"train_slides={n_train_slides} "
+            f"max_epochs={self.max_epochs} patience={self.patience} aug_mode={self.aug_mode} "
+            f"aug_swap_prob={self.aug_swap_prob}"
+        )
+        with TrainingProgress(progress, self.max_epochs, prefix).display() as feedback:
+            for _epoch in range(self.max_epochs):
+                feedback.start_epoch()
+                net.train()
+                shuffled = [train_refs[idx] for idx in rng.permutation(len(train_refs))]
+                for ref in feedback.phase(shuffled, "train"):
+                    bag = _load_training_bag(
+                        ref, aug_swap_prob=self.aug_swap_prob, aug_mode=self.aug_mode, rng=rng
+                    )
+                    if bag.shape[0] == 0:
+                        feedback.skipped += 1
+                        continue
+                    x = torch.from_numpy(bag).to(dev)
+                    y = torch.tensor(float(ref.label), device=dev)
+                    optimizer.zero_grad()
+                    loss = net.objective(x, y, w_pos, w_neg, lambda_div=self.lambda_div)
+                    loss.backward()
+                    optimizer.step()
+                    feedback.record_loss(float(loss.detach().item()))
 
-        for _epoch in range(self.max_epochs):
-            net.train()
-            for idx in rng.permutation(len(train_refs)):
-                ref = train_refs[idx]
-                bag = _load_training_bag(
-                    ref, aug_swap_prob=self.aug_swap_prob, aug_mode=self.aug_mode, rng=rng
-                )
-                if bag.shape[0] == 0:
-                    continue
-                x = torch.from_numpy(bag).to(dev)
-                y = torch.tensor(float(ref.label), device=dev)
-                optimizer.zero_grad()
-                loss = net.objective(x, y, w_pos, w_neg, lambda_div=self.lambda_div)
-                loss.backward()
-                optimizer.step()
-
-            if val_refs:
-                auprc, auroc = _validation_metrics(net, val_refs, device=dev)
-                improved = auprc > best_auprc
-                if improved:
-                    best_auprc = auprc
-                    best_state = {k: v.detach().cpu().clone() for k, v in net.state_dict().items()}
-                    epochs_no_improve = 0
+                metrics = ""
+                if val_refs:
+                    auprc, auroc = _validation_metrics(net, val_refs, device=dev, feedback=feedback)
+                    improved = auprc > best_auprc
+                    if improved:
+                        best_auprc = auprc
+                        best_epoch = _epoch + 1
+                        best_state = {k: v.detach().cpu().clone() for k, v in net.state_dict().items()}
+                        epochs_no_improve = 0
+                    else:
+                        epochs_no_improve += 1
+                    metrics = (
+                        f" val_auprc={auprc:.4f} val_auroc={auroc:.4f}"
+                        f"{' (best)' if improved else ''} best_epoch={best_epoch} "
+                        f"best_auprc={best_auprc:.4f} patience={epochs_no_improve}/{self.patience}"
+                    )
                 else:
-                    epochs_no_improve += 1
+                    best_state = {k: v.detach().cpu().clone() for k, v in net.state_dict().items()}
+                    best_epoch = _epoch + 1
+                elapsed = feedback.finish_epoch()
                 progress.log(
                     f"{prefix}epoch={_epoch + 1}/{self.max_epochs} "
-                    f"val_auprc={auprc:.4f} val_auroc={auroc:.4f}"
-                    f"{' (best)' if improved else ''}"
+                    f"loss={feedback.mean_loss} skipped={feedback.skipped} elapsed={duration(elapsed)}"
+                    f" validation_skipped={feedback.validation_skipped}"
+                    f"{metrics} ETA to {self.max_epochs} epochs={feedback.budget_eta()}"
                 )
-                if not improved and epochs_no_improve >= self.patience:
+                if val_refs and not improved and epochs_no_improve >= self.patience:
+                    progress.log(f"{prefix}early stopping; restoring best_epoch={best_epoch}")
                     break
             else:
-                # Fold too small for an internal val split: keep the final epoch's weights.
-                best_state = {k: v.detach().cpu().clone() for k, v in net.state_dict().items()}
+                progress.log(f"{prefix}epoch budget exhausted; selected_epoch={best_epoch}")
+            progress.log(
+                f"{prefix}training complete epochs={feedback.completed}/{self.max_epochs} "
+                f"selected_epoch={best_epoch} elapsed={duration(feedback.elapsed)}"
+            )
 
         self._state_dict = best_state
         return self
+
+    def predict_score(self, inputs: NDArray[np.float32], *, device: str | None = None) -> float:
+        """Return the slide probability without attribution or gradient tracking."""
+        dev = torch.device(_resolve_device(device or self.device))
+        net = _inference_net(self, str(dev))
+        with torch.inference_mode():
+            x = torch.from_numpy(np.asarray(inputs, dtype=np.float32)).to(dev)
+            probability, _, _, _ = net(x)
+            return float(probability.item())
 
     def predict(
         self, inputs: NDArray[np.float32], *, device: str | None = None
@@ -503,7 +548,7 @@ def train_mil(
     slides: list[SlideFeatureRef],
     *,
     aug_swap_prob: float = 0.5,
-    aug_mode: Literal["replace", "augment"] = "replace",
+    aug_mode: Literal["replace", "augment", "separate"] = "replace",
     n_branches: int = 4,
     num_heads: int = 4,
     dropout_rate: float = 0.1,
@@ -527,7 +572,10 @@ def train_mil(
     (default), each tile swaps with probability ``aug_swap_prob``, choosing
     uniformly among the attached augmentations. With ``aug_mode="augment"``,
     originals are retained and each augmentation independently appends tile
-    embeddings with probability ``aug_swap_prob``.
+    embeddings with probability ``aug_swap_prob``. With ``aug_mode="separate"``,
+    every original and each augmentation is a separate, independently shuffled
+    training bag; ``aug_swap_prob`` is not used. Expansion happens after the
+    train/validation split, and validation uses originals only.
 
     Early stopping monitors AUPRC on an internal ``val_frac`` split carved out
     of ``slides`` (this fold's CV test slides are never visible here -- they are
@@ -551,6 +599,20 @@ def train_mil(
         device=device,
     )
     return model.fit(slides, progress=progress, fold_label=fold)
+
+
+def infer_mil_score(
+    model: MilAttentionModel,
+    *,
+    features_path: Path,
+    background_path: Path | None = None,
+    device: str = "cuda",
+) -> float:
+    """Score one foreground tile bag without generating attribution artifacts."""
+    feats, _ = _load_inference_bag(features_path, background_path)
+    if feats.shape[0] == 0:
+        raise ValueError(f"No foreground tiles found for {features_path}.")
+    return model.predict_score(feats, device=device)
 
 
 def infer_mil(
@@ -664,7 +726,7 @@ def _load_training_bag(
     ref: SlideFeatureRef,
     *,
     aug_swap_prob: float,
-    aug_mode: Literal["replace", "augment"],
+    aug_mode: Literal["replace", "augment", "separate"],
     rng: np.random.Generator,
 ) -> NDArray[np.float32]:
     feats = _read_hdf5_features(ref.features_path)
@@ -673,6 +735,8 @@ def _load_training_bag(
     feats = feats[foreground]
 
     aug_paths = ref.aug_features_paths
+    if aug_mode == "separate" and aug_paths:
+        raise ValueError("Separate-bag training references must be expanded before loading.")
     if aug_paths and aug_swap_prob > 0 and feats.shape[0] > 0:
         aug_stacks = [_read_hdf5_features(p)[foreground] for p in aug_paths]
         if aug_mode == "replace":
@@ -722,18 +786,21 @@ def _split_train_val(
 
 
 def _validation_metrics(
-    net: _MultiBranchGatedAMIL, val_refs: list[SlideFeatureRef], *, device: torch.device
+    net: _MultiBranchGatedAMIL, val_refs: list[SlideFeatureRef], *, device: torch.device,
+    feedback: TrainingProgress | None = None,
 ) -> tuple[float, float]:
     """Validation ``(auprc, auroc)``; ``auprc`` drives early stopping, ``auroc`` is reported alongside it."""
     net.eval()
     probs: list[float] = []
     labels: list[int] = []
     with torch.no_grad():
-        for ref in val_refs:
+        for ref in feedback.phase(val_refs, "valid") if feedback is not None else val_refs:
             bag = _read_hdf5_features(ref.features_path)
             is_background, _ = _read_tile_background(ref.background_path, len(bag))
             bag = bag[~is_background]
             if bag.shape[0] == 0:
+                if feedback is not None:
+                    feedback.validation_skipped += 1
                 continue
             x = torch.from_numpy(bag).to(device)
             prob, _, _, _ = net(x)

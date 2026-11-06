@@ -190,12 +190,12 @@ helios prep augment \
 HELIOS resolves that target to
 `src/helios/models/multistain_cyclegan/lab-b/latest_net_G_A.pth`. Use
 `--checkpoint /absolute/path.pth` to keep weights elsewhere, or
-`--stain-model-root /shared/models/stain` to move the whole convention to
+`--stain-model-dir /shared/models/stain` to move the whole convention to
 persistent/shared storage. Multiple targets and
 explicit checkpoints are comma-separated and positional: the first checkpoint
 belongs to the first target. Target names are user-defined, not built into
 HELIOS. Preparation writes tiles and embeddings side by side under
-`<preprocessing_root>/augmentations/method=cyclegan/target=lab-b/`.
+`<preprocessing_dir>/augmentations/method=cyclegan/target=lab-b/`.
 To use those prepared embeddings during MIL training:
 
 ```bash
@@ -206,7 +206,7 @@ helios fit mil \
   --aug-swap-prob 0.5
 ```
 
-Use `prep augment --output-dir /prepared/my_augmentation` to choose another
+Use `prep augment --augmentation-dir /prepared/my_augmentation` to choose another
 directory (one dataset and one explicit target). Fit treats this as a directory
 reference; it does not interpret `method=...` or other directory names.
 
@@ -215,7 +215,7 @@ Each prepared directory contains:
 ```text
 augmentation.yaml
 tiles/size_mm=0.25/<image_id>/<image_id>.hdf5
-features/size_mm=0.25/model=virchow2/<image_id>/<image_id>.hdf5
+tile_features/size_mm=0.25/model=virchow2/<image_id>/<image_id>.hdf5
 ```
 
 The saved definition records `source_dataset_id`, `method`, `parameters`, and
@@ -287,12 +287,18 @@ A physical dataset is a directory with a descriptor, slides, and metadata:
 my_cohort/
   dataset.yaml                          # physical dataset identity and display name
   wsi/                                  # one slide per image_id
-    DEMO-SKCM-P00001-S01-B1-I1.svs      # .svs / .tiff / .tif / .ndpi
+    DEMO-SKCM-P00001-S01-B1-I1.svs
     DEMO-SKCM-P00002-S01-B1-I1.svs
     ...
   metadata/
     image_metadata.csv                  # one row per image_id
 ```
+
+Slides are discovered recursively by extension: `.svs`, `.tif`, `.tiff`,
+`.ndpi`, `.mrxs`, `.avs`, `.dcm`, `.vms`, `.vmu`, `.scn`, `.svslide`, `.bif`,
+and `.czi` (case-insensitive). Keep multi-file slides with their companion files.
+Decoding depends on the installed OpenSlide build; discovery alone does not
+guarantee that a file can be read.
 
 The descriptor has required nonempty `id` and `name` strings and an optional
 `description`:
@@ -365,6 +371,16 @@ artifact spec drives the graph.
 
 #### Tile artifact contents
 
+Tile embeddings live under `tile_features/size_mm=.../model=.../` in the
+preprocessing root (or in a prepared augmentation root). The HDF5 array key
+remains `features`.
+
+Tile extraction uses the slide's native microns-per-pixel (MPP), with
+`image_mpp` from image metadata taking precedence over OpenSlide's `mpp-x`.
+`size_mm` is the physical tile edge in millimeters: the level-0 pixel edge is
+`round(size_mm * 1000 / MPP)`, then resized to `tile_px`. TIFF inputs currently
+require explicit `image_mpp`; missing or invalid MPP raises an error.
+
 Tile identity is the zero-based row ordinal in the full tile metadata table.
 Full tile pixels, embeddings, augmentation arrays, and background flags share
 that row order. Geometry belongs only in tile metadata. New full Parquet tables
@@ -402,39 +418,51 @@ This mode segments thumbnail pixels only; it does not paint rejected tile
 footprints or change existing tile flags, so the mask can differ from historical
 tile-background decisions. Thumbnails must already exist.
 
-#### Role roots
+#### Storage directories
 
 Artifacts are grouped by storage role, independently of execution order:
 
-| Role | Contents | Default root | Explicit `--<role>-root PATH` |
-| --- | --- | --- | --- |
-| `source` | Fixed WSI files and image metadata | `<source_root>` | `<source_root>` |
-| `preprocessing` | Tiles, augmented tiles, tile metadata, CV splits, masks, thumbnails, cells, cellular features, tile embeddings | `<source_root>/preprocessing` | `PATH` (per dataset) |
-| `models` | Fitted model bundles (`config.yaml` + `cohort.yaml` provenance) | `<source_root>/models` | `PATH` (shared across cohort) |
-| `results` | Stage-organized MIL outputs, predictions, risk scores, reports | `<source_root>/results` | `PATH/<cohort>` (per logical cohort) |
+`--output-dir DIR` supplies save defaults for `DIR/models`,
+`DIR/results/<cohort>`, and `DIR/logs/<run-id>`. Explicit `--models-dir`,
+`--results-dir`, and `--logs-dir` override the corresponding default.
+Without a save destination, that output stays in memory and a startup warning
+is emitted. Console feedback remains available without saved logs.
 
-When role flags are omitted on a single dataset, derived artifacts live under
-`<source_root>/{preprocessing,models,results}/...`. When explicit role
-roots are supplied, `--models-root /runs/exp1/models` writes
-`/runs/exp1/models/<stage>/...` and `--results-root /runs/exp1/results` scopes
-each evaluated cohort under `/runs/exp1/results/<cohort>/<stage>/...`:
+Output defaults never redirect input lookup. Prediction requires
+`--models-dir` pointing to trained bundles; downstream stages reading results
+require `--results-dir`. Reading model bundles does not modify them.
+
+Preprocessing is independent: inputs use each dataset's `preprocessing_dir`
+or `<source_dir>/preprocessing`, overridden by `--preprocessing-dir`.
+Saving preprocessing requires an explicit directory (CLI or cohort entry).
+A shared preprocessing directory uses image IDs across the entire cohort;
+duplicate IDs are rejected.
 
 ```bash
-helios prep tile-features --dataset /data/COHORT1
-helios fit mil --dataset /data/COHORT1 --models-root /runs/exp1/models
+helios prep tile-features --dataset /data/COHORT1 \
+  --preprocessing-dir /data/COHORT1/preprocessing
+helios fit mil --dataset /data/COHORT1 --output-dir /runs/exp1
 helios predict mil --dataset /data/COHORT1 \
-  --models-root /runs/exp1/models --results-root /runs/exp1/results
+  --models-dir /runs/exp1/models --output-dir /runs/deployment
 ```
 
-Run logs are written to `<log_dir>/<run_id>/` (`run.log`, `status.json`,
-`events.jsonl`, `workers/<worker-id>.log`), where `--log-dir` defaults to
-the resolved results role's `logs/` directory: `<dataset>/results/logs` by
-default, or `<results_root>/<logical_cohort>/logs` with an explicit results root.
-The model root does not affect log placement. `--log-dir` overrides this base.
-For multi-dataset invocations, the coordinator uses the first resolved
-constituent's results destination (shared by members of a named cohort when
-an explicit results root is supplied).
+For probabilities without embeddings, attention, or gradients, use
+`helios predict mil --scores-only` (or `predict.mil.scores_only: true` in a config).
+Per-fold scores and OOF/ensemble reduction are unchanged.
+
+For separate original and augmented slide examples, use `helios fit mil --aug-mode separate`.
+Each original and each selected augmentation contributes one independently shuffled bag
+per epoch, after the train/validation split. Validation and inference use originals only.
+This mode ignores `--aug-swap-prob`; `replace` and `augment` retain their existing
+tile-replacement and within-bag concatenation behavior.
+
+Saved logs contain `run.log`, `status.json`, `events.jsonl`, and worker logs.
+They never default to a dataset directory or depend on dataset ordering.
 `--run-tag` appends an optional kebab-case suffix to `<run_id>`.
+Unsaved outputs cannot be reused by subsequent CLI invocations. Full `prep`
+and augmentation preparation require saved intermediates. Parallel MIL and
+cellular-feature reductions also require persistent output storage; use serial
+execution for their memory-only mode.
 
 Stages run serially in a single process by default. Parallel execution is
 opt-in via Ray: `--max-cpus N` (N > 1) starts a local Ray runtime for the
@@ -460,18 +488,18 @@ Risk kinds retain their dependency ordering. Existing-output skips, provenance,
 and whole-cohort prediction reductions are unchanged. Explicit parallelism also
 applies when only one work unit is selected.
 
-`--output-root` has been removed and reports a migration error. Python stages
-accept `roots=StorageRoots(...)` instead of `output_root=...`.
-`--features-root` has also been removed; tile embeddings now live under the
-preprocessing root, so use `--preprocessing-root` to relocate them.
+Python stages accept `dirs=StorageDirs(...)`, including `output_dir`.
+Old `*-root` CLI flags are not aliases. Augmentation's explicit destination
+is `--augmentation-dir`; `--output-dir` has the same save-default meaning
+across all commands.
 
 Existing embeddings are not moved automatically: relocate
-`<old_features_root>/tile_features/` to `<preprocessing_root>/features/`.
+`<old_features_root>/tile_features/` to `<preprocessing_dir>/tile_features/`.
 The old `tile_augmentation/` and `tile_augmentation_features/` trees must be
 relocated into prepared augmentation directories with an `augmentation.yaml`
 descriptor. Full arrays must preserve the original tile metadata row order;
 embedded tile IDs and coordinates are not required.
-Replace cohort `features_root` fields with a common `preprocessing_root`, and
+Replace cohort `features_root` fields with a common `preprocessing_dir`, and
 replace augmentation transformation mappings with prepared directory paths.
 The removed `--augmentation-target` / `augmentation_target` setting reports
 migration guidance instead of selecting a potentially different artifact.
@@ -492,7 +520,7 @@ filter: "path_stage in ['I', 'II']"     # optional pandas-query over image_metad
 ```
 
 ```bash
-helios fit mil --dataset cohorts/train.yaml --models-root /runs/train
+helios fit mil --dataset cohorts/train.yaml --models-dir /runs/train
 ```
 
 Entries can also specify each constituent's storage and tile augmentations:
@@ -500,28 +528,26 @@ Entries can also specify each constituent's storage and tile augmentations:
 ```yaml
 name: TRAIN_COHORT
 datasets:
-  - source_root: /data/COHORT1
-    preprocessing_root: /data/COHORT1/preprocessing
+  - source_dir: /data/COHORT1
+    preprocessing_dir: /data/COHORT1/preprocessing
     augmentations:
       - /prepared/example_translation
-  - source_root: /data/COHORT2
+  - source_dir: /data/COHORT2
 ```
 
-An omitted preprocessing root defaults to `<source_root>/preprocessing`. Feature
-artifacts are stored beneath that root. All relative paths resolve against the
-YAML file. A cohort creates no extra preprocessing store: extraction writes into
-each constituent's root, and training reads from it. Single-dataset CLI
-overrides take precedence over manifest values; for unions, set roots per entry
-rather than using `--preprocessing-root`.
+An omitted preprocessing directory defaults to `<source_dir>/preprocessing`
+for reading only. All relative paths resolve against the YAML file.
+`--preprocessing-dir` overrides constituent settings and can select a shared
+directory for a cohort with unique image IDs.
 
 Augmentations are directory paths, not transformation definitions. `prep augment`
 without explicit targets can prepare/resume these saved definitions using their
 recorded settings and checkpoint paths. Use explicit prep options to create a
 new definition.
 
-Pooled training requires an explicit `--models-root`. Use that same model base
-for prediction, including on a different dataset. With an explicit `--results-root`,
-predictions and reports use `<results_root>/<logical_cohort_name>/`. Constituents
+To save pooled training, provide `--models-dir` or `--output-dir`. Use the saved
+model directory for prediction, including on a different dataset. With `--results-dir`,
+predictions and reports use `<results_dir>/<logical_cohort_name>/`. Constituents
 of a named cohort share that destination. Without a cohort name, the physical
 dataset's directory name is used instead; distinct dataset roots supplied this
 way must have distinct directory names. Dataset descriptor IDs and display names
@@ -553,7 +579,7 @@ Split locations are deterministic:
 
 - A cohort YAML uses `<yaml_stem>.splits.csv` beside the YAML, including
   single-dataset cohorts.
-- A bare dataset uses `<preprocessing_root>/splits.csv`.
+- A bare dataset uses `<preprocessing_dir>/splits.csv`.
 - YAML `splits: path/to/file.csv` selects a path relative to the YAML.
 - `--splits-file PATH` overrides either location and means that exact file
   for both preparation and consumption.
@@ -619,17 +645,17 @@ score to retain information not captured by the available pathology labels.
 ```bash
 helios fit concept \
   --dataset /data/my_cohort \
-  --models-root /scratch/runs/experiment \
-  --results-root /scratch/runs/experiment \
+  --models-dir /scratch/runs/experiment \
+  --results-dir /scratch/runs/experiment \
   --n-bootstrap 100
 
 helios predict concept \
   --dataset /data/my_cohort \
-  --models-root /scratch/runs/experiment \
-  --results-root /scratch/runs/experiment
+  --models-dir /scratch/runs/experiment \
+  --results-dir /scratch/runs/experiment
 ```
 
-Use the same `--results-root` used for `helios predict mil`. The prediction stage
+Use the same `--results-dir` used for `helios predict mil`. The prediction stage
 reduces fold outputs out-of-fold when `splits` exists and averages the fold
 models for deployment cohorts without splits. Programmatic callers may pass a
 pathologist correction table to `infer_concepts`; non-null values keyed by

@@ -586,7 +586,7 @@ production/selection contract. Other runtime/design concerns remain separate.
   Original-only stage calls remain compatible without descriptors, but dataset
   checks and augmentation preparation/selection require them.
 - Four storage roles remain: source, preprocessing, models, results. Embeddings
-  belong to preprocessing under `features/size_mm=.../model=.../`. The removed
+  belong to preprocessing under `tile_features/size_mm=.../model=.../`. The removed
   features-root CLI/YAML options report migration errors; files are not moved
   or selected from the legacy layout automatically.
 - Augmentations are prepared directories containing `augmentation.yaml`, tiles,

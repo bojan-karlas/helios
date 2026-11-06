@@ -12,10 +12,9 @@ import pandas as pd
 import pytest
 
 from helios.data.io import ArtifactStore
-from helios.data.resolver import Resolver, Roots
 from helios.stages import risk
 from helios.stages._runtime import tag_dataset
-from tests.fixtures import make_cohort
+from tests.fixtures import make_cohort, prepared_store, storage_dirs
 
 
 @pytest.fixture()
@@ -25,7 +24,7 @@ def cohort(tmp_path: Path) -> Path:
 
 def test_features_fusion_strips_provenance(cohort: Path) -> None:
     """Tagged sub-scores must not leak a ``dataset`` column into fusion features."""
-    store = ArtifactStore(Resolver(Roots.single(cohort)))
+    store = prepared_store(cohort)
     ids = [f"FAKE-SKCM-P{i:05d}-S01-B1-I1" for i in range(4)]
     for sub in risk._FUSION_INPUTS:
         frame = pd.DataFrame({"image_id": ids, sub: range(len(ids))})
@@ -40,7 +39,7 @@ def test_features_fusion_strips_provenance(cohort: Path) -> None:
 
 def test_fit_rejects_unknown_kind(cohort: Path) -> None:
     with pytest.raises(ValueError, match="Unknown risk kind"):
-        risk.fit_risk(datasets=[cohort], risk=["not-a-kind"])
+        risk.fit_risk(datasets=[cohort], dirs=storage_dirs(cohort), risk=["not-a-kind"])
 
 
 def test_fit_orders_helios_last(monkeypatch, cohort: Path) -> None:
@@ -65,7 +64,7 @@ def test_fit_orders_helios_last(monkeypatch, cohort: Path) -> None:
     monkeypatch.setattr(ArtifactStore, "write", _spy_write)
 
     risk.fit_risk(
-        datasets=[cohort],
+        datasets=[cohort], dirs=storage_dirs(cohort),
         risk=["helios", "clinical"],
         target="disease_pfs_recurred",
         staging_feature="path_stage",
@@ -77,4 +76,4 @@ def test_fit_orders_helios_last(monkeypatch, cohort: Path) -> None:
 
 def test_predict_requires_fitted_model(cohort: Path) -> None:
     with pytest.raises(FileNotFoundError, match="No model_clinical"):
-        risk.predict_risk(datasets=[cohort], risk=["clinical"])
+        risk.predict_risk(datasets=[cohort], dirs=storage_dirs(cohort), risk=["clinical"])

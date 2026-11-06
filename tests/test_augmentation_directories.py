@@ -14,10 +14,11 @@ from helios.components.augmentation import apply_augmentation
 from helios.data.augmentation import Augmentation, select_augmentations, validate_feature_alignment
 from helios.data.cohort import ResolvedDataset, load_cohort_spec
 from helios.data.dataset import Dataset
-from helios.data.resolver import StorageRoots
+from helios.data.resolver import StorageDirs
+from helios.progress import Progress
 from helios.stages import augment, mil
 from helios.stages._runtime import cohort_store
-from tests.fixtures import make_cohort
+from tests.fixtures import make_cohort, prepared_store, storage_dirs
 
 
 def test_augmentation_dispatch_rejects_unknown_method_and_missing_checkpoint():
@@ -81,7 +82,7 @@ def test_cohort_paths_and_provenance_round_trip(tmp_path):
     prepared = definition(tmp_path / "elsewhere", root.name)
     cohort_file = tmp_path / "train.yaml"
     cohort_file.write_text(yaml.safe_dump({
-        "datasets": [{"source_root": "source", "augmentations": ["elsewhere"]}],
+        "datasets": [{"source_dir": "source", "augmentations": ["elsewhere"]}],
     }))
     selected = load_cohort_spec(cohort_file).datasets
     assert selected[0].augmentations == (prepared.root,)
@@ -122,7 +123,7 @@ def test_alignment_uses_array_shapes_and_ignores_redundant_legacy_indices(tmp_pa
 def test_prep_fit_discovery_and_saved_selection(monkeypatch, tmp_path):
     root = make_cohort(tmp_path / "source", n_images=2)
     ds = ResolvedDataset(root)
-    store = cohort_store(ds)
+    store = prepared_store(ds)
     for image_id in ds.dataset().image_ids:
         keys = {"size_mm": 0.25, "image_id": image_id}
         store.write("tiles", {"tiles": np.zeros((3, 2, 2, 3), np.uint8)}, **keys)
@@ -136,14 +137,14 @@ def test_prep_fit_discovery_and_saved_selection(monkeypatch, tmp_path):
     output = tmp_path / "arbitrary-name"
     for _ in range(2):
         augment.prep_augment(
-            datasets=[root], target=["domain_b"], checkpoint=["weights.pth"], output_dir=str(output),
+            datasets=[root], target=["domain_b"], checkpoint=["weights.pth"], augmentation_dir=str(output),
         )
     assert len(calls) == 2
     prepared = Augmentation.load(output)
     assert prepared.source_dataset_id == root.name
     seen = []
     monkeypatch.setattr(mil, "train_mil", lambda slides, **kw: seen.extend(slides) or {})
-    mil.fit_mil(datasets=[root], augmentations=[str(output)])
+    mil.fit_mil(datasets=[root], dirs=storage_dirs(root), augmentations=[str(output)])
     assert len(seen) == 2
     assert all(len(s.aug_features_paths) == 1 for s in seen)
     saved = store.path("model_mil", fold=None) / "cohort.yaml"
@@ -153,30 +154,30 @@ def test_prep_fit_discovery_and_saved_selection(monkeypatch, tmp_path):
     row, = json.loads(result.output)
     assert row["path"] == str(output)
     assert row["tile_files"] == 2
-    assert row["feature_files"] == {"features/size_mm=0.25/model=virchow2": 2}
+    assert row["feature_files"] == {"tile_features/size_mm=0.25/model=virchow2": 2}
     for path in (output / "tiles").rglob("*.hdf5"):
         path.unlink()
-    mil.fit_mil(datasets=[root], augmentations=[str(output)], overwrite=True)
+    mil.fit_mil(datasets=[root], dirs=storage_dirs(root), augmentations=[str(output)], overwrite=True)
     assert len(seen) == 4
 
 
 def test_missing_features_fail_without_generation(monkeypatch, tmp_path):
     root = make_cohort(tmp_path / "source", n_images=1)
     ds = ResolvedDataset(root)
-    store = cohort_store(ds)
+    store = prepared_store(ds)
     image_id = ds.dataset().image_ids[0]
     store.write("tile_features", features(), size_mm=0.25, model="virchow2", image_id=image_id)
     prepared = definition(tmp_path / "aug", root.name)
     monkeypatch.setattr(mil, "train_mil", lambda *a, **k: pytest.fail("must not train"))
     with pytest.raises(FileNotFoundError, match="Missing tile_augmentation_features"):
-        mil.fit_mil(datasets=[root], augmentations=[str(prepared.root)])
-    assert not (prepared.root / "features").exists()
+        mil.fit_mil(datasets=[root], dirs=storage_dirs(root), augmentations=[str(prepared.root)])
+    assert not (prepared.root / "tile_features").exists()
 
 
 def test_cli_selection_disable_and_removed_options(monkeypatch, tmp_path):
     seen = []
     monkeypatch.setattr(mil, "fit_mil", lambda **kwargs: seen.append(kwargs))
-    monkeypatch.setattr("helios.cli._common.console_progress", lambda *a, **k: None)
+    monkeypatch.setattr("helios.cli._common.console_progress", lambda *a, **k: Progress.null())
     runner = CliRunner()
     for args, expected in [
         (["--augmentation", "a", "--augmentation", "b"], ["a", "b"]),
@@ -192,7 +193,7 @@ def test_cli_selection_disable_and_removed_options(monkeypatch, tmp_path):
     assert result.exit_code == 2
     result = runner.invoke(app, ["fit", "mil", "--dataset", str(tmp_path), "--features-root", "/old"])
     assert result.exit_code == 2
-    assert "--features-root has been removed" in result.output
+    assert "No such option" in result.output
     result = runner.invoke(app, ["fit", "mil", "--dataset", str(tmp_path), "--augmentation-target", "old"])
     assert result.exit_code == 2
     assert "--augmentation-target has been" in result.output
@@ -219,7 +220,7 @@ def test_pooled_fit_pairs_multiple_augmentations_and_preserves_sampling(monkeypa
     ]
     for ds in datasets:
         image_id = ds.dataset().image_ids[0]
-        cohort_store(ds).write(
+        prepared_store(ds).write(
             "tile_features", features(20), size_mm=0.25, model="virchow2", image_id=image_id,
         )
         for index, prepared in enumerate(definitions):
@@ -250,12 +251,12 @@ def test_pooled_fit_pairs_multiple_augmentations_and_preserves_sampling(monkeypa
         return {}
 
     monkeypatch.setattr(mil, "train_mil", fake_train)
-    roots = StorageRoots(models_root=tmp_path / "models")
+    dirs = StorageDirs(models_dir=tmp_path / "models")
     mil.fit_mil(
-        datasets=datasets, roots=roots, augmentations=[str(a.root) for a in definitions], aug_mode=mode,
+        datasets=datasets, dirs=dirs, augmentations=[str(a.root) for a in definitions], aug_mode=mode,
     )
     assert len(seen) == 2
-    saved = cohort_store(datasets[0], roots).path("model_mil", fold=None) / "cohort.yaml"
+    saved = cohort_store(datasets[0], dirs).path("model_mil", fold=None) / "cohort.yaml"
     restored = load_cohort_spec(saved).datasets
     assert [len(ds.augmentations) for ds in restored] == [2, 1]
 
@@ -266,19 +267,19 @@ def test_resume_definition_and_warn_on_changed_checkpoint(monkeypatch, tmp_path,
     root = make_cohort(tmp_path / "source", n_images=1)
     ds = ResolvedDataset(root)
     image_id = ds.dataset().image_ids[0]
-    cohort_store(ds).write("tiles", {"tiles": np.zeros((3, 2, 2, 3), np.uint8)}, size_mm=0.25, image_id=image_id)
+    prepared_store(ds).write("tiles", {"tiles": np.zeros((3, 2, 2, 3), np.uint8)}, size_mm=0.25, image_id=image_id)
     calls = []
     monkeypatch.setattr("helios.components.augmentation.augment_stains", lambda tiles, **kw: calls.append(kw) or tiles)
     monkeypatch.setattr(augment, "extract_features", lambda tiles, **kw: np.ones((len(tiles), 4), np.float32))
     output = tmp_path / "prepared"
-    augment.prep_augment(datasets=[root], output_dir=str(output), target=["domain_b"], checkpoint=["first.pth"])
+    augment.prep_augment(datasets=[root], augmentation_dir=str(output), target=["domain_b"], checkpoint=["first.pth"])
     augment.prep_augment(
-        datasets=[root], output_dir=str(output), target=["domain_b"], checkpoint=["second.pth"],
+        datasets=[root], augmentation_dir=str(output), target=["domain_b"], checkpoint=["second.pth"],
         progress=Progress(use_tqdm=False),
     )
     assert len(calls) == 1
     assert "Mixed outputs" in caplog.text
-    for path in (output / "features").rglob("*.hdf5"):
+    for path in (output / "tile_features").rglob("*.hdf5"):
         path.unlink()
     augment.prep_augment(datasets=[replace(ds, augmentations=(output,))])
     assert len(calls) == 1

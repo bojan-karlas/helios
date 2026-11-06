@@ -29,7 +29,7 @@ def generate_run_id(tag: str | None = None, *, now: datetime | None = None) -> s
     return f"{stamp}-{slug}" if slug else stamp
 
 
-def create_run_log_dir(base_dir: str | Path, tag: str | None = None) -> tuple[str, Path]:
+def create_run_logs_dir(base_dir: str | Path, tag: str | None = None) -> tuple[str, Path]:
     """Create a unique, absolute ``<base_dir>/<run_id>`` directory (and ``workers/`` child).
 
     The path is made absolute so remote workers with a different cwd resolve it.
@@ -51,7 +51,7 @@ def get_logger(name: str = "helios") -> logging.Logger:
     return logging.getLogger(name)
 
 
-def configure_logging(log_dir: str | Path | None = None, level: int = logging.INFO) -> logging.Logger:
+def configure_logging(logs_dir: str | Path | None = None, level: int = logging.INFO) -> logging.Logger:
     logger = logging.getLogger("helios")
     logger.setLevel(level)
     logger.handlers.clear()
@@ -62,11 +62,11 @@ def configure_logging(log_dir: str | Path | None = None, level: int = logging.IN
     console.setFormatter(fmt)
     logger.addHandler(console)
 
-    if log_dir is not None:
-        log_dir = Path(log_dir)
-        log_dir.mkdir(parents=True, exist_ok=True)
-        (log_dir / "workers").mkdir(parents=True, exist_ok=True)
-        file_handler = logging.FileHandler(log_dir / "run.log")
+    if logs_dir is not None:
+        logs_dir = Path(logs_dir)
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        (logs_dir / "workers").mkdir(parents=True, exist_ok=True)
+        file_handler = logging.FileHandler(logs_dir / "run.log")
         file_handler.setFormatter(fmt)
         logger.addHandler(file_handler)
 
@@ -76,28 +76,28 @@ def configure_logging(log_dir: str | Path | None = None, level: int = logging.IN
 
 @contextmanager
 def worker_log(
-    run_log_dir: str | Path | None,
+    run_logs_dir: str | Path | None,
     worker_id: str,
     *,
     level: int = logging.INFO,
 ) -> Iterator[tuple[logging.Logger, Path | None]]:
-    """A dedicated file logger for one worker under ``<run_log_dir>/workers/``.
+    """A dedicated file logger for one worker under ``<run_logs_dir>/workers/``.
 
     Yields ``(logger, log_path)``; the file handler is closed on exit so repeated
     use (one unit after another in the same process) never leaks descriptors.
-    With ``run_log_dir=None`` the logger has no handlers and ``log_path`` is ``None``.
+    With ``run_logs_dir=None`` the logger has no handlers and ``log_path`` is ``None``.
     """
     safe_id = re.sub(r"[^a-zA-Z0-9_.-]+", "_", worker_id).strip("_") or "worker"
     logger = logging.getLogger(f"helios.worker.{safe_id}")
     logger.setLevel(level)
     logger.propagate = False
     logger.handlers.clear()
-    if run_log_dir is None:
+    if run_logs_dir is None:
         logger.addHandler(logging.NullHandler())
         yield logger, None
         return
 
-    workers_dir = Path(run_log_dir) / "workers"
+    workers_dir = Path(run_logs_dir) / "workers"
     workers_dir.mkdir(parents=True, exist_ok=True)
     log_path = workers_dir / f"{safe_id}.log"
     handler = logging.FileHandler(log_path)

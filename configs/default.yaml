@@ -20,7 +20,7 @@ fit:
     patience: 5
     seed: 42
     size_mm: 0.25
-    target: disease_pfs_recurrence_5yfu
+    target: disease_pfs_recurred_5yfu
     val_frac: 0.15
     weight_decay: 0.0001
   morphology:
@@ -32,7 +32,7 @@ fit:
     resolution: 1.0
     seed: 42
     significance_alpha: 0.05
-    target: disease_pfs_recurrence_5yfu
+    target: disease_pfs_recurred_5yfu
   risk:
     cellular_size_mm: 0.25
     clinical_features:
@@ -46,12 +46,13 @@ fit:
     - clinical
     - helios
     staging_feature: path_stage_substage
-    target: disease_pfs_recurrence_5yfu
+    target: disease_pfs_recurred_5yfu
 predict:
   concept: {}
   mil:
     device: cuda
     model: virchow2
+    scores_only: false
     size_mm: 0.25
   morphology: {}
   risk:
@@ -75,11 +76,11 @@ prep:
     method: cyclegan
     model:
     - virchow2
-    output_dir: null
+    augmentation_dir: null
     size_mm:
     - 0.25
     source: null
-    stain_model_root: src/helios/models/multistain_cyclegan
+    stain_model_dir: src/helios/models/multistain_cyclegan
     target: []
   cell-features:
     lymph_frac_threshold: 0.05
@@ -95,7 +96,7 @@ prep:
     n_folds: 5
     seed: 0
     stratify_by:
-    - disease_pfs_recurrence_5yfu
+    - disease_pfs_recurred_5yfu
     val_fraction: 0.0
   thumbnails:
     max_size: 2048

@@ -5,7 +5,7 @@ artifacts:
     title: Whole Slide Image
     key:
     - image_id
-    format: svs/tiff/ndpi
+    format: svs/tif/tiff/ndpi/mrxs/avs/dcm/vms/vmu/scn/svslide/bif/czi
     path: wsi/{image_id}.svs
     role: source
   image_metadata:
@@ -66,7 +66,7 @@ artifacts:
     - image_id
     - tile_id
     format: hdf5
-    path: features/size_mm={size_mm}/model={model}/{image_id}/{image_id}.hdf5
+    path: tile_features/size_mm={size_mm}/model={model}/{image_id}/{image_id}.hdf5
     role: preprocessing
   tile_augmentation:
     title: Stain-Augmented Tiles
@@ -85,7 +85,7 @@ artifacts:
     - image_id
     - tile_id
     format: hdf5
-    path: features/size_mm={size_mm}/model={model}/{image_id}/{image_id}.hdf5
+    path: tile_features/size_mm={size_mm}/model={model}/{image_id}/{image_id}.hdf5
     role: preprocessing
   thumbnail:
     title: Slide Thumbnail

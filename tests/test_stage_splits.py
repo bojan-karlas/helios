@@ -10,22 +10,21 @@ from typer.testing import CliRunner
 
 from helios.cli.main import app
 from helios.data.cohort import ResolvedDataset, load_cohort_spec, resolve_datasets
-from helios.data.resolver import StorageRoots
+from helios.data.resolver import StorageDirs
 from helios.stages import mil
 from helios.stages._runtime import (
     build_cohort_provenance,
-    cohort_store,
     folds_of,
     read_splits,
     resolve_splits_path,
     train_ids,
 )
 from helios.stages.splits import prep_splits
-from tests.fixtures import make_cohort
+from tests.fixtures import make_cohort, prepared_store
 
 
 def cohort_yaml(path: Path, root: Path, *, mapped: bool, **extra) -> ResolvedDataset:
-    entry = {"source_root": str(root)} if mapped else str(root)
+    entry = {"source_dir": str(root)} if mapped else str(root)
     path.write_text(yaml.safe_dump({"datasets": [entry], **extra}))
     return resolve_datasets([path])[0]
 
@@ -37,7 +36,7 @@ def test_yaml_default_is_adjacent_and_independent_of_existing_files(tmp_path, ma
     ds = cohort_yaml(path, root, mapped=mapped)
     expected = tmp_path / "experiment.splits.csv"
     assert resolve_splits_path(ds) == expected
-    store = cohort_store(ds)
+    store = prepared_store(ds)
     store.write("splits", pd.DataFrame({"image_id": ["unused"], "fold": [7], "split": ["train"]}))
     assert read_splits(ds) is None
     assert folds_of(ds) == [None]
@@ -49,13 +48,13 @@ def test_yaml_default_is_adjacent_and_independent_of_existing_files(tmp_path, ma
 
 def test_bare_default_and_explicit_paths_are_exact(tmp_path):
     ds = ResolvedDataset(make_cohort(tmp_path / "source", n_images=12, n_patients=12))
-    roots = StorageRoots(preprocessing_root=tmp_path / "pre")
-    assert resolve_splits_path(ds, roots) == tmp_path / "pre/splits.csv"
-    prep_splits(datasets=[ds], roots=roots, n_folds=3, seed=19, stratify_by=[])
-    assert folds_of(ds, roots) == [0, 1, 2]
+    dirs = StorageDirs(preprocessing_dir=tmp_path / "pre")
+    assert resolve_splits_path(ds, dirs) == tmp_path / "pre/splits.csv"
+    prep_splits(datasets=[ds], dirs=dirs, n_folds=3, seed=19, stratify_by=[])
+    assert folds_of(ds, dirs) == [0, 1, 2]
     assert list((tmp_path / "pre").rglob("*.csv")) == [tmp_path / "pre/splits.csv"]
-    explicit = StorageRoots(splits_file=tmp_path / "chosen/custom.csv")
-    prep_splits(datasets=[ds], roots=explicit, n_folds=4, seed=7, stratify_by=[])
+    explicit = StorageDirs(splits_file=tmp_path / "chosen/custom.csv")
+    prep_splits(datasets=[ds], dirs=explicit, n_folds=4, seed=7, stratify_by=[])
     assert explicit.splits_file.is_file()
     assert folds_of(ds, explicit) == [0, 1, 2, 3]
     assert resolve_splits_path(ds, explicit) == explicit.splits_file
@@ -64,25 +63,25 @@ def test_bare_default_and_explicit_paths_are_exact(tmp_path):
 @pytest.mark.parametrize("as_store", [False, True])
 def test_missing_explicit_cli_path_never_falls_back(tmp_path, as_store):
     ds = ResolvedDataset(make_cohort(tmp_path / "source"))
-    store = cohort_store(ds)
+    store = prepared_store(ds)
     store.write("splits", pd.DataFrame({"image_id": ["slide"], "fold": [1], "split": ["train"]}))
     selected = store if as_store else ds
-    roots = StorageRoots(splits_file=tmp_path / "missing.csv")
+    dirs = StorageDirs(splits_file=tmp_path / "missing.csv")
     with pytest.raises(FileNotFoundError, match="Selected splits file"):
-        read_splits(selected, roots)
+        read_splits(selected, dirs)
     with pytest.raises(FileNotFoundError):
-        folds_of(selected, roots)
+        folds_of(selected, dirs)
 
 
 def test_missing_yaml_explicit_path_errors_and_cli_overrides_it(tmp_path):
     root = make_cohort(tmp_path / "source")
     ds = cohort_yaml(tmp_path / "cohort.yaml", root, mapped=True, splits="missing.csv")
-    cohort_store(ds).write("splits", pd.DataFrame({"fold": [0]}))
+    prepared_store(ds).write("splits", pd.DataFrame({"fold": [0]}))
     with pytest.raises(FileNotFoundError, match="missing.csv"):
         read_splits(ds)
     override = tmp_path / "override.csv"
     pd.DataFrame({"fold": [4]}).to_csv(override, index=False)
-    assert folds_of(ds, StorageRoots(splits_file=override)) == [4]
+    assert folds_of(ds, StorageDirs(splits_file=override)) == [4]
 
 
 @pytest.mark.parametrize("yaml_input", [False, True])
@@ -94,7 +93,7 @@ def test_no_default_splits_fits_entire_filtered_cohort(monkeypatch, tmp_path, ya
         cohort_yaml(tmp_path / "cohort.yaml", root, mapped=True, filter="path_stage != 'IV'")
         if yaml_input else ResolvedDataset(root, where="path_stage != 'IV'")
     )
-    store = cohort_store(ds)
+    store = prepared_store(ds)
     for image_id in ds.dataset().image_ids:
         store.write(
             "tile_features", {"features": np.ones((3, 4), np.float32)},
@@ -117,17 +116,18 @@ def test_existing_splits_skip_with_warning_and_overwrite_replaces(tmp_path):
 
     root = make_cohort(tmp_path / "source", n_images=12, n_patients=12)
     ds = ResolvedDataset(root)
-    prep_splits(datasets=[ds], n_folds=3, stratify_by=[])
+    dirs = StorageDirs(preprocessing_dir=root / "preprocessing")
+    prep_splits(datasets=[ds], dirs=dirs, n_folds=3, stratify_by=[])
     path = resolve_splits_path(ds)
     original = path.read_bytes()
     warnings = []
     progress = Progress(use_tqdm=False)
     progress.log = lambda message, level=logging.INFO: warnings.append((level, message))  # type: ignore[method-assign]
-    prep_splits(datasets=[ds], n_folds=4, stratify_by=[], progress=progress)
+    prep_splits(datasets=[ds], dirs=dirs, n_folds=4, stratify_by=[], progress=progress)
     assert path.read_bytes() == original
-    assert [level for level, _ in warnings] == [logging.WARNING]
-    assert "--overwrite" in warnings[0][1]
-    prep_splits(datasets=[ds], n_folds=4, stratify_by=[], overwrite=True)
+    assert len([message for level, message in warnings if level == logging.WARNING]) == 1
+    assert any("--overwrite" in message for _, message in warnings)
+    prep_splits(datasets=[ds], dirs=dirs, n_folds=4, stratify_by=[], overwrite=True)
     assert folds_of(ds) == [0, 1, 2, 3]
 
 
@@ -137,7 +137,13 @@ def test_existing_destination_does_not_block_other_cohorts(tmp_path):
     b_path = resolve_splits_path(ResolvedDataset(b))
     b_path.parent.mkdir(parents=True)
     b_path.write_text("existing output")
-    prep_splits(datasets=[a, b], n_folds=2, stratify_by=[])
+    prep_splits(
+        datasets=[
+            ResolvedDataset(a, preprocessing_dir=a / "preprocessing"),
+            ResolvedDataset(b, preprocessing_dir=b / "preprocessing"),
+        ],
+        n_folds=2, stratify_by=[],
+    )
     assert resolve_splits_path(ResolvedDataset(a)).is_file()
     assert b_path.read_text() == "existing output"
 
@@ -145,16 +151,16 @@ def test_existing_destination_does_not_block_other_cohorts(tmp_path):
 def test_duplicate_destinations_rejected_before_writing(tmp_path):
     a = make_cohort(tmp_path / "a")
     b = make_cohort(tmp_path / "b")
-    roots = StorageRoots(splits_file=tmp_path / "shared.csv")
+    dirs = StorageDirs(splits_file=tmp_path / "shared.csv")
     with pytest.raises(ValueError, match="same destination"):
-        prep_splits(datasets=[a, b], roots=roots, overwrite=True)
-    assert not roots.splits_file.exists()
+        prep_splits(datasets=[a, b], dirs=dirs, overwrite=True)
+    assert not dirs.splits_file.exists()
 
 
 def test_yaml_prep_and_fit_select_same_file_and_provenance(tmp_path):
     root = make_cohort(tmp_path / "source", n_images=12, n_patients=12)
     yaml_file = tmp_path / "cohort.yaml"
-    ds = cohort_yaml(yaml_file, root, mapped=False)
+    ds = cohort_yaml(yaml_file, root, mapped=False, splits="cohort.splits.csv")
     prep_splits(datasets=[yaml_file], n_folds=3, stratify_by=[])
     assert folds_of(ds) == [0, 1, 2]
     doc = build_cohort_provenance([ds])
@@ -168,6 +174,7 @@ def test_cli_splits_overwrite_and_legacy_flag_rejection(tmp_path):
     runner = CliRunner()
     command = [
         "prep", "splits", "--dataset", str(root), "--n-folds", "3",
+        "--preprocessing-dir", str(root / "preprocessing"),
         "--stratify-by", "disease_pfs_recurred",
     ]
     assert runner.invoke(app, command).exit_code == 0

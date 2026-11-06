@@ -22,7 +22,7 @@ def extract_thumbnail(
     Parameters
     ----------
     wsi_path:
-        Path to the slide file (svs/tiff/ndpi).
+        Path to the slide file (svs/tiff/ndpi/mrxs).
     max_size:
         Longest-edge pixel budget for the thumbnail.
 

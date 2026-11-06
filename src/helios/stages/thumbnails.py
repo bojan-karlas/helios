@@ -14,7 +14,7 @@ from helios.progress import DEFAULT_PROGRESS, Progress
 from helios.stages._runtime import (
     DatasetArgs,
     ParallelConfig,
-    StorageRoots,
+    StorageDirs,
     WorkContext,
     cohort_store,
     resolve_datasets,
@@ -29,7 +29,7 @@ DEFAULT_MAX_SIZE: int = 2048
 def prep_thumbnails(
     *,
     datasets: DatasetArgs,
-    roots: StorageRoots | None = None,
+    dirs: StorageDirs | None = None,
     parallel: ParallelConfig | None = None,
     max_size: int = DEFAULT_MAX_SIZE,
     image_ids: list[str] | None = None,
@@ -41,8 +41,8 @@ def prep_thumbnails(
     GRAIN CONTRACT: one image per work unit; :func:`extract_thumbnail` is called
     once per slide.
     """
-    for ds in resolve_datasets(datasets, roots=roots):
-        store = cohort_store(ds, roots)
+    for ds in resolve_datasets(datasets, dirs=dirs, produces=("preprocessing",), progress=progress):
+        store = cohort_store(ds, dirs)
         run_work_units(
             select_image_ids(ds, store, image_ids),
             partial(_thumbnail, store=store, slides=ds.dataset().slides, max_size=max_size, overwrite=overwrite),
@@ -61,10 +61,10 @@ def _thumbnail(
     max_size: int,
     overwrite: bool,
 ) -> str:
-    if not overwrite and store.exists("thumbnail", image_id=image_id):
+    if not overwrite and store.output_exists("thumbnail", image_id=image_id):
         ctx.progress.log(f"skip thumbnail image={image_id} (exists)")
         return "skipped"
     thumb = extract_thumbnail(str(slides[image_id]), max_size=max_size)
     store.write("thumbnail", thumb, image_id=image_id)
-    ctx.progress.log(f"wrote thumbnail image={image_id}")
+    ctx.progress.log(f"computed thumbnail image={image_id}")
     return "completed"

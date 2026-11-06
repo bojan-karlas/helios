@@ -4,9 +4,9 @@ The resolver is the ONLY place that knows how an artifact maps onto disk. Given
 an artifact id and a set of key values, it renders the artifact's relative
 ``path`` template and joins it under the correct root.
 
-Artifacts declare a storage role. Unset derived roots fall back to
-``<source_root>/<role>``; separate roots allow the source directory to be
-mounted read-only. Roots are stored absolute so paths stay valid in parallel
+Artifacts declare a storage role. Only preprocessing inputs have a dataset-local
+fallback. Output destinations are explicit and independent of input locations.
+Directories are stored absolute so paths stay valid in parallel
 workers whose working directory differs from the coordinator's.
 
 Optional-key rule: ``fold`` is an OPTIONAL key dimension. When its value is
@@ -68,41 +68,59 @@ def format_hive_subpath(params: Mapping[str, Any] | None) -> Path:
 
 
 @dataclass(frozen=True)
-class StorageRoots:
-    """Run overrides for the supported storage roles."""
+class StorageDirs:
+    """Explicit role locations and optional save-only output defaults."""
 
-    preprocessing_root: Path | None = None
-    models_root: Path | None = None
-    results_root: Path | None = None
+    preprocessing_dir: Path | None = None
+    models_dir: Path | None = None
+    results_dir: Path | None = None
     splits_file: Path | None = None
+    output_dir: Path | None = None
+
+    def destination(self, role: StorageRole) -> Path | None:
+        if role == "source":
+            raise ValueError("Source artifacts are inputs, not run outputs.")
+        explicit = getattr(self, f"{role}_dir")
+        if explicit is not None:
+            return Path(explicit).absolute()
+        if role != "preprocessing" and self.output_dir is not None:
+            return Path(self.output_dir).absolute() / role
+        return None
 
 
 @dataclass(frozen=True)
-class Roots:
-    """Resolved role roots for one dataset or cohort."""
+class Dirs:
+    """Resolved role dirs for one dataset or cohort."""
 
-    source_root: Path
-    preprocessing_root: Path | None = None
-    models_root: Path | None = None
-    results_root: Path | None = None
+    source_dir: Path
+    preprocessing_dir: Path | None = None
+    models_dir: Path | None = None
+    results_dir: Path | None = None
 
     def __post_init__(self) -> None:
-        for name in ("source_root", "preprocessing_root", "models_root", "results_root"):
+        for name in ("source_dir", "preprocessing_dir", "models_dir", "results_dir"):
             value = getattr(self, name)
             if value is not None:
                 object.__setattr__(self, name, Path(value).absolute())
 
     def for_role(self, role: StorageRole) -> Path:
         if role == "source":
-            return self.source_root
-        explicit = getattr(self, f"{role}_root")
+            return self.source_dir
+        explicit = getattr(self, f"{role}_dir")
         if explicit is not None:
             return explicit
-        return self.source_root / role
+        if role == "preprocessing":
+            return self.source_dir / role
+        raise ValueError(f"Reading {role} requires an explicit --{role}-dir.")
 
     @classmethod
-    def single(cls, root: str | Path) -> Roots:
-        return cls(source_root=Path(root))
+    def single(cls, root: str | Path) -> Dirs:
+        """Explicitly select all role directories under one dataset directory."""
+        root = Path(root)
+        return cls(
+            source_dir=root, preprocessing_dir=root / "preprocessing",
+            models_dir=root / "models", results_dir=root / "results",
+        )
 
 
 def render_path(template: str, keys: dict[str, Any], extra_hive: Mapping[str, Any] | None = None) -> str:
@@ -136,15 +154,15 @@ def render_path(template: str, keys: dict[str, Any], extra_hive: Mapping[str, An
 class Resolver:
     """Resolves (artifact_id, key_values) -> absolute path under the right root."""
 
-    def __init__(self, roots: Roots):
-        self.roots = roots
+    def __init__(self, dirs: Dirs):
+        self.dirs = dirs
 
     def path(self, artifact_id: str, *, extra_hive: Mapping[str, Any] | None = None, **keys: Any) -> Path:
         artifact = get_artifact(artifact_id)
         if artifact.path is None:
             raise ValueError(f"Artifact {artifact_id!r} has no path template (non-file artifact).")
         rel = render_path(artifact.path, keys, extra_hive=extra_hive)
-        root = self.roots.for_role(artifact.role)
+        root = self.dirs.for_role(artifact.role)
         float_values = {k: v for k, v in {**keys, **(extra_hive or {})}.items() if isinstance(v, float)}
         for part in Path(rel).parts:
             name, sep, raw = part.partition("=")

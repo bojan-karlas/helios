@@ -7,20 +7,24 @@ reduce_whole_image_risk end to end on CPU.
 """
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import h5py
 import numpy as np
 import pandas as pd
 import pytest
+import torch
 
 from helios.components.mil import (
     SlideFeatureRef,
     _load_training_bag,
     infer_mil,
+    infer_mil_score,
     reduce_whole_image_risk,
     train_mil,
 )
+from helios.progress import Progress
 
 D = 8  # tiny embedding dim for fast tests
 
@@ -80,6 +84,57 @@ def test_train_and_infer_roundtrip(slides: list[SlideFeatureRef]) -> None:
     assert 0.0 <= out.risk_score <= 1.0
 
 
+@pytest.mark.parametrize("validation", [False, True])
+def test_training_logs_phases_summaries_and_stopping(slides, monkeypatch, caplog, validation):
+    if validation:
+        monkeypatch.setattr("helios.components.mil._validation_metrics", lambda *a, **k: (0.5, 0.6))
+    with caplog.at_level("INFO", logger="helios"):
+        train_mil(
+            slides, max_epochs=3, patience=1, val_frac=0.34 if validation else 0,
+            device="cpu", progress=Progress(use_tqdm=False), fold=2,
+        )
+    text = caplog.text
+    assert "[fold=2] MIL device=cpu" in text
+    assert "[fold=2] Epoch 1/3 train" in text
+    assert "loss=" in text and "skipped=0" in text and "elapsed=" in text
+    assert "ETA to 3 epochs=estimating" in text
+    assert "training complete" in text
+    if validation:
+        assert "val_auprc=0.5000 val_auroc=0.6000" in text
+        assert "patience=1/1" in text
+        assert "early stopping; restoring best_epoch=1" in text
+        assert "training complete epochs=2/3 selected_epoch=1" in text
+    else:
+        assert "epoch=3/3 loss=" in text
+        assert "epoch budget exhausted; selected_epoch=3" in text
+
+
+def test_validation_progress_and_empty_bag_counts(slides, tmp_path, caplog):
+    from helios.components.mil import MilAttentionModel, _validation_metrics
+    from helios.progress.training import TrainingProgress
+
+    empty = _make_slide(tmp_path, "empty", n_tiles=3, n_background=3, label=0)
+    model = MilAttentionModel()
+    model.input_dim = D
+    with caplog.at_level("INFO", logger="helios"):
+        with TrainingProgress(Progress(use_tqdm=False), 1, "").display() as feedback:
+            feedback.start_epoch()
+            _validation_metrics(
+                model._build_net(), [*slides, empty], device=torch.device("cpu"), feedback=feedback,
+            )
+            assert feedback.validation_skipped == 1
+    assert "Epoch 1/1 valid 7/7 slides" in caplog.text
+    assert "skipped=1" in caplog.text
+
+
+def test_feedback_does_not_change_trained_weights(slides, caplog):
+    with caplog.at_level("INFO", logger="helios"):
+        silent = train_mil(slides, max_epochs=1, val_frac=0, device="cpu")
+        visible = train_mil(slides, max_epochs=1, val_frac=0, device="cpu", progress=Progress(use_tqdm=False))
+    for key, tensor in silent._state_dict.items():
+        np.testing.assert_array_equal(tensor.numpy(), visible._state_dict[key].numpy())
+
+
 def test_inference_reuses_network_and_refit_invalidates_it(
     slides: list[SlideFeatureRef], monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -125,6 +180,35 @@ def test_background_tiles_are_excluded(tmp_path: Path, slides: list[SlideFeature
     assert len(out.attention) == 6  # 10 tiles - 4 background
 
 
+def test_score_only_matches_attribution_without_gradients(tmp_path, slides, monkeypatch):
+    from helios.components.mil import _inference_net
+
+    model = train_mil(slides, max_epochs=1, val_frac=0, device="cpu")
+    slide = _make_slide(tmp_path, "held-out", n_tiles=10, n_background=4, label=1)
+    expected = infer_mil(
+        model, features_path=slide.features_path, background_path=slide.background_path, device="cpu",
+    ).risk_score
+    net = _inference_net(model, "cpu")
+    net.zero_grad(set_to_none=True)
+    monkeypatch.setattr(net, "forward_with_attribution", lambda *a: pytest.fail("must not compute attribution"))
+    observed = []
+    hook = net.register_forward_pre_hook(lambda *a: observed.append(torch.is_inference_mode_enabled()))
+    try:
+        actual = infer_mil_score(
+            model, features_path=slide.features_path, background_path=slide.background_path, device="cpu",
+        )
+    finally:
+        hook.remove()
+    assert actual == pytest.approx(expected, abs=1e-7)
+    assert observed == [True]
+    assert all(parameter.grad is None for parameter in net.parameters())
+    empty = _make_slide(tmp_path, "empty-score", n_tiles=3, n_background=3, label=0)
+    with pytest.raises(ValueError, match="No foreground tiles"):
+        infer_mil_score(
+            model, features_path=empty.features_path, background_path=empty.background_path, device="cpu",
+        )
+
+
 def test_aug_mode_replace_swaps_in_place(tmp_path: Path) -> None:
     n = 20
     feats = np.zeros((n, D), dtype=np.float32)
@@ -162,6 +246,80 @@ def test_aug_mode_augment_appends_rows(tmp_path: Path) -> None:
     assert bag.shape == (2 * n, D)
     assert np.allclose(bag[:n], 0.0)
     assert np.allclose(bag[n:], 1.0)
+
+
+@pytest.mark.parametrize("n_augmentations", [0, 1, 2])
+@pytest.mark.parametrize("val_frac", [0.0, 0.34])
+def test_separate_bags_expand_after_split(tmp_path, slides, monkeypatch, caplog, n_augmentations, val_frac):
+    from collections import Counter
+
+    from helios.components import mil
+
+    augmented = []
+    for slide in slides:
+        paths = []
+        for index in range(n_augmentations):
+            path = tmp_path / f"{slide.image_id}-aug-{index}.hdf5"
+            _write_features(path, np.full((12, D), index + 10, dtype=np.float32))
+            paths.append(path)
+        augmented.append(replace(slide, aug_features_paths=tuple(paths)))
+    train, val = mil._split_train_val(augmented, val_frac=val_frac, seed=42)
+    expected_paths = [path for ref in train for path in (ref.features_path, *ref.aug_features_paths)]
+    loaded = []
+    validations = []
+    original_loader = mil._load_training_bag
+    original_validation = mil._validation_metrics
+    refs_by_id = {ref.image_id: ref for ref in augmented}
+
+    def load(ref, **kwargs):
+        source = refs_by_id[ref.image_id]
+        assert ref.label == source.label and ref.background_path == source.background_path
+        assert not ref.aug_features_paths
+        bag = original_loader(ref, **kwargs)
+        assert bag.shape == (12, D)
+        if ref.features_path != source.features_path:
+            assert (bag >= 10).all()
+        loaded.append(ref.features_path)
+        return bag
+
+    def validate(net, refs, **kwargs):
+        assert [ref.features_path for ref in refs] == [ref.features_path for ref in val]
+        assert not {ref.image_id for ref in refs}.intersection(ref.image_id for ref in train)
+        validations.append(len(refs))
+        return original_validation(net, refs, **kwargs)
+
+    monkeypatch.setattr(mil, "_load_training_bag", load)
+    monkeypatch.setattr(mil, "_validation_metrics", validate)
+    with caplog.at_level("INFO", logger="helios"):
+        train_mil(
+            augmented, aug_mode="separate", aug_swap_prob=0, max_epochs=2, patience=5,
+            val_frac=val_frac, device="cpu", progress=Progress(use_tqdm=False),
+        )
+    n_bags = len(expected_paths)
+    assert len(loaded) == 2 * n_bags
+    assert Counter(loaded[:n_bags]) == Counter(expected_paths)
+    assert Counter(loaded[n_bags:]) == Counter(expected_paths)
+    assert loaded[:n_bags] != loaded[n_bags:]
+    assert validations == ([len(val)] * 2 if val else [])
+    assert f"train={n_bags} validation={len(val)} train_slides={len(train)}" in caplog.text
+
+
+def test_separate_without_augmentations_preserves_baseline_weights(slides):
+    baseline = train_mil(slides, max_epochs=1, val_frac=0, device="cpu")
+    separate = train_mil(slides, aug_mode="separate", max_epochs=1, val_frac=0, device="cpu")
+    for key, tensor in baseline._state_dict.items():
+        torch.testing.assert_close(tensor, separate._state_dict[key], rtol=0, atol=0)
+
+
+def test_separate_bags_exclude_background(tmp_path):
+    slide = _make_slide(tmp_path, "masked", n_tiles=5, n_background=2, label=1)
+    bag = _load_training_bag(slide, aug_mode="separate", aug_swap_prob=1, rng=np.random.default_rng(42))
+    assert bag.shape == (3, D)
+    with pytest.raises(ValueError, match="must be expanded"):
+        _load_training_bag(
+            replace(slide, aug_features_paths=(slide.features_path,)),
+            aug_mode="separate", aug_swap_prob=1, rng=np.random.default_rng(42),
+        )
 
 
 def test_reduce_whole_image_risk_cv_takes_test_fold_score() -> None:

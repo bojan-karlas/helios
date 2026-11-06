@@ -20,7 +20,7 @@ from helios.progress import DEFAULT_PROGRESS, Progress
 from helios.stages._runtime import (
     DatasetArgs,
     ParallelConfig,
-    StorageRoots,
+    StorageDirs,
     WorkContext,
     build_bundle_metadata,
     cohort_store,
@@ -41,7 +41,7 @@ DEFAULT_N_BOOTSTRAP: int = 100
 def fit_concept(
     *,
     datasets: DatasetArgs,
-    roots: StorageRoots | None = None,
+    dirs: StorageDirs | None = None,
     parallel: ParallelConfig | None = None,
     n_bootstrap: int = DEFAULT_N_BOOTSTRAP,
     overwrite: bool = False,
@@ -55,14 +55,14 @@ def fit_concept(
     Writes ``model_concepts`` keyed by fold. Each cohort's ``where`` filter
     optionally restricts training to a metadata subpopulation.
     """
-    resolved = resolve_datasets(datasets, roots=roots, require_models=True)
-    folds = folds_across(resolved, roots)
+    resolved = resolve_datasets(datasets, dirs=dirs, produces=("models",), progress=progress)
+    folds = folds_across(resolved, dirs)
     run_work_units(
         folds,
         partial(
             _fit_concept_fold,
             resolved=resolved,
-            roots=roots,
+            dirs=dirs,
             n_bootstrap=n_bootstrap,
             overwrite=overwrite,
         ),
@@ -79,14 +79,14 @@ def _fit_concept_fold(
     ctx: WorkContext,
     *,
     resolved: list[ResolvedDataset],
-    roots: StorageRoots | None,
+    dirs: StorageDirs | None,
     n_bootstrap: int,
     overwrite: bool,
 ) -> str:
     """Load, fit, and persist the concept bundle for one fold."""
-    stores = [cohort_store(ds, roots) for ds in resolved]
+    stores = [cohort_store(ds, dirs) for ds in resolved]
     out = stores[0]
-    if not overwrite and out.exists("model_concepts", fold=fold):
+    if not overwrite and out.output_exists("model_concepts", fold=fold):
         ctx.progress.log(f"skip model_concepts fold={fold} (exists)")
         return "skipped"
 
@@ -97,7 +97,7 @@ def _fit_concept_fold(
         meta = ds.dataset().image_metadata.set_index("image_id")
         ids = [
             image_id
-            for image_id in train_ids(ds, fold, where=ds.where, roots=roots)
+            for image_id in train_ids(ds, fold, where=ds.where, dirs=dirs)
             if image_id in meta.index
         ]
         embeddings.append(_stack_embeddings(store, fold, ids))
@@ -115,18 +115,18 @@ def _fit_concept_fold(
         "concept",
         dict(params),
         resolved,
-        roots,
+        dirs,
         fold=fold,
     )
     out.write("model_concepts", bundle, metadata=meta, fold=fold)
-    ctx.progress.log(f"wrote model_concepts fold={fold}")
+    ctx.progress.log(f"computed model_concepts fold={fold}")
     return "completed"
 
 
 def predict_concept(
     *,
     datasets: DatasetArgs,
-    roots: StorageRoots | None = None,
+    dirs: StorageDirs | None = None,
     parallel: ParallelConfig | None = None,
     image_ids: list[str] | None = None,
     overwrite: bool = False,
@@ -137,15 +137,15 @@ def predict_concept(
     GRAIN CONTRACT: one cohort per work unit; the concept inference component
     consumes all fold models and reduces OOF/ensemble to one row per image.
     """
-    resolved = resolve_datasets(datasets, roots=roots)
+    resolved = resolve_datasets(datasets, dirs=dirs, produces=("results",), progress=progress)
 
     for ds in resolved:
-        store = cohort_store(ds, roots)
+        store = cohort_store(ds, dirs)
         ids = select_image_ids(ds, store, image_ids)
         folds = model_folds(store, "model_concepts")
         if not folds:
             raise FileNotFoundError(f"No model_concepts bundle found under {ds.name}.")
-        if not overwrite and store.exists("path_concept_risk_score"):
+        if not overwrite and store.output_exists("path_concept_risk_score"):
             progress.log(f"skip concept predictions {ds.name} (exists)")
             continue
 
@@ -156,11 +156,11 @@ def predict_concept(
             for fold in folds
         }
         predictions, risk_score = infer_concepts(
-            models, embeddings, risk, read_splits(ds, roots, progress=progress)
+            models, embeddings, risk, read_splits(ds, dirs, progress=progress)
         )
         store.write("path_concept_predictions", tag_dataset(predictions, ds.name))
         store.write("path_concept_risk_score", tag_dataset(risk_score, ds.name))
-        progress.log(f"wrote concept predictions {ds.name}")
+        progress.log(f"computed concept predictions {ds.name}")
 
 
 def _stack_embeddings(store: ArtifactStore, fold: int | None, ids: list[str]) -> NDArray[np.float32]:

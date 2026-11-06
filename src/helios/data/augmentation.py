@@ -11,7 +11,7 @@ import yaml
 from helios.data.cohort import ResolvedDataset
 from helios.data.hdf5 import array_dataset
 from helios.data.io import ArtifactStore, write
-from helios.data.resolver import Resolver, Roots
+from helios.data.resolver import Dirs, Resolver
 
 
 @dataclass(frozen=True)
@@ -60,7 +60,7 @@ class Augmentation:
         write(yaml.safe_dump(data, sort_keys=False), self.root / "augmentation.yaml", "txt")
 
     def store(self) -> ArtifactStore:
-        return ArtifactStore(Resolver(Roots(source_root=self.root, preprocessing_root=self.root)))
+        return ArtifactStore(Resolver(Dirs(source_dir=self.root, preprocessing_dir=self.root)))
 
 
 def select_augmentations(

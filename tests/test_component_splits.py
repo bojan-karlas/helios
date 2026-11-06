@@ -64,6 +64,26 @@ def test_group_by_keeps_patient_slides_in_one_fold() -> None:
         assert len(folds) == 1, f"patient P{p}'s slides landed in multiple folds: {folds}"
 
 
+@pytest.mark.parametrize("stratify_by", [["label"], ["label", "stage"]])
+def test_missing_stratification_values_are_retained_as_a_stratum(stratify_by) -> None:
+    meta = pd.DataFrame({
+        "image_id": [f"image-{i}" for i in range(18)],
+        "patient_id": [f"patient-{i}" for i in range(18)],
+        "label": [0.0, 1.0, np.nan] * 6,
+        "stage": [1, 2, 1] * 6,
+    })
+    expected = meta.copy()
+    for column in stratify_by:
+        expected[column] = [str(value) for value in meta[column]]
+    kwargs = dict(n_folds=3, stratify_by=stratify_by, group_by="patient_id", seed=42)
+    splits = generate_splits(meta, **kwargs)
+    pd.testing.assert_frame_equal(splits, generate_splits(expected, **kwargs))
+    assert len(splits) == len(meta) * 3
+    test_rows = splits[splits["split"] == "test"]
+    assert set(test_rows["image_id"]) == set(meta["image_id"])
+    assert test_rows["image_id"].is_unique
+
+
 def test_val_fraction_carves_out_val_without_touching_test(image_metadata: pd.DataFrame) -> None:
     splits = generate_splits(image_metadata, n_folds=3, val_fraction=0.3, seed=0)
     for _fold, group in splits.groupby("fold"):
