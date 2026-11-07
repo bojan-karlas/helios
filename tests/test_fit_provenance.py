@@ -55,7 +55,7 @@ def test_fit_saves_effective_parameters(monkeypatch, tmp_path, module, noun, com
     component = getattr(module, component_name)
     training_keys = {
         key for key, param in signature(component).parameters.items()
-        if param.kind == param.KEYWORD_ONLY and key not in {"progress", "fold"}
+        if param.kind == param.KEYWORD_ONLY and key not in {"progress", "fold", "val_slides"}
     }
     calls = []
 
@@ -70,6 +70,6 @@ def test_fit_saves_effective_parameters(monkeypatch, tmp_path, module, noun, com
     config = yaml.safe_load((store.path(artifact, fold=None) / "config.yaml").read_text())
     assert config == {"fit": {noun: expected}}
     assert len(calls) == 1
-    assert {key: value for key, value in calls[0].items() if key not in {"progress", "fold"}} == {
+    assert {key: value for key, value in calls[0].items() if key not in {"progress", "fold", "val_slides"}} == {
         key: expected[key] for key in training_keys
     }

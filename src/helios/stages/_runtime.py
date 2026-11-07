@@ -67,6 +67,7 @@ __all__ = [
     "folds_of",
     "folds_across",
     "train_ids",
+    "heldout_ids",
     "build_cohort_provenance",
     "build_bundle_metadata",
     "model_folds",
@@ -75,6 +76,7 @@ __all__ = [
 SPLIT_COLUMN = "split"
 FOLD_COLUMN = "fold"
 TRAIN_SPLIT = "train"
+TEST_SPLIT = "test"
 DATASET_COLUMN = "dataset"
 IMAGE_ID_COLUMN = "image_id"
 
@@ -260,13 +262,40 @@ def resolve_splits_path(
         return store.resolver.path("splits")
 
 
+def expand_fold_assignment(assignment: pd.DataFrame) -> pd.DataFrame:
+    """Expand a flat ``(image_id, fold)`` table to the long ``(image_id, fold, split)`` format.
+
+    Each row of a flat table names the one fold in which that image is held out:
+    the image is ``test`` in that fold and ``train`` in every other fold. Rows
+    with no fold are dropped, so those images are in no fold. An image listed
+    under more than one fold is an error, because its test fold would be ambiguous.
+    """
+    rows = assignment[[IMAGE_ID_COLUMN, FOLD_COLUMN]].dropna(subset=[FOLD_COLUMN])
+    repeated = rows.loc[rows[IMAGE_ID_COLUMN].duplicated(), IMAGE_ID_COLUMN].astype(str).unique().tolist()
+    if repeated:
+        raise ValueError(
+            f"Fold assignment lists {len(repeated)} image(s) more than once, "
+            f"so their test fold is ambiguous: {repeated[:5]}"
+        )
+    test_fold = rows[FOLD_COLUMN].astype(int)
+    folds = pd.DataFrame({FOLD_COLUMN: sorted(test_fold.unique().tolist())})
+    expanded = rows[[IMAGE_ID_COLUMN]].assign(_test_fold=test_fold).merge(folds, how="cross")
+    is_test = expanded[FOLD_COLUMN] == expanded["_test_fold"]
+    expanded[SPLIT_COLUMN] = is_test.map({True: TEST_SPLIT, False: TRAIN_SPLIT})
+    return expanded[[IMAGE_ID_COLUMN, FOLD_COLUMN, SPLIT_COLUMN]]
+
+
 def read_splits(
     store_or_ds: ArtifactStore | ResolvedDataset,
     dirs: StorageDirs | None = None,
     *,
     progress: Progress = DEFAULT_PROGRESS,
 ) -> pd.DataFrame | None:
-    """Read the selected file; only an absent implicit default permits no CV."""
+    """Read the selected file; only an absent implicit default permits no CV.
+
+    The file is either the long ``(image_id, fold, split)`` format or a flat
+    ``(image_id, fold)`` assignment, see :func:`expand_fold_assignment`.
+    """
     path = resolve_splits_path(store_or_ds, dirs)
     explicit = (
         (dirs is not None and dirs.splits_file is not None)
@@ -278,7 +307,10 @@ def read_splits(
     if not path.is_file():
         raise FileNotFoundError(f"Selected splits file does not exist or is not a file: {path}")
     progress.log(f"Loaded splits from {path}")
-    return read(path, "csv")
+    splits = read(path, "csv")
+    if {IMAGE_ID_COLUMN, FOLD_COLUMN} <= set(splits.columns) and SPLIT_COLUMN not in splits:
+        return expand_fold_assignment(splits)
+    return splits
 
 
 def folds_of(
@@ -340,6 +372,31 @@ def train_ids(
             rows = rows[rows[SPLIT_COLUMN] == TRAIN_SPLIT]
         split_ids = {str(i) for i in rows[IMAGE_ID_COLUMN]}
         ids = [i for i in all_ids if i in split_ids]
+    keep = filtered_ids(store, effective_where)
+    return ids if keep is None else [i for i in ids if i in keep]
+
+
+def heldout_ids(
+    store_or_ds: ArtifactStore | ResolvedDataset,
+    fold: int | None,
+    *,
+    where: str | None = None,
+    dirs: StorageDirs | None = None,
+) -> list[str]:
+    """Image ids in ``fold``'s test split (none when there is no CV).
+
+    The counterpart of :func:`train_ids`, with the same ``where`` handling.
+    """
+    store = cohort_store(store_or_ds, dirs) if isinstance(store_or_ds, ResolvedDataset) else store_or_ds
+    effective_where = where if where is not None else (
+        store_or_ds.where if isinstance(store_or_ds, ResolvedDataset) else None
+    )
+    splits = read_splits(store_or_ds, dirs)
+    if splits is None or fold is None or SPLIT_COLUMN not in splits:
+        return []
+    rows = splits[(splits[FOLD_COLUMN] == fold) & (splits[SPLIT_COLUMN] == TEST_SPLIT)]
+    split_ids = {str(i) for i in rows[IMAGE_ID_COLUMN]}
+    ids = [str(i) for i in store.read("image_metadata")[IMAGE_ID_COLUMN] if str(i) in split_ids]
     keep = filtered_ids(store, effective_where)
     return ids if keep is None else [i for i in ids if i in keep]
 

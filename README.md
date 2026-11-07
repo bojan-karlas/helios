@@ -456,6 +456,16 @@ per epoch, after the train/validation split. Validation and inference use origin
 This mode ignores `--aug-swap-prob`; `replace` and `augment` retain their existing
 tile-replacement and within-bag concatenation behavior.
 
+`fit mil` keeps the epoch with the best validation AUPRC, with early stopping.
+`--val-source internal` (default) holds out `--val-frac` of each fold's train slides;
+`--val-source test_fold` trains on all of them and validates on the fold's test slides.
+Out-of-fold scores are then optimistic, because the same slides choose the saved epoch.
+`test_fold` checks the folds before training: over the labeled slides, a slide cannot
+be both train and test in a fold, each test fold needs both classes, and every slide
+trained on must be held out in exactly one fold. `--val-aug-mode originals` (default)
+validates on original bags; `--val-aug-mode separate` also validates on each selected
+augmentation as its own bag, and needs an augmentation on every cohort.
+
 Saved logs contain `run.log`, `status.json`, `events.jsonl`, and worker logs.
 They never default to a dataset directory or depend on dataset ordering.
 `--run-tag` appends an optional kebab-case suffix to `<run_id>`.
@@ -601,6 +611,11 @@ helios fit mil --dataset /data/example \
 If the implicit default is absent, fit trains one fold-free model on the entire
 selected cohort, honoring filters. A missing explicitly selected file is an
 error: no other location is substituted.
+
+A splits file can also be your own fold assignment: a CSV with `image_id` and
+`fold`, where `fold` is the fold that holds the slide out. It is read as test in
+that fold and train in the others, by every stage. Slides not in the file are in
+no fold, and an image listed twice is an error. Other columns are ignored.
 
 ### Overwrite and resume behavior
 
