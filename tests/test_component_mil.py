@@ -136,6 +136,35 @@ def test_feedback_does_not_change_trained_weights(slides, caplog):
         np.testing.assert_array_equal(tensor.numpy(), visible._state_dict[key].numpy())
 
 
+@pytest.mark.parametrize("fails", [False, True])
+def test_training_is_strictly_deterministic_and_restores_settings(slides, monkeypatch, fails):
+    seen = []
+    objective = mil_component._MultiBranchGatedAMIL.objective
+
+    def recording_objective(self, *args, **kwargs):
+        seen.append((torch.are_deterministic_algorithms_enabled(),
+                     torch.is_deterministic_algorithms_warn_only_enabled(), torch.backends.cudnn.benchmark))
+        if fails:
+            raise RuntimeError("boom")
+        return objective(self, *args, **kwargs)
+
+    monkeypatch.setattr(mil_component._MultiBranchGatedAMIL, "objective", recording_objective)
+    torch.use_deterministic_algorithms(True, warn_only=True)
+    monkeypatch.setattr(torch.backends.cudnn, "benchmark", True)
+    try:
+        if fails:
+            with pytest.raises(RuntimeError, match="boom"):
+                train_mil(slides, max_epochs=1, val_frac=0, device="cpu")
+        else:
+            train_mil(slides, max_epochs=1, val_frac=0, device="cpu")
+        restored = (torch.are_deterministic_algorithms_enabled(),
+                    torch.is_deterministic_algorithms_warn_only_enabled(), torch.backends.cudnn.benchmark)
+    finally:
+        torch.use_deterministic_algorithms(False)
+    assert seen and set(seen) == {(True, False, False)}
+    assert restored == (True, True, True)
+
+
 def test_inference_reuses_network_and_refit_invalidates_it(
     slides: list[SlideFeatureRef], monkeypatch: pytest.MonkeyPatch,
 ) -> None:

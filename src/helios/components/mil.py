@@ -61,11 +61,17 @@ scripts, were resolved as follows:
 from __future__ import annotations
 
 import inspect
+import os
 import random
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
+
+# Deterministic cuBLAS needs a fixed workspace, configured before the process first uses it.
+os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
 
 import h5py
 import numpy as np
@@ -402,6 +408,11 @@ class MilAttentionModel(Model):
         return net
 
     def fit(self, inputs: list[SlideFeatureRef], **params: Any) -> MilAttentionModel:
+        """Train under strict deterministic torch: a nondeterministic op raises instead of running."""
+        with _deterministic_torch():
+            return self._fit(inputs, **params)
+
+    def _fit(self, inputs: list[SlideFeatureRef], **params: Any) -> MilAttentionModel:
         _inference_net.cache_clear()
         slides = inputs
         if not slides:
@@ -443,7 +454,8 @@ class MilAttentionModel(Model):
             f"train_slides={n_train_slides} validation_source={'provided' if val_slides is not None else 'internal'} "
             f"val_aug_mode={self.val_aug_mode} "
             f"max_epochs={self.max_epochs} patience={self.patience} aug_mode={self.aug_mode} "
-            f"aug_swap_prob={self.aug_swap_prob}"
+            f"aug_swap_prob={self.aug_swap_prob} torch={torch.__version__} cuda={torch.version.cuda} "
+            f"gpu={torch.cuda.get_device_name(dev) if dev.type == 'cuda' else 'none'}"
         )
         with TrainingProgress(progress, self.max_epochs, prefix).display() as feedback:
             for _epoch in range(self.max_epochs):
@@ -597,6 +609,9 @@ def train_mil(
     of ``slides`` (this fold's CV test slides are never visible here -- they are
     scored later by :func:`infer_mil`).
 
+    Training runs with strict deterministic torch algorithms, so repeated fits with the
+    same inputs and seed give identical weights on the same software and GPU model.
+
     Returns the fitted :class:`~helios.models.base.Model` (persisted as a bundle).
     """
     model = MilAttentionModel(
@@ -703,6 +718,21 @@ def _resolve_device(device: str) -> str:
     if device.startswith("cuda") and not torch.cuda.is_available():
         return "cpu"
     return device
+
+
+@contextmanager
+def _deterministic_torch() -> Iterator[None]:
+    """Enable strict deterministic algorithms, then restore the caller's settings."""
+    enabled = torch.are_deterministic_algorithms_enabled()
+    warn_only = torch.is_deterministic_algorithms_warn_only_enabled()
+    benchmark = torch.backends.cudnn.benchmark
+    torch.use_deterministic_algorithms(True)
+    torch.backends.cudnn.benchmark = False
+    try:
+        yield
+    finally:
+        torch.use_deterministic_algorithms(enabled, warn_only=warn_only)
+        torch.backends.cudnn.benchmark = benchmark
 
 
 def _seed_everything(seed: int) -> None:
