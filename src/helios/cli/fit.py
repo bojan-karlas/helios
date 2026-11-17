@@ -80,6 +80,10 @@ def mil(
     weight_decay: float | None = typer.Option(None, "--weight-decay", help="Adam weight decay."),
     max_epochs: int | None = typer.Option(None, "--max-epochs", help="Max training epochs per fold."),
     patience: int | None = typer.Option(None, "--patience", help="Early-stopping patience (epochs)."),
+    min_epochs: int | None = typer.Option(
+        None, "--min-epochs",
+        help="First epoch that may be kept; earlier epochs do not count toward --patience.",
+    ),
     val_frac: float | None = typer.Option(
         None, "--val-frac", help="Fraction of each fold's train slides held out for early-stopping."
     ),
@@ -136,6 +140,7 @@ def mil(
         "weight_decay": weight_decay,
         "max_epochs": max_epochs,
         "patience": patience,
+        "min_epochs": min_epochs,
         "val_frac": val_frac,
         "val_source": val_source,
         "val_aug_mode": val_aug_mode,

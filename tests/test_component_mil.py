@@ -136,6 +136,25 @@ def test_feedback_does_not_change_trained_weights(slides, caplog):
         np.testing.assert_array_equal(tensor.numpy(), visible._state_dict[key].numpy())
 
 
+@pytest.mark.parametrize(("min_epochs", "selected", "completed"), [(1, 1, 3), (3, 4, 6)])
+def test_min_epochs_excludes_early_epochs_from_selection_and_patience(
+    slides, monkeypatch, caplog, min_epochs, selected, completed
+):
+    scores = iter([0.9, 0.8, 0.3, 0.4, 0.35, 0.2, 0.1])
+    monkeypatch.setattr("helios.components.mil._validation_metrics", lambda *a, **k: (next(scores), 0.5))
+    with caplog.at_level("INFO", logger="helios"):
+        train_mil(
+            slides, max_epochs=7, patience=2, min_epochs=min_epochs, val_frac=0.34, device="cpu",
+            progress=Progress(use_tqdm=False),
+        )
+    assert f"training complete epochs={completed}/7 selected_epoch={selected}" in caplog.text
+
+
+def test_min_epochs_must_fit_within_max_epochs(slides) -> None:
+    with pytest.raises(ValueError, match="min_epochs"):
+        train_mil(slides, max_epochs=3, min_epochs=4, device="cpu")
+
+
 @pytest.mark.parametrize("fails", [False, True])
 def test_training_is_strictly_deterministic_and_restores_settings(slides, monkeypatch, fails):
     seen = []

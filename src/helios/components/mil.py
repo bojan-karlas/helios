@@ -343,6 +343,7 @@ class MilAttentionModel(Model):
         weight_decay: float = 1e-4,
         max_epochs: int = 20,
         patience: int = 5,
+        min_epochs: int = 1,
         val_frac: float = 0.15,
         seed: int = 42,
         aug_swap_prob: float = 0.5,
@@ -350,6 +351,8 @@ class MilAttentionModel(Model):
         val_aug_mode: Literal["originals", "separate"] = "originals",
         device: str = "cuda",
     ) -> None:
+        if not 1 <= min_epochs <= max_epochs:
+            raise ValueError(f"min_epochs must be between 1 and max_epochs ({max_epochs}), got {min_epochs}.")
         if aug_mode not in ("replace", "augment", "separate"):
             raise ValueError(f"Unknown MIL augmentation mode: {aug_mode!r}.")
         if val_aug_mode not in ("originals", "separate"):
@@ -362,6 +365,7 @@ class MilAttentionModel(Model):
         self.weight_decay = weight_decay
         self.max_epochs = max_epochs
         self.patience = patience
+        self.min_epochs = min_epochs
         self.val_frac = val_frac
         self.seed = seed
         self.aug_swap_prob = aug_swap_prob
@@ -453,7 +457,8 @@ class MilAttentionModel(Model):
             f"{prefix}MIL device={dev} train={len(train_refs)} validation={len(val_refs)} "
             f"train_slides={n_train_slides} validation_source={'provided' if val_slides is not None else 'internal'} "
             f"val_aug_mode={self.val_aug_mode} "
-            f"max_epochs={self.max_epochs} patience={self.patience} aug_mode={self.aug_mode} "
+            f"max_epochs={self.max_epochs} min_epochs={self.min_epochs} patience={self.patience} "
+            f"aug_mode={self.aug_mode} "
             f"aug_swap_prob={self.aug_swap_prob} torch={torch.__version__} cuda={torch.version.cuda} "
             f"gpu={torch.cuda.get_device_name(dev) if dev.type == 'cuda' else 'none'}"
         )
@@ -480,18 +485,20 @@ class MilAttentionModel(Model):
                 metrics = ""
                 if val_refs:
                     auprc, auroc = _validation_metrics(net, val_refs, device=dev, feedback=feedback)
-                    improved = auprc > best_auprc
+                    # Epochs before min_epochs are neither kept nor counted toward patience.
+                    eligible = _epoch + 1 >= self.min_epochs
+                    improved = eligible and auprc > best_auprc
                     if improved:
                         best_auprc = auprc
                         best_epoch = _epoch + 1
                         best_state = {k: v.detach().cpu().clone() for k, v in net.state_dict().items()}
                         epochs_no_improve = 0
-                    else:
+                    elif eligible:
                         epochs_no_improve += 1
-                    metrics = (
-                        f" val_auprc={auprc:.4f} val_auroc={auroc:.4f}"
+                    metrics = f" val_auprc={auprc:.4f} val_auroc={auroc:.4f}" + (
                         f"{' (best)' if improved else ''} best_epoch={best_epoch} "
                         f"best_auprc={best_auprc:.4f} patience={epochs_no_improve}/{self.patience}"
+                        if eligible else f" (before min_epochs={self.min_epochs})"
                     )
                 else:
                     best_state = {k: v.detach().cpu().clone() for k, v in net.state_dict().items()}
@@ -578,6 +585,7 @@ def train_mil(
     weight_decay: float = 1e-4,
     max_epochs: int = 20,
     patience: int = 5,
+    min_epochs: int = 1,
     val_frac: float = 0.15,
     seed: int = 42,
     device: str = "cuda",
@@ -604,6 +612,8 @@ def train_mil(
     slide in ``slides`` is trained on, and ``val_frac`` is not used. Validation scores
     original bags only, unless ``val_aug_mode="separate"``: then each original and
     each augmentation of a validation slide is a separate validation bag.
+    Epochs before ``min_epochs`` are validated but cannot be kept, and do not count
+    toward ``patience``.
 
     Early stopping monitors AUPRC on an internal ``val_frac`` split carved out
     of ``slides`` (this fold's CV test slides are never visible here -- they are
@@ -623,6 +633,7 @@ def train_mil(
         weight_decay=weight_decay,
         max_epochs=max_epochs,
         patience=patience,
+        min_epochs=min_epochs,
         val_frac=val_frac,
         seed=seed,
         aug_swap_prob=aug_swap_prob,

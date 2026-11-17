@@ -14,6 +14,7 @@ fit:
     lambda_div: 0.01
     lr: 0.0001
     max_epochs: 20
+    min_epochs: 1
     model: virchow2
     n_branches: 4
     num_heads: 4
@@ -21,8 +22,8 @@ fit:
     seed: 42
     size_mm: 0.25
     target: disease_pfs_recurred_5yfu
-    val_frac: 0.15
     val_aug_mode: originals
+    val_frac: 0.15
     val_source: internal
     weight_decay: 0.0001
   morphology:
@@ -72,13 +73,13 @@ predict:
 prep:
   augment:
     augmentation_batch_size: 16
+    augmentation_dir: null
     batch_size: 64
     checkpoint: []
     device: cuda
     method: cyclegan
     model:
     - virchow2
-    augmentation_dir: null
     size_mm:
     - 0.25
     source: null
