@@ -119,12 +119,14 @@ def console_progress(
     run_tag: str | None = None,
 ) -> Progress:
     """A console Progress that writes status.json / events.jsonl / run.log under <logs_dir>/<run_id>/."""
+    from helios.utils.provenance import CODE_VERSION
+
     if logs_dir is None:
         configure_logging()
         return Progress.console()
     run_id, run_dir = create_run_logs_dir(logs_dir, run_tag)
     logger = configure_logging(run_dir)
     reporter = ProgressReporter(run_dir)
-    reporter.update(run_id=run_id, logs_dir=str(run_dir))
-    logger.info(f"run_id={run_id} logs_dir={run_dir}")
+    reporter.update(run_id=run_id, logs_dir=str(run_dir), code=CODE_VERSION)
+    logger.info(f"run_id={run_id} logs_dir={run_dir} code={CODE_VERSION}")
     return Progress.console(reporter=reporter)

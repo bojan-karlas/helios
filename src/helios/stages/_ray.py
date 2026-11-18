@@ -56,15 +56,21 @@ class ParallelConfig:
 
 @dataclass(frozen=True)
 class WorkContext:
-    """What a work unit receives besides its item: a progress sink and its worker identity."""
+    """What a work unit receives besides its item: a progress sink, its worker identity, and the run's logs."""
 
     progress: Progress
     worker_id: str
     log_path: Path | None = None
+    run_dir: Path | None = None
 
     @property
     def log_path_str(self) -> str | None:
         return str(self.log_path) if self.log_path is not None else None
+
+    @property
+    def run_id(self) -> str | None:
+        """The run's ID (its logs directory name), or ``None`` when logs are not saved."""
+        return self.run_dir.name if self.run_dir is not None else None
 
 
 @dataclass(frozen=True)
@@ -310,7 +316,10 @@ def _execute_unit(
     worker_id = worker_identity("ray")
     with worker_log(logs_dir, worker_id) as (logger, log_path):
         sink = _ActorSink(actor_handle, worker_id, work_id)
-        ctx = WorkContext(Progress(reporter=sink, use_tqdm=False, logger=logger), worker_id, log_path)
+        ctx = WorkContext(
+            Progress(reporter=sink, use_tqdm=False, logger=logger), worker_id, log_path,
+            Path(logs_dir) if logs_dir is not None else None,
+        )
         sink.event("start", log_path=ctx.log_path_str)
         logger.info(f"START stage={stage} work_id={work_id} host={socket.gethostname()} pid={os.getpid()}")
         try:
@@ -390,7 +399,7 @@ def run_work_units(
     if not cfg.enabled or not units:
         worker_id = worker_identity("local")
         with worker_log(run_logs_dir, worker_id) as (logger, log_path):
-            ctx = WorkContext(progress, worker_id, log_path)
+            ctx = WorkContext(progress, worker_id, log_path, run_logs_dir)
             for idx, (item, wid) in enumerate(zip(progress.task(units, desc=stage), work_ids, strict=True)):
                 tracker.on_start(wid, worker_id, ctx.log_path_str)
                 publish()

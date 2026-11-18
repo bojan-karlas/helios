@@ -41,6 +41,7 @@ dependencies = [
     "ray>=2.9",
     "torchmetrics>=1.0",
     "lightning>=2.0",
+    "plotly>=5.20",
 ]
 
 [project.optional-dependencies]

@@ -181,6 +181,7 @@ def _fit_morphology_fold(
         resolved,
         dirs,
         fold=fold,
+        run_id=ctx.run_id,
     )
     out.write("model_morphology", bundle, metadata=meta, fold=fold)
     ctx.progress.log(f"computed model_morphology fold={fold}")

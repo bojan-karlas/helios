@@ -63,11 +63,12 @@ from __future__ import annotations
 import inspect
 import os
 import random
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path
+from time import perf_counter
 from typing import Any, Literal
 
 # Deterministic cuBLAS needs a fixed workspace, configured before the process first uses it.
@@ -83,6 +84,7 @@ from numpy.typing import NDArray
 from sklearn.metrics import average_precision_score, roc_auc_score
 from sklearn.model_selection import train_test_split
 
+from helios.components.mil_trace import BagIdentity, MilTrainingTracer
 from helios.models.base import Model, register_model
 from helios.progress import DEFAULT_PROGRESS, Progress
 from helios.progress.training import TrainingProgress, duration
@@ -311,8 +313,20 @@ class _MultiBranchGatedAMIL(nn.Module):
         *,
         lambda_div: float = 0.01,
     ) -> torch.Tensor:
-        y_prob, attention, _, _ = self.forward(x)
-        y_prob = torch.clamp(y_prob, 1e-5, 1.0 - 1e-5)
+        return self.objective_terms(x, y, w_pos, w_neg, lambda_div=lambda_div)[0]
+
+    def objective_terms(
+        self,
+        x: torch.Tensor,
+        y: torch.Tensor,
+        w_pos: float,
+        w_neg: float,
+        *,
+        lambda_div: float = 0.01,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """``(total, classification, diversity, probability)``; the probability is before clamping."""
+        probability, attention, _, _ = self.forward(x)
+        y_prob = torch.clamp(probability, 1e-5, 1.0 - 1e-5)
         weight = w_pos if float(y.item()) == 1 else w_neg
         nll = weight * (-(y * torch.log(y_prob) + (1.0 - y) * torch.log(1.0 - y_prob)))
 
@@ -320,7 +334,7 @@ class _MultiBranchGatedAMIL(nn.Module):
         sim = torch.mm(att_norm, att_norm.t())
         eye = torch.eye(attention.size(0), device=attention.device)
         div_loss = lambda_div * torch.sum(sim * (1 - eye))
-        return nll + div_loss
+        return nll + div_loss, nll, div_loss, probability
 
 
 @register_model("mil_amil")
@@ -430,11 +444,16 @@ class MilAttentionModel(Model):
         dev = torch.device(_resolve_device(self.device))
 
         val_slides: list[SlideFeatureRef] | None = params.get("val_slides")
+        trace_refs: list[SlideFeatureRef] = list(params.get("trace_slides") or [])
+        on_epoch_end: Callable[[], None] | None = params.get("on_epoch_end")
+        trace_dir: Path | None = params.get("trace_dir")
         if val_slides is not None:
             train_refs, val_refs = list(slides), list(val_slides)
         else:
             train_refs, val_refs = _split_train_val(slides, val_frac=self.val_frac, seed=self.seed)
         n_train_slides = len(train_refs)
+        versions = _version_index([*train_refs, *val_refs])
+        mixed_bags = self.aug_mode != "separate" and self.aug_swap_prob > 0
         if self.aug_mode == "separate":
             train_refs = _separate_bags(train_refs)
         if self.val_aug_mode == "separate":
@@ -443,7 +462,31 @@ class MilAttentionModel(Model):
 
         net = self._build_net().to(dev)
         optimizer = torch.optim.Adam(net.parameters(), lr=self.lr, weight_decay=self.weight_decay)
+        tracer = MilTrainingTracer(net, out_dir=trace_dir, n_branches=self.n_branches)
+        try:
+            return self._train(
+                net, optimizer, tracer, train_refs, val_refs, trace_refs, versions, mixed_bags,
+                rng=rng, dev=dev, progress=progress, prefix=prefix, n_train_slides=n_train_slides,
+                validation_source="provided" if val_slides is not None else "internal", on_epoch_end=on_epoch_end,
+            )
+        finally:
+            tracer.close()
 
+    def _train(
+        self, net: _MultiBranchGatedAMIL, optimizer: torch.optim.Optimizer, tracer: MilTrainingTracer,
+        train_refs: list[SlideFeatureRef], val_refs: list[SlideFeatureRef], trace_refs: list[SlideFeatureRef],
+        versions: dict[Path, int], mixed_bags: bool, *, rng: np.random.Generator, dev: torch.device,
+        progress: Progress, prefix: str, n_train_slides: int, validation_source: str,
+        on_epoch_end: Callable[[], None] | None = None,
+    ) -> MilAttentionModel:
+        def identity(ref: SlideFeatureRef, *, training: bool) -> BagIdentity:
+            if training and mixed_bags and ref.aug_features_paths:
+                return BagIdentity(ref.image_id, "mixed", -1)
+            index = versions.get(ref.features_path, 0)
+            return BagIdentity(ref.image_id, "original" if index == 0 else "augmented", index)
+
+        def scored(rows: list[tuple[SlideFeatureRef, float | None]]) -> list[tuple[BagIdentity, float, float | None]]:
+            return [(identity(ref, training=False), float(ref.label), prob) for ref, prob in rows]  # type: ignore[arg-type]
         labels = np.array([float(s.label) for s in train_refs])
         n_pos, n_neg = float((labels == 1).sum()), float((labels == 0).sum())
         w_pos = len(labels) / (2.0 * n_pos) if n_pos > 0 else 1.0
@@ -455,36 +498,62 @@ class MilAttentionModel(Model):
         best_epoch = 0
         progress.log(
             f"{prefix}MIL device={dev} train={len(train_refs)} validation={len(val_refs)} "
-            f"train_slides={n_train_slides} validation_source={'provided' if val_slides is not None else 'internal'} "
+            f"train_slides={n_train_slides} validation_source={validation_source} "
             f"val_aug_mode={self.val_aug_mode} "
             f"max_epochs={self.max_epochs} min_epochs={self.min_epochs} patience={self.patience} "
             f"aug_mode={self.aug_mode} "
             f"aug_swap_prob={self.aug_swap_prob} torch={torch.__version__} cuda={torch.version.cuda} "
-            f"gpu={torch.cuda.get_device_name(dev) if dev.type == 'cuda' else 'none'}"
+            f"gpu={torch.cuda.get_device_name(dev) if dev.type == 'cuda' else 'none'} "
+            f"trace_slides={len(trace_refs)} trace_dir={tracer.out_dir}"
         )
+        step = 0
         with TrainingProgress(progress, self.max_epochs, prefix).display() as feedback:
             for _epoch in range(self.max_epochs):
                 feedback.start_epoch()
                 net.train()
+                seconds = {"data": 0.0, "train": 0.0, "validation": 0.0, "test": 0.0}
                 shuffled = [train_refs[idx] for idx in rng.permutation(len(train_refs))]
                 for ref in feedback.phase(shuffled, "train"):
+                    started = perf_counter()
                     bag = _load_training_bag(
                         ref, aug_swap_prob=self.aug_swap_prob, aug_mode=self.aug_mode, rng=rng
                     )
+                    loaded = perf_counter()
+                    seconds["data"] += loaded - started
                     if bag.shape[0] == 0:
                         feedback.skipped += 1
                         continue
                     x = torch.from_numpy(bag).to(dev)
                     y = torch.tensor(float(ref.label), device=dev)
                     optimizer.zero_grad()
-                    loss = net.objective(x, y, w_pos, w_neg, lambda_div=self.lambda_div)
+                    tracer.begin_step()
+                    loss, nll, div_loss, probability = net.objective_terms(
+                        x, y, w_pos, w_neg, lambda_div=self.lambda_div
+                    )
+                    tracer.end_forward()
                     loss.backward()
+                    tracer.before_optimizer_step()
                     optimizer.step()
+                    step += 1
+                    tracer.end_step(
+                        epoch=_epoch + 1, step=step, identity=identity(ref, training=True),
+                        label=float(ref.label), n_tiles=int(bag.shape[0]), total=loss, classification=nll,
+                        diversity=div_loss, probability=probability,
+                        class_weight=w_pos if float(ref.label) == 1 else w_neg,
+                    )
                     feedback.record_loss(float(loss.detach().item()))
+                    seconds["train"] += perf_counter() - loaded
 
                 metrics = ""
+                eligible, improved = True, False
+                val_scores: list[tuple[SlideFeatureRef, float | None]] = []
+                test_scores: list[tuple[SlideFeatureRef, float | None]] = []
                 if val_refs:
-                    auprc, auroc = _validation_metrics(net, val_refs, device=dev, feedback=feedback)
+                    started = perf_counter()
+                    auprc, auroc = _validation_metrics(
+                        net, val_refs, device=dev, feedback=feedback, scores_out=val_scores
+                    )
+                    seconds["validation"] = perf_counter() - started
                     # Epochs before min_epochs are neither kept nor counted toward patience.
                     eligible = _epoch + 1 >= self.min_epochs
                     improved = eligible and auprc > best_auprc
@@ -503,12 +572,26 @@ class MilAttentionModel(Model):
                 else:
                     best_state = {k: v.detach().cpu().clone() for k, v in net.state_dict().items()}
                     best_epoch = _epoch + 1
+                if trace_refs:
+                    started = perf_counter()
+                    test_scores = _score_bags(net, trace_refs, device=dev, feedback=feedback, phase="test")
+                    seconds["test"] = perf_counter() - started
+                epoch_trace = tracer.end_epoch(
+                    epoch=_epoch + 1, val=scored(val_scores), test=scored(test_scores), w_pos=w_pos, w_neg=w_neg,
+                    lr=float(optimizer.param_groups[0]["lr"]), eligible=eligible, improved=improved,
+                    skipped=feedback.skipped, seconds=seconds,
+                )
+                if on_epoch_end is not None:
+                    on_epoch_end()
                 elapsed = feedback.finish_epoch()
                 progress.log(
                     f"{prefix}epoch={_epoch + 1}/{self.max_epochs} "
                     f"loss={feedback.mean_loss} skipped={feedback.skipped} elapsed={duration(elapsed)}"
                     f" validation_skipped={feedback.validation_skipped}"
                     f"{metrics} ETA to {self.max_epochs} epochs={feedback.budget_eta()}"
+                    f" loss_spikes={epoch_trace['loss_spikes']} grad_spikes={epoch_trace['grad_spikes']}"
+                    f" max_grad_total={epoch_trace['max_grad_total']:.4g}"
+                    + (f" test_auprc={epoch_trace['test_auprc']:.4f}" if trace_refs else "")
                 )
                 if val_refs and not improved and epochs_no_improve >= self.patience:
                     progress.log(f"{prefix}early stopping; restoring best_epoch={best_epoch}")
@@ -519,6 +602,7 @@ class MilAttentionModel(Model):
                 f"{prefix}training complete epochs={feedback.completed}/{self.max_epochs} "
                 f"selected_epoch={best_epoch} elapsed={duration(feedback.elapsed)}"
             )
+            progress.log(f"{prefix}training trace {tracer.summary()}")
 
         self._state_dict = best_state
         return self
@@ -592,6 +676,9 @@ def train_mil(
     progress: Progress = DEFAULT_PROGRESS,
     fold: int | None = None,
     val_slides: list[SlideFeatureRef] | None = None,
+    trace_dir: Path | None = None,
+    trace_slides: list[SlideFeatureRef] | None = None,
+    on_epoch_end: Callable[[], None] | None = None,
 ) -> Model:
     """Fit one A-MIL model on a fold's training slides.
 
@@ -622,6 +709,11 @@ def train_mil(
     Training runs with strict deterministic torch algorithms, so repeated fits with the
     same inputs and seed give identical weights on the same software and GPU model.
 
+    Every fit records a training trace (see :mod:`helios.components.mil_trace`): it is
+    written to ``trace_dir`` when given, and summarized in the log either way. Slides in
+    ``trace_slides`` are scored after every epoch for the trace only; they never affect
+    training or epoch selection. ``on_epoch_end`` is called after each epoch's trace is written.
+
     Returns the fitted :class:`~helios.models.base.Model` (persisted as a bundle).
     """
     model = MilAttentionModel(
@@ -641,7 +733,10 @@ def train_mil(
         val_aug_mode=val_aug_mode,
         device=device,
     )
-    return model.fit(slides, progress=progress, fold_label=fold, val_slides=val_slides)
+    return model.fit(
+        slides, progress=progress, fold_label=fold, val_slides=val_slides, trace_dir=trace_dir,
+        trace_slides=trace_slides, on_epoch_end=on_epoch_end,
+    )
 
 
 def infer_mil_score(
@@ -855,24 +950,49 @@ def _split_train_val(
 def _validation_metrics(
     net: _MultiBranchGatedAMIL, val_refs: list[SlideFeatureRef], *, device: torch.device,
     feedback: TrainingProgress | None = None,
+    scores_out: list[tuple[SlideFeatureRef, float | None]] | None = None,
 ) -> tuple[float, float]:
-    """Validation ``(auprc, auroc)``; ``auprc`` drives early stopping, ``auroc`` is reported alongside it."""
+    """Validation ``(auprc, auroc)``; ``auprc`` drives early stopping, ``auroc`` is reported alongside it.
+
+    Each bag's probability (``None`` for an empty bag) is appended to ``scores_out`` when given.
+    """
+    scores = _score_bags(net, val_refs, device=device, feedback=feedback, phase="valid")
+    if scores_out is not None:
+        scores_out.extend(scores)
+    probs = [prob for _, prob in scores if prob is not None]
+    labels = [int(ref.label) for ref, prob in scores if prob is not None]  # type: ignore[arg-type]
+    if len(set(labels)) < 2:
+        return 0.0, 0.0
+    return float(average_precision_score(labels, probs)), float(roc_auc_score(labels, probs))
+
+
+def _score_bags(
+    net: _MultiBranchGatedAMIL, refs: list[SlideFeatureRef], *, device: torch.device,
+    feedback: TrainingProgress | None = None, phase: str = "valid",
+) -> list[tuple[SlideFeatureRef, float | None]]:
+    """Each bag's probability in eval mode, or ``None`` when no foreground tiles remain."""
     net.eval()
-    probs: list[float] = []
-    labels: list[int] = []
+    scores: list[tuple[SlideFeatureRef, float | None]] = []
     with torch.no_grad():
-        for ref in feedback.phase(val_refs, "valid") if feedback is not None else val_refs:
+        for ref in feedback.phase(refs, phase) if feedback is not None else refs:
             bag = _read_hdf5_features(ref.features_path)
             is_background, _ = _read_tile_background(ref.background_path, len(bag))
             bag = bag[~is_background]
             if bag.shape[0] == 0:
-                if feedback is not None:
+                if feedback is not None and phase == "valid":
                     feedback.validation_skipped += 1
+                scores.append((ref, None))
                 continue
-            x = torch.from_numpy(bag).to(device)
-            prob, _, _, _ = net(x)
-            probs.append(float(prob.item()))
-            labels.append(int(ref.label))  # type: ignore[arg-type]
-    if len(set(labels)) < 2:
-        return 0.0, 0.0
-    return float(average_precision_score(labels, probs)), float(roc_auc_score(labels, probs))
+            prob, _, _, _ = net(torch.from_numpy(bag).to(device))
+            scores.append((ref, float(prob.item())))
+    return scores
+
+
+def _version_index(refs: list[SlideFeatureRef]) -> dict[Path, int]:
+    """Map each feature path to its slide version: 0 for the original, ``i`` for the i-th augmentation."""
+    index: dict[Path, int] = {}
+    for ref in refs:
+        index[ref.features_path] = 0
+        for i, path in enumerate(ref.aug_features_paths, 1):
+            index[path] = i
+    return index

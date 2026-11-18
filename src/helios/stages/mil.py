@@ -7,6 +7,7 @@ whole-image scores to a single shipped value per image.
 """
 from __future__ import annotations
 
+import logging
 from functools import lru_cache, partial
 from pathlib import Path
 from typing import Any, Literal
@@ -15,11 +16,13 @@ import pandas as pd
 
 from helios.components.features import FEATURE_MODELS
 from helios.components.mil import SlideFeatureRef, infer_mil, infer_mil_score, reduce_whole_image_risk, train_mil
+from helios.components.mil_trace_report import REPORT_NAME, render_trace_report
 from helios.data.augmentation import Augmentation, select_augmentations, validate_feature_alignment
 from helios.data.bundle import MANIFEST_NAME, load_bundle
 from helios.data.cohort import ResolvedDataset
 from helios.data.io import ArtifactStore
 from helios.progress import DEFAULT_PROGRESS, Progress
+from helios.progress.reporter import ProgressReporter
 from helios.stages._ray import WorkContext, gpu_reservation, run_work_units
 from helios.stages._runtime import (
     DatasetArgs,
@@ -58,6 +61,9 @@ DEFAULT_VAL_AUG_MODE: Literal["originals", "separate"] = "originals"
 DEFAULT_SEED: int = 42
 DEFAULT_DEVICE: str = "cuda"
 DEFAULT_SCORES_ONLY: bool = False
+DEFAULT_TRACE_TEST_FOLD: bool = False
+#: How often an open trace report reloads itself while training runs.
+TRACE_REPORT_REFRESH_SECONDS = 60
 
 
 def fit_mil(
@@ -85,6 +91,7 @@ def fit_mil(
     val_aug_mode: Literal["originals", "separate"] = DEFAULT_VAL_AUG_MODE,
     seed: int = DEFAULT_SEED,
     device: str = DEFAULT_DEVICE,
+    trace_test_fold: bool = DEFAULT_TRACE_TEST_FOLD,
     overwrite: bool = False,
     progress: Progress = DEFAULT_PROGRESS,
 ) -> None:
@@ -102,6 +109,11 @@ def fit_mil(
     scores optimistic, because the test slides also choose the saved epoch.
     ``val_aug_mode="separate"`` also scores each validation slide's augmentations as
     separate bags, and requires an augmentation on every cohort.
+
+    Each fold writes a training trace under ``<run logs>/traces/mil/fold=<fold>/`` when
+    logs are saved, and ``<run logs>/trace-report.html`` is refreshed after every epoch.
+    ``trace_test_fold`` also scores the fold's test slides after every epoch, for the
+    trace only: they never affect training or epoch selection.
     """
     if model not in FEATURE_MODELS:
         raise ValueError(f"Unknown feature model {model!r}. Available: {list(FEATURE_MODELS)}.")
@@ -125,9 +137,12 @@ def fit_mil(
             raise ValueError(f"Missing MIL target column {target!r} in {ds.root}.")
     if val_source == "test_fold":
         _check_test_fold_assignment(resolved, folds, target=target, dirs=dirs)
+    if trace_test_fold and folds == [None]:
+        raise ValueError("trace_test_fold requires a fold assignment; there is no test fold to trace.")
 
     slides_by_fold: dict[int | None, list[SlideFeatureRef]] = {}
     val_slides_by_fold: dict[int | None, list[SlideFeatureRef]] = {}
+    trace_slides_by_fold: dict[int | None, list[SlideFeatureRef]] = {}
     validated: set[tuple[Path, Path]] = set()
     for fold in folds:
         if not overwrite and out.output_exists("model_mil", fold=fold):
@@ -141,8 +156,12 @@ def fit_mil(
                 validated=validated, progress=progress,
             )
             slides.extend(collect(train_ids(ds, fold, where=ds.where, dirs=dirs), role="training"))
-            if val_source == "test_fold":
-                val_slides.extend(collect(heldout_ids(ds, fold, where=ds.where, dirs=dirs), role="test-fold"))
+            if val_source == "test_fold" or trace_test_fold:
+                held_out = collect(heldout_ids(ds, fold, where=ds.where, dirs=dirs), role="test-fold")
+                if val_source == "test_fold":
+                    val_slides.extend(held_out)
+                if trace_test_fold:
+                    trace_slides_by_fold.setdefault(fold, []).extend(held_out)
         slides_by_fold[fold] = slides
         if val_source == "test_fold":
             val_slides_by_fold[fold] = val_slides
@@ -167,16 +186,36 @@ def fit_mil(
         "val_aug_mode": val_aug_mode,
         "seed": seed,
         "device": device,
+        "trace_test_fold": trace_test_fold,
     }
-    run_work_units(
-        list(slides_by_fold),
-        partial(
-            _fit_fold, slides_by_fold=slides_by_fold, val_slides_by_fold=val_slides_by_fold, out=out, params=params,
-            resolved=resolved, dirs=dirs,
-        ),
-        stage="fit mil", progress=progress, parallel=parallel,
-        num_gpus=gpu_reservation(device, parallel),
-    )
+    reporter = progress.reporter
+    run_dir = reporter.out_dir if isinstance(reporter, ProgressReporter) else None
+    if run_dir is not None and slides_by_fold:
+        progress.log(f"training trace report: {run_dir / REPORT_NAME}")
+    try:
+        run_work_units(
+            list(slides_by_fold),
+            partial(
+                _fit_fold, slides_by_fold=slides_by_fold, val_slides_by_fold=val_slides_by_fold,
+                trace_slides_by_fold=trace_slides_by_fold, out=out, params=params, resolved=resolved, dirs=dirs,
+            ),
+            stage="fit mil", progress=progress, parallel=parallel,
+            num_gpus=gpu_reservation(device, parallel),
+        )
+    finally:
+        if run_dir is not None and slides_by_fold:
+            _refresh_trace_report(run_dir, progress, refresh_seconds=None)
+
+
+def _refresh_trace_report(run_dir: Path, progress: Progress, *, refresh_seconds: int | None) -> None:
+    """Rewrite the run's trace report; a failure is logged and never interrupts training."""
+    try:
+        render_trace_report(
+            [run_dir / "traces"], run_dir / REPORT_NAME, refresh_seconds=refresh_seconds,
+            title=f"MIL training traces: {run_dir.name}",
+        )
+    except Exception as exc:  # noqa: BLE001
+        progress.log(f"could not write the training trace report: {type(exc).__name__}: {exc}", level=logging.WARNING)
 
 
 def _slide_refs(
@@ -285,15 +324,30 @@ def _check_test_fold_assignment(
 
 def _fit_fold(
     fold: int | None, ctx: WorkContext, *, slides_by_fold: dict[int | None, list[SlideFeatureRef]],
-    val_slides_by_fold: dict[int | None, list[SlideFeatureRef]], out: ArtifactStore, params: dict[str, Any], resolved: list[ResolvedDataset], dirs: StorageDirs | None,
+    val_slides_by_fold: dict[int | None, list[SlideFeatureRef]],
+    trace_slides_by_fold: dict[int | None, list[SlideFeatureRef]], out: ArtifactStore, params: dict[str, Any],
+    resolved: list[ResolvedDataset], dirs: StorageDirs | None,
 ) -> str:
     slides = slides_by_fold[fold]
     training = {
         key: value for key, value in params.items()
-        if key not in {"size_mm", "model", "target", "augmentations", "val_source"}
+        if key not in {"size_mm", "model", "target", "augmentations", "val_source", "trace_test_fold"}
     }
-    bundle = train_mil(slides, **training, progress=ctx.progress, fold=fold, val_slides=val_slides_by_fold.get(fold))
-    meta = build_bundle_metadata("mil", params, resolved, dirs, fold=fold)
+    trace_dir = None
+    if ctx.run_dir is not None:
+        trace_dir = ctx.run_dir / "traces" / "mil"
+        if fold is not None:
+            trace_dir = trace_dir / f"fold={fold}"
+    on_epoch_end = None
+    if ctx.run_dir is not None:
+        on_epoch_end = partial(
+            _refresh_trace_report, ctx.run_dir, ctx.progress, refresh_seconds=TRACE_REPORT_REFRESH_SECONDS,
+        )
+    bundle = train_mil(
+        slides, **training, progress=ctx.progress, fold=fold, val_slides=val_slides_by_fold.get(fold),
+        trace_dir=trace_dir, trace_slides=trace_slides_by_fold.get(fold), on_epoch_end=on_epoch_end,
+    )
+    meta = build_bundle_metadata("mil", params, resolved, dirs, fold=fold, run_id=ctx.run_id)
     out.write("model_mil", bundle, metadata=meta, fold=fold)
     ctx.progress.log(f"computed model_mil fold={fold} (n_train={len(slides)})")
     return "completed"

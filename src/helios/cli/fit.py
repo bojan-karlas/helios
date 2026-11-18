@@ -103,6 +103,10 @@ def mil(
     ),
     seed: int | None = typer.Option(None, "--seed", help="Random seed."),
     device: str | None = typer.Option(None, "--device", help="Torch device (cuda, cpu)."),
+    trace_test_fold: bool | None = typer.Option(
+        None, "--trace-test-fold/--no-trace-test-fold",
+        help="Also score each fold's test slides after every epoch, for the training trace only.",
+    ),
     filter: str | None = _FILTER,
     config: Path | None = _CONFIG,
     overwrite: bool = _OVERWRITE,
@@ -146,6 +150,7 @@ def mil(
         "val_aug_mode": val_aug_mode,
         "seed": seed,
         "device": device,
+        "trace_test_fold": trace_test_fold,
     }
     params = load_stage_params("fit", "mil", config_path=config, overrides=overrides)
     fit_mil(

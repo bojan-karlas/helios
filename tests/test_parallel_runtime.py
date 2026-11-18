@@ -68,6 +68,24 @@ def test_opt_in_single_unit_runs_remotely(cluster, tmp_path: Path, persistent: b
     assert output["resources"]["CPU"] == 2
 
 
+def _record_run(unit: int, ctx: WorkContext, *, root: Path) -> str:
+    (root / f"{unit}.run").write_text(f"{ctx.run_id}|{ctx.run_dir}")
+    return "completed"
+
+
+@pytest.mark.parametrize("parallel", [None, ParallelConfig(max_cpus=2)])
+def test_units_see_the_run_logs_directory(cluster, tmp_path: Path, parallel) -> None:
+    from helios.progress import Progress
+    from helios.progress.reporter import ProgressReporter
+
+    run_dir = tmp_path / "logs" / "example-run"
+    run_work_units(
+        [0], partial(_record_run, root=tmp_path), stage="run",
+        parallel=parallel, progress=Progress(reporter=ProgressReporter(run_dir)),
+    )
+    assert (tmp_path / "0.run").read_text() == f"example-run|{run_dir}"
+
+
 def test_actor_pool_reuses_workers_and_bounds_concurrency(cluster, tmp_path: Path) -> None:
     import json
 

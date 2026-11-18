@@ -435,14 +435,23 @@ def build_bundle_metadata(
     dirs: StorageDirs | None = None,
     *,
     fold: int | None = None,
+    run_id: str | None = None,
 ) -> dict[str, object]:
-    """Build re-runnable ``config.yaml`` + ``cohort.yaml`` metadata for a model bundle."""
+    """Build re-runnable ``config.yaml`` + ``cohort.yaml`` metadata for a model bundle.
+
+    The manifest provenance also records the ``run_id`` whose logs hold the training record
+    (``None`` when logs were not saved) and the code version that trained the model.
+    """
+    from helios.utils.provenance import CODE_VERSION
+
     return {
         "config": {"fit": {noun: params}},
         "cohort": build_cohort_provenance(datasets, dirs),
         "stage": f"fit.{noun}",
         "fold": fold,
         "cohort_name": datasets[0].logical_name,
+        "run_id": run_id,
+        "code": CODE_VERSION,
     }
 
 

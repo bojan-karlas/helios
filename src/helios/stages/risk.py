@@ -173,6 +173,7 @@ def _fit_risk_fold(
         resolved,
         dirs,
         fold=fold,
+        run_id=ctx.run_id,
     )
     out.write(model_id, bundle, metadata=meta, fold=fold)
     ctx.progress.log(f"computed {model_id} fold={fold}")

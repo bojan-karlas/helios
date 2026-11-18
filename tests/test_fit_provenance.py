@@ -1,6 +1,7 @@
 """Fit configuration matches both component arguments and bundle provenance."""
 from __future__ import annotations
 
+import json
 from inspect import signature
 
 import numpy as np
@@ -9,8 +10,13 @@ import pytest
 import yaml
 
 from helios.config.introspect import build_default_config
+from helios.progress import Progress
+from helios.progress.reporter import ProgressReporter
 from helios.stages import concept, mil, morphology, risk
+from helios.utils.provenance import CODE_VERSION
 from tests.fixtures import make_cohort, prepared_store, storage_dirs
+
+NON_TRAINING_KEYS = {"progress", "fold", "val_slides", "trace_dir", "trace_slides", "on_epoch_end"}
 
 
 @pytest.mark.parametrize(
@@ -55,7 +61,7 @@ def test_fit_saves_effective_parameters(monkeypatch, tmp_path, module, noun, com
     component = getattr(module, component_name)
     training_keys = {
         key for key, param in signature(component).parameters.items()
-        if param.kind == param.KEYWORD_ONLY and key not in {"progress", "fold", "val_slides"}
+        if param.kind == param.KEYWORD_ONLY and key not in NON_TRAINING_KEYS
     }
     calls = []
 
@@ -64,12 +70,18 @@ def test_fit_saves_effective_parameters(monkeypatch, tmp_path, module, noun, com
         return {"trained": True}
 
     monkeypatch.setattr(module, component_name, train)
-    getattr(module, f"fit_{noun}")(datasets=[root], dirs=storage_dirs(root), **overrides)
+    run_dir = tmp_path / "logs" / "example-run"
+    getattr(module, f"fit_{noun}")(
+        datasets=[root], dirs=storage_dirs(root), progress=Progress(reporter=ProgressReporter(run_dir)), **overrides,
+    )
 
     expected = build_default_config()["fit"][noun] | overrides
     config = yaml.safe_load((store.path(artifact, fold=None) / "config.yaml").read_text())
     assert config == {"fit": {noun: expected}}
+    manifest = json.loads((store.path(artifact, fold=None) / "manifest.json").read_text())
+    assert manifest["provenance"]["run_id"] == "example-run"
+    assert manifest["provenance"]["code"] == CODE_VERSION
     assert len(calls) == 1
-    assert {key: value for key, value in calls[0].items() if key not in {"progress", "fold", "val_slides"}} == {
+    assert {key: value for key, value in calls[0].items() if key not in NON_TRAINING_KEYS} == {
         key: expected[key] for key in training_keys
     }

@@ -117,6 +117,7 @@ def _fit_concept_fold(
         resolved,
         dirs,
         fold=fold,
+        run_id=ctx.run_id,
     )
     out.write("model_concepts", bundle, metadata=meta, fold=fold)
     ctx.progress.log(f"computed model_concepts fold={fold}")

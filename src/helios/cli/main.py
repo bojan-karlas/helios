@@ -134,3 +134,30 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+plot_app = typer.Typer(help="Render visual reports.", add_completion=False)
+app.add_typer(plot_app, name="plot")
+
+
+@plot_app.command("traces")
+def plot_traces(
+    paths: list[Path] = typer.Argument(
+        ..., help="Run logs directories, fold trace directories, or any directory above them.",
+    ),
+    output: Path = typer.Option(Path("trace-report.html"), "--output", "-o", help="HTML file to write."),
+    watch: int | None = typer.Option(
+        None, "--watch", min=1, help="Rewrite the report every N seconds (and reload open pages) until interrupted.",
+    ),
+) -> None:
+    """Write an interactive HTML report of MIL training traces."""
+    import time
+
+    from helios.components.mil_trace_report import render_trace_report
+
+    while True:
+        render_trace_report(paths, output, refresh_seconds=watch)
+        typer.echo(f"wrote {output}")
+        if watch is None:
+            return
+        time.sleep(watch)

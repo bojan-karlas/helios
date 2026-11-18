@@ -467,9 +467,36 @@ trained on must be held out in exactly one fold. `--val-aug-mode originals` (def
 validates on original bags; `--val-aug-mode separate` also validates on each selected
 augmentation as its own bag, and needs an augmentation on every cohort.
 
+MIL training runs with strict deterministic PyTorch algorithms and records a training
+trace for every fold under `<run logs>/traces/mil/fold=<fold>/` (when logs are saved):
+`steps.parquet` (per training bag: loss terms, output, gradient and update sizes per
+model block, attention, quality gate, and inactive-unit fractions, plus spike flags),
+`epochs.parquet` (per epoch: training and validation summaries, weight sizes, timing,
+and collapse flags), and `val_predictions.parquet` (every validation bag, every epoch).
+Tables are rewritten after each epoch, so an interrupted run keeps them up to its last
+finished epoch; tracing does not change the trained weights. `--trace-test-fold` also
+scores each fold's test slides after every epoch into `test_predictions.parquet`, for
+analysis only: they never affect training or epoch selection.
+
+`fit mil` also keeps an interactive HTML report of the run's traces at
+`<run logs>/trace-report.html`: it is rewritten after every epoch and reloads itself
+every 60 seconds while training runs, so an open page stays current. To build one for
+any set of runs, folds, or suites (overlaid in the same charts):
+
+```bash
+helios plot traces /runs/exp1/logs /runs/exp2/logs -o traces.html
+helios plot traces /runs/exp1/logs -o traces.html --watch 60   # rewrite every 60 s
+```
+
+The report is one self-contained file (plotly.js embedded) and opens offline.
+
 Saved logs contain `run.log`, `status.json`, `events.jsonl`, and worker logs.
 They never default to a dataset directory or depend on dataset ordering.
 `--run-tag` appends an optional kebab-case suffix to `<run_id>`.
+Each model bundle's `manifest.json` records the `run_id` that trained it (its logs
+directory name, or `null` when logs were not saved) and the code version: the git
+commit, and whether the working tree had changes, when the process started. `run.log`
+and `status.json` record the same code version.
 Unsaved outputs cannot be reused by subsequent CLI invocations. Full `prep`
 and augmentation preparation require saved intermediates. Parallel MIL and
 cellular-feature reductions also require persistent output storage; use serial

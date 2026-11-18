@@ -158,7 +158,7 @@ def test_min_epochs_must_fit_within_max_epochs(slides) -> None:
 @pytest.mark.parametrize("fails", [False, True])
 def test_training_is_strictly_deterministic_and_restores_settings(slides, monkeypatch, fails):
     seen = []
-    objective = mil_component._MultiBranchGatedAMIL.objective
+    objective = mil_component._MultiBranchGatedAMIL.objective_terms
 
     def recording_objective(self, *args, **kwargs):
         seen.append((torch.are_deterministic_algorithms_enabled(),
@@ -167,7 +167,7 @@ def test_training_is_strictly_deterministic_and_restores_settings(slides, monkey
             raise RuntimeError("boom")
         return objective(self, *args, **kwargs)
 
-    monkeypatch.setattr(mil_component._MultiBranchGatedAMIL, "objective", recording_objective)
+    monkeypatch.setattr(mil_component._MultiBranchGatedAMIL, "objective_terms", recording_objective)
     torch.use_deterministic_algorithms(True, warn_only=True)
     monkeypatch.setattr(torch.backends.cudnn, "benchmark", True)
     try:
@@ -489,3 +489,92 @@ def test_val_aug_mode_selects_the_validation_bags(
     ]
     assert validated == [expected]
 
+
+
+class _NoTrace:
+    """Stands in for the tracer: no hooks, no probes, no files."""
+
+    out_dir = None
+
+    def __init__(self, *args, **kwargs) -> None:
+        pass
+
+    def begin_step(self) -> None:
+        pass
+
+    def end_forward(self) -> None:
+        pass
+
+    def before_optimizer_step(self) -> None:
+        pass
+
+    def end_step(self, **kwargs) -> None:
+        pass
+
+    def end_epoch(self, **kwargs) -> dict:
+        return {"loss_spikes": 0, "grad_spikes": 0, "max_grad_total": 0.0, "test_auprc": 0.0}
+
+    def summary(self) -> str:
+        return ""
+
+    def close(self) -> None:
+        pass
+
+
+def test_tracing_does_not_change_trained_weights(slides, tmp_path, monkeypatch):
+    traced = train_mil(
+        slides, max_epochs=2, val_frac=0.34, device="cpu", trace_dir=tmp_path / "trace", trace_slides=slides[:2],
+    )
+    monkeypatch.setattr(mil_component, "MilTrainingTracer", _NoTrace)
+    plain = train_mil(slides, max_epochs=2, val_frac=0.34, device="cpu")
+    assert (tmp_path / "trace" / "steps.parquet").exists()
+    for key, tensor in plain._state_dict.items():
+        np.testing.assert_array_equal(tensor.numpy(), traced._state_dict[key].numpy())
+
+
+def test_trace_tables_cover_every_bag_and_survive_interruption(slides, tmp_path, monkeypatch):
+    augmented = []
+    for i, slide in enumerate(slides):
+        path = tmp_path / f"{slide.image_id}-aug.hdf5"
+        _write_features(path, np.random.default_rng(100 + i).normal(float(slide.label), 0.1, (12, D)))
+        augmented.append(replace(slide, aug_features_paths=(path,)))
+    train, val = mil_component._split_train_val(augmented, val_frac=0.34, seed=42)
+    calls = 0
+    validation = mil_component._validation_metrics
+
+    def interrupted_validation(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 3:
+            raise RuntimeError("interrupted")
+        return validation(*args, **kwargs)
+
+    monkeypatch.setattr(mil_component, "_validation_metrics", interrupted_validation)
+    trace = tmp_path / "trace"
+    with pytest.raises(RuntimeError, match="interrupted"):
+        train_mil(
+            augmented, max_epochs=5, patience=5, val_frac=0.34, aug_mode="separate", aug_swap_prob=1.0,
+            val_aug_mode="separate", device="cpu", trace_dir=trace, trace_slides=augmented[:2],
+        )
+
+    steps = pd.read_parquet(trace / "steps.parquet")
+    epochs = pd.read_parquet(trace / "epochs.parquet")
+    val_rows = pd.read_parquet(trace / "val_predictions.parquet")
+    test_rows = pd.read_parquet(trace / "test_predictions.parquet")
+    assert epochs["epoch"].tolist() == [1, 2]
+    assert steps.groupby(["epoch", "bag"]).size().to_dict() == {
+        (e, bag): len(train) for e in (1, 2) for bag in ("augmented", "original")
+    }
+    assert val_rows.groupby(["epoch", "bag"]).size().to_dict() == {
+        (e, bag): len(val) for e in (1, 2) for bag in ("augmented", "original")
+    }
+    assert sorted(test_rows["image_id"]) == sorted(2 * [s.image_id for s in augmented[:2]])
+    assert set(test_rows["bag"]) == {"original"}
+    probes = [
+        "grad_total", "grad_branch_fusion", "update_ratio_branch_fusion", "att0_entropy", "att0_max_x_n",
+        "branch_similarity", "gate_mean", "dead_frac_branch_fusion", "enhancer_residual_ratio", "logit",
+    ]
+    assert steps[probes].notna().all().all() and not steps["nonfinite"].any()
+    np.testing.assert_allclose(steps["loss"], steps["loss_classification"] + steps["loss_diversity"], rtol=1e-5)
+    np.testing.assert_allclose(steps["probability"], 1 / (1 + np.exp(-steps["logit"])), rtol=1e-4)
+    assert epochs[["val_auprc", "val_original_auprc", "test_auroc", "weight_branch_fusion"]].notna().all().all()

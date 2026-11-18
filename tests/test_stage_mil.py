@@ -362,6 +362,69 @@ def test_fit_default_gives_no_validation_slides(monkeypatch, cohort: Path) -> No
     assert seen == [None, None]
 
 
+def test_fit_traces_under_run_logs_and_passes_test_fold_for_tracing_only(
+    monkeypatch, cohort: Path, tmp_path: Path
+) -> None:
+    from helios.progress import Progress
+    from helios.progress.reporter import ProgressReporter
+
+    _set_labels(cohort, [0, 1, 0, 1])
+    seen = {}
+
+    def fake_train(slides, **kwargs):
+        seen[kwargs["fold"]] = (
+            kwargs["trace_dir"], sorted(s.image_id for s in kwargs["trace_slides"]), kwargs["val_slides"],
+        )
+        return {}
+
+    monkeypatch.setattr(mil, "train_mil", fake_train)
+    run_dir = tmp_path / "logs" / "example-run"
+    dirs = _flat_folds(tmp_path, IMAGE_IDS, [0, 0, 1, 1])
+    mil.fit_mil(
+        datasets=[str(cohort)], dirs=dirs, trace_test_fold=True, progress=Progress(reporter=ProgressReporter(run_dir)),
+    )
+    assert seen == {
+        0: (run_dir / "traces" / "mil" / "fold=0", IMAGE_IDS[:2], None),
+        1: (run_dir / "traces" / "mil" / "fold=1", IMAGE_IDS[2:], None),
+    }
+
+
+@pytest.mark.parametrize("render_fails", [False, True])
+def test_fit_refreshes_the_run_trace_report_every_epoch_and_at_the_end(
+    monkeypatch, cohort: Path, caplog, render_fails
+) -> None:
+    from helios.progress import Progress
+    from helios.progress.reporter import ProgressReporter
+
+    _set_labels(cohort, [0, 1, 0, 1])
+    rendered = []
+
+    def fake_render(paths, output, *, refresh_seconds, title):
+        rendered.append((paths, output, refresh_seconds))
+        if render_fails:
+            raise OSError("disk full")
+
+    def fake_train(slides, *, on_epoch_end, **kwargs):
+        on_epoch_end()
+        on_epoch_end()
+        return {}
+
+    monkeypatch.setattr(mil, "render_trace_report", fake_render)
+    monkeypatch.setattr(mil, "train_mil", fake_train)
+    run_dir = cohort / "logs" / "example-run"
+    with caplog.at_level("INFO", logger="helios"):
+        mil.fit_mil(
+            datasets=[str(cohort)], dirs=StorageDirs(models_dir=cohort / "models"),
+            progress=Progress(reporter=ProgressReporter(run_dir)),
+        )
+    report = run_dir / "trace-report.html"
+    assert rendered == [([run_dir / "traces"], report, mil.TRACE_REPORT_REFRESH_SECONDS)] * 4 + [
+        ([run_dir / "traces"], report, None)
+    ]
+    assert f"training trace report: {report}" in caplog.text
+    assert ("could not write the training trace report: OSError: disk full" in caplog.text) == render_fails
+
+
 def test_fit_test_fold_requires_folds(cohort: Path, tmp_path: Path) -> None:
     _set_labels(cohort, [0, 1, 0, 1])
     (cohort / "preprocessing" / "splits.csv").unlink()

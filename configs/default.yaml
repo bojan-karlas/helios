@@ -22,6 +22,7 @@ fit:
     seed: 42
     size_mm: 0.25
     target: disease_pfs_recurred_5yfu
+    trace_test_fold: false
     val_aug_mode: originals
     val_frac: 0.15
     val_source: internal
