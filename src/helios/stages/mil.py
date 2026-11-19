@@ -55,6 +55,7 @@ DEFAULT_WEIGHT_DECAY: float = 1e-4
 DEFAULT_MAX_EPOCHS: int = 20
 DEFAULT_PATIENCE: int = 5
 DEFAULT_MIN_EPOCHS: int = 1
+DEFAULT_AVERAGE_FROM_EPOCH: int | None = None
 DEFAULT_VAL_FRAC: float = 0.15
 DEFAULT_VAL_SOURCE: Literal["internal", "test_fold"] = "internal"
 DEFAULT_VAL_AUG_MODE: Literal["originals", "separate"] = "originals"
@@ -86,6 +87,7 @@ def fit_mil(
     max_epochs: int = DEFAULT_MAX_EPOCHS,
     patience: int = DEFAULT_PATIENCE,
     min_epochs: int = DEFAULT_MIN_EPOCHS,
+    average_from_epoch: int | None = DEFAULT_AVERAGE_FROM_EPOCH,
     val_frac: float = DEFAULT_VAL_FRAC,
     val_source: Literal["internal", "test_fold"] = DEFAULT_VAL_SOURCE,
     val_aug_mode: Literal["originals", "separate"] = DEFAULT_VAL_AUG_MODE,
@@ -181,6 +183,7 @@ def fit_mil(
         "max_epochs": max_epochs,
         "patience": patience,
         "min_epochs": min_epochs,
+        "average_from_epoch": average_from_epoch,
         "val_frac": 0.0 if val_source == "test_fold" else val_frac,
         "val_source": val_source,
         "val_aug_mode": val_aug_mode,

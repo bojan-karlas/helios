@@ -9,6 +9,7 @@ fit:
     aug_mode: replace
     aug_swap_prob: 0.5
     augmentations: null
+    average_from_epoch: null
     device: cuda
     dropout_rate: 0.1
     lambda_div: 0.01

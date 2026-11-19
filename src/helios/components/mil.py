@@ -65,6 +65,7 @@ import os
 import random
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from copy import deepcopy
 from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path
@@ -358,6 +359,7 @@ class MilAttentionModel(Model):
         max_epochs: int = 20,
         patience: int = 5,
         min_epochs: int = 1,
+        average_from_epoch: int | None = None,
         val_frac: float = 0.15,
         seed: int = 42,
         aug_swap_prob: float = 0.5,
@@ -367,6 +369,13 @@ class MilAttentionModel(Model):
     ) -> None:
         if not 1 <= min_epochs <= max_epochs:
             raise ValueError(f"min_epochs must be between 1 and max_epochs ({max_epochs}), got {min_epochs}.")
+        if average_from_epoch is not None:
+            if not 1 <= average_from_epoch <= max_epochs:
+                raise ValueError(
+                    f"average_from_epoch must be between 1 and max_epochs ({max_epochs}), got {average_from_epoch}."
+                )
+            if min_epochs != 1:
+                raise ValueError("min_epochs selects an epoch; it cannot be combined with average_from_epoch.")
         if aug_mode not in ("replace", "augment", "separate"):
             raise ValueError(f"Unknown MIL augmentation mode: {aug_mode!r}.")
         if val_aug_mode not in ("originals", "separate"):
@@ -380,6 +389,7 @@ class MilAttentionModel(Model):
         self.max_epochs = max_epochs
         self.patience = patience
         self.min_epochs = min_epochs
+        self.average_from_epoch = average_from_epoch
         self.val_frac = val_frac
         self.seed = seed
         self.aug_swap_prob = aug_swap_prob
@@ -501,11 +511,17 @@ class MilAttentionModel(Model):
             f"train_slides={n_train_slides} validation_source={validation_source} "
             f"val_aug_mode={self.val_aug_mode} "
             f"max_epochs={self.max_epochs} min_epochs={self.min_epochs} patience={self.patience} "
+            f"average_from_epoch={self.average_from_epoch} "
             f"aug_mode={self.aug_mode} "
             f"aug_swap_prob={self.aug_swap_prob} torch={torch.__version__} cuda={torch.version.cuda} "
             f"gpu={torch.cuda.get_device_name(dev) if dev.type == 'cuda' else 'none'} "
             f"trace_slides={len(trace_refs)} trace_dir={tracer.out_dir}"
         )
+        averaging = self.average_from_epoch is not None
+        # Running equal-weight average of the weights after each epoch from average_from_epoch on.
+        # deepcopy (not a fresh build) avoids drawing random numbers, so training is unchanged.
+        avg_net: _MultiBranchGatedAMIL | None = None
+        n_averaged = 0
         step = 0
         with TrainingProgress(progress, self.max_epochs, prefix).display() as feedback:
             for _epoch in range(self.max_epochs):
@@ -548,7 +564,25 @@ class MilAttentionModel(Model):
                 eligible, improved = True, False
                 val_scores: list[tuple[SlideFeatureRef, float | None]] = []
                 test_scores: list[tuple[SlideFeatureRef, float | None]] = []
-                if val_refs:
+                avg_test_scores: list[tuple[SlideFeatureRef, float | None]] = []
+                in_average = averaging and _epoch + 1 >= self.average_from_epoch  # type: ignore[operator]
+                if in_average:
+                    n_averaged += 1
+                    if avg_net is None:
+                        avg_net = _detached_copy(net)
+                    else:
+                        _update_average(avg_net, net, n_averaged)
+                if averaging:
+                    eligible = in_average
+                    if val_refs:
+                        started = perf_counter()
+                        auprc, auroc = _validation_metrics(
+                            net, val_refs, device=dev, feedback=feedback, scores_out=val_scores
+                        )
+                        seconds["validation"] = perf_counter() - started
+                        metrics = f" val_auprc={auprc:.4f} val_auroc={auroc:.4f} (monitored only)"
+                    metrics += f" averaged_epochs={n_averaged}"
+                elif val_refs:
                     started = perf_counter()
                     auprc, auroc = _validation_metrics(
                         net, val_refs, device=dev, feedback=feedback, scores_out=val_scores
@@ -575,11 +609,16 @@ class MilAttentionModel(Model):
                 if trace_refs:
                     started = perf_counter()
                     test_scores = _score_bags(net, trace_refs, device=dev, feedback=feedback, phase="test")
+                    if avg_net is not None:
+                        avg_test_scores = _score_bags(
+                            avg_net, trace_refs, device=dev, feedback=feedback, phase="test (averaged)"
+                        )
                     seconds["test"] = perf_counter() - started
                 epoch_trace = tracer.end_epoch(
                     epoch=_epoch + 1, val=scored(val_scores), test=scored(test_scores), w_pos=w_pos, w_neg=w_neg,
                     lr=float(optimizer.param_groups[0]["lr"]), eligible=eligible, improved=improved,
-                    skipped=feedback.skipped, seconds=seconds,
+                    skipped=feedback.skipped, seconds=seconds, averaged=in_average,
+                    test_average=scored(avg_test_scores),
                 )
                 if on_epoch_end is not None:
                     on_epoch_end()
@@ -592,18 +631,28 @@ class MilAttentionModel(Model):
                     f" loss_spikes={epoch_trace['loss_spikes']} grad_spikes={epoch_trace['grad_spikes']}"
                     f" max_grad_total={epoch_trace['max_grad_total']:.4g}"
                     + (f" test_auprc={epoch_trace['test_auprc']:.4f}" if trace_refs else "")
+                    + (f" test_average_auprc={epoch_trace['test_average_auprc']:.4f}"
+                       if trace_refs and avg_net is not None else "")
                 )
-                if val_refs and not improved and epochs_no_improve >= self.patience:
+                if not averaging and val_refs and not improved and epochs_no_improve >= self.patience:
                     progress.log(f"{prefix}early stopping; restoring best_epoch={best_epoch}")
                     break
             else:
-                progress.log(f"{prefix}epoch budget exhausted; selected_epoch={best_epoch}")
+                if not averaging:
+                    progress.log(f"{prefix}epoch budget exhausted; selected_epoch={best_epoch}")
+            kept = (
+                f"averaged_epochs={self.average_from_epoch}-{feedback.completed}" if averaging
+                else f"selected_epoch={best_epoch}"
+            )
             progress.log(
                 f"{prefix}training complete epochs={feedback.completed}/{self.max_epochs} "
-                f"selected_epoch={best_epoch} elapsed={duration(feedback.elapsed)}"
+                f"{kept} elapsed={duration(feedback.elapsed)}"
             )
             progress.log(f"{prefix}training trace {tracer.summary()}")
 
+        if averaging:
+            assert avg_net is not None
+            best_state = {k: v.detach().cpu().clone() for k, v in avg_net.state_dict().items()}
         self._state_dict = best_state
         return self
 
@@ -670,6 +719,7 @@ def train_mil(
     max_epochs: int = 20,
     patience: int = 5,
     min_epochs: int = 1,
+    average_from_epoch: int | None = None,
     val_frac: float = 0.15,
     seed: int = 42,
     device: str = "cuda",
@@ -702,6 +752,11 @@ def train_mil(
     Epochs before ``min_epochs`` are validated but cannot be kept, and do not count
     toward ``patience``.
 
+    With ``average_from_epoch``, no epoch is selected: all ``max_epochs`` run without
+    early stopping, and the fitted weights are the equal-weight mean of the weights
+    after each epoch from ``average_from_epoch`` on. Validation slides, if any, are
+    monitored only.
+
     Early stopping monitors AUPRC on an internal ``val_frac`` split carved out
     of ``slides`` (this fold's CV test slides are never visible here -- they are
     scored later by :func:`infer_mil`).
@@ -726,6 +781,7 @@ def train_mil(
         max_epochs=max_epochs,
         patience=patience,
         min_epochs=min_epochs,
+        average_from_epoch=average_from_epoch,
         val_frac=val_frac,
         seed=seed,
         aug_swap_prob=aug_swap_prob,
@@ -986,6 +1042,25 @@ def _score_bags(
             prob, _, _, _ = net(torch.from_numpy(bag).to(device))
             scores.append((ref, float(prob.item())))
     return scores
+
+
+def _detached_copy(net: _MultiBranchGatedAMIL) -> _MultiBranchGatedAMIL:
+    """A gradient-free copy of ``net`` without its forward hooks (no random numbers drawn)."""
+    copy = deepcopy(net)
+    for module in copy.modules():
+        module._forward_hooks.clear()
+    for param in copy.parameters():
+        param.grad = None
+    copy.requires_grad_(False)
+    return copy
+
+
+def _update_average(average: _MultiBranchGatedAMIL, net: _MultiBranchGatedAMIL, count: int) -> None:
+    """Fold ``net``'s weights into the running mean held by ``average`` (``count`` epochs so far)."""
+    with torch.no_grad():
+        avg_tensors = [v for v in average.state_dict().values() if v.is_floating_point()]
+        new_tensors = [v.detach() for v in net.state_dict().values() if v.is_floating_point()]
+        torch._foreach_lerp_(avg_tensors, new_tensors, 1.0 / count)
 
 
 def _version_index(refs: list[SlideFeatureRef]) -> dict[Path, int]:

@@ -578,3 +578,36 @@ def test_trace_tables_cover_every_bag_and_survive_interruption(slides, tmp_path,
     np.testing.assert_allclose(steps["loss"], steps["loss_classification"] + steps["loss_diversity"], rtol=1e-5)
     np.testing.assert_allclose(steps["probability"], 1 / (1 + np.exp(-steps["logit"])), rtol=1e-4)
     assert epochs[["val_auprc", "val_original_auprc", "test_auroc", "weight_branch_fusion"]].notna().all().all()
+
+
+def test_weight_average_is_the_mean_of_per_epoch_weights(slides):
+    # Without validation, a fit of e epochs saves the weights after epoch e, so separate fits give each epoch's weights.
+    per_epoch = [train_mil(slides, max_epochs=e, val_frac=0, device="cpu")._state_dict for e in (2, 3, 4)]
+    averaged = train_mil(slides, max_epochs=4, val_frac=0, average_from_epoch=2, device="cpu")._state_dict
+    for key, tensor in averaged.items():
+        expected = torch.stack([w[key] for w in per_epoch]).mean(dim=0)
+        torch.testing.assert_close(tensor, expected, rtol=1e-5, atol=1e-6)
+
+
+def test_weight_averaging_runs_every_epoch_and_traces_the_average(slides, tmp_path, monkeypatch, caplog):
+    scores = iter([0.9, 0.5, 0.4, 0.3])
+    monkeypatch.setattr("helios.components.mil._validation_metrics", lambda *a, **k: (next(scores), 0.5))
+    with caplog.at_level("INFO", logger="helios"):
+        train_mil(
+            slides, max_epochs=4, patience=1, val_frac=0.34, average_from_epoch=3, device="cpu",
+            trace_dir=tmp_path, trace_slides=slides[:2], progress=Progress(use_tqdm=False),
+        )
+    assert "training complete epochs=4/4 averaged_epochs=3-4" in caplog.text
+    epochs = pd.read_parquet(tmp_path / "epochs.parquet")
+    assert epochs["averaged"].tolist() == [False, False, True, True]
+    assert epochs["test_average_auroc"].isna().tolist() == [True, True, False, False]
+    test = pd.read_parquet(tmp_path / "test_predictions.parquet")
+    assert test.groupby("weights")["epoch"].unique().map(list).to_dict() == {"average": [3, 4], "current": [1, 2, 3, 4]}
+    # With a single averaged epoch so far, the average is exactly that epoch's weights.
+    first = test[test["epoch"].eq(3)].pivot(index="image_id", columns="weights", values="probability")
+    np.testing.assert_allclose(first["average"], first["current"], rtol=1e-6)
+
+
+def test_weight_averaging_rejects_min_epochs(slides):
+    with pytest.raises(ValueError, match="min_epochs"):
+        train_mil(slides, max_epochs=4, min_epochs=2, average_from_epoch=2, device="cpu")

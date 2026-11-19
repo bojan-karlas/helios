@@ -15,6 +15,8 @@ so an interrupted run keeps complete tables up to its last finished epoch:
 * ``val_predictions.parquet``: every validation bag's probability, every epoch.
 * ``test_predictions.parquet``: every traced held-out slide's probability, every
   epoch (only when trace slides are given; analysis only, never used for selection).
+  Its ``weights`` column is ``current`` for the epoch's weights and ``average`` for the
+  running weight average, when weight averaging is on.
 """
 from __future__ import annotations
 
@@ -207,9 +209,14 @@ class MilTrainingTracer:
     def end_epoch(
         self, *, epoch: int, val: Sequence[tuple[BagIdentity, float, float | None]],
         test: Sequence[tuple[BagIdentity, float, float | None]], w_pos: float, w_neg: float, lr: float,
-        eligible: bool, improved: bool, skipped: int, seconds: dict[str, float],
+        eligible: bool, improved: bool, skipped: int, seconds: dict[str, float], averaged: bool = False,
+        test_average: Sequence[tuple[BagIdentity, float, float | None]] = (),
     ) -> dict[str, Any]:
-        """Summarize the epoch, store prediction rows, and rewrite the tables; returns the epoch row."""
+        """Summarize the epoch, store prediction rows, and rewrite the tables; returns the epoch row.
+
+        ``averaged`` marks an epoch folded into the running weight average; ``test_average`` holds
+        the traced slides' probabilities under the averaged weights so far.
+        """
         steps = self._epoch_steps
         losses = [s["loss"] for s in steps]
         mean_loss = float(np.mean(losses)) if losses else math.nan
@@ -227,7 +234,8 @@ class MilTrainingTracer:
             "training_collapse": bool(
                 math.isfinite(mean_loss) and mean_loss > self._best_epoch_loss + COLLAPSE_LOSS_RISE
             ),
-            "w_pos": w_pos, "w_neg": w_neg, "lr": lr, "eligible": eligible, "improved": improved, **weights,
+            "w_pos": w_pos, "w_neg": w_neg, "lr": lr, "eligible": eligible, "improved": improved,
+            "averaged": averaged, **weights,
             **{f"seconds_{k}": v for k, v in seconds.items()},
         }
         if math.isfinite(mean_loss):
@@ -238,9 +246,12 @@ class MilTrainingTracer:
         row["prediction_collapse"] = bool(row["val_prob_std"] < COLLAPSE_PRED_STD)
         if test:
             row |= _prediction_summary("test", test, w_pos, w_neg)
+        if test_average:
+            row |= _prediction_summary("test_average", test_average, w_pos, w_neg)
         self.epochs.append(row)
         self.val_rows += _prediction_rows(epoch, val)
-        self.test_rows += _prediction_rows(epoch, test)
+        self.test_rows += [r | {"weights": "current"} for r in _prediction_rows(epoch, test)]
+        self.test_rows += [r | {"weights": "average"} for r in _prediction_rows(epoch, test_average)]
         self._epoch_steps = []
         self.flush()
         return row

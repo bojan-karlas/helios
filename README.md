@@ -458,6 +458,9 @@ tile-replacement and within-bag concatenation behavior.
 
 `fit mil` keeps the epoch with the best validation AUPRC, with early stopping.
 `--min-epochs N` keeps no epoch before epoch N, and patience only counts from epoch N.
+`--average-from-epoch N` instead saves the mean of the weights after each epoch from N
+to `--max-epochs`: no epoch is selected, all epochs run, and validation slides (if any)
+are only monitored. Use `--val-frac 0` to train on all of each fold's train slides.
 `--val-source internal` (default) holds out `--val-frac` of each fold's train slides;
 `--val-source test_fold` trains on all of them and validates on the fold's test slides.
 Out-of-fold scores are then optimistic, because the same slides choose the saved epoch.

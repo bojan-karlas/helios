@@ -77,6 +77,13 @@ class FoldTrace:
         improved = self.epochs.loc[self.epochs["improved"].astype(bool), "epoch"]
         return int(improved.max() if len(improved) else self.epochs["epoch"].max())
 
+    @property
+    def averaged_epochs(self) -> list[int]:
+        """Epochs folded into the saved weight average (empty when the run selected an epoch)."""
+        if "averaged" not in self.epochs:
+            return []
+        return [int(x) for x in self.epochs.loc[self.epochs["averaged"].astype(bool), "epoch"]]
+
 
 def find_traces(paths: list[Path]) -> list[FoldTrace]:
     """Every fold trace (a directory holding ``epochs.parquet``) at or below ``paths``, in a stable order."""
@@ -191,11 +198,13 @@ def _runs_table(traces: list[FoldTrace]) -> str:
         e = t.epochs
         sel = t.selected_epoch
         at = e[e["epoch"] == sel].iloc[0] if sel is not None else None
+        averaged = t.averaged_epochs
+        prefix = "test_average" if averaged else "test"
         rows.append({
             "run": t.run_id, "fold": t.fold, "code": _code_version(t.run_dir), "epochs": len(e),
-            "selected epoch": sel,
-            "val AUPRC at selected": _num(at, "val_auprc"), "test AUPRC at selected": _num(at, "test_auprc"),
-            "test AUROC at selected": _num(at, "test_auroc"),
+            "saved model": f"average of epochs {averaged[0]}-{averaged[-1]}" if averaged else f"epoch {sel}",
+            "val AUPRC (saved)": "-" if averaged else _num(at, "val_auprc"),
+            "test AUPRC (saved)": _num(at, f"{prefix}_auprc"), "test AUROC (saved)": _num(at, f"{prefix}_auroc"),
             "loss spikes": int(e["loss_spikes"].sum()), "grad spikes": int(e["grad_spikes"].sum()),
             "collapse epochs": ", ".join(str(x) for x in e.loc[e["training_collapse"], "epoch"]) or "-",
             "updated": datetime.fromtimestamp((t.path / "epochs.parquet").stat().st_mtime).strftime("%m-%d %H:%M"),
@@ -218,9 +227,14 @@ def _learning_curves(traces: list[FoldTrace], colors: list[str]) -> str:
     ]
     if any(t.test is not None for t in traces):
         panels += [("Test-fold AUPRC (analysis only)", "test_auprc"), ("Test-fold AUROC (analysis only)", "test_auroc")]
+        panels += [
+            ("Test-fold AUPRC, running weight average (analysis only)", "test_average_auprc"),
+            ("Test-fold AUROC, running weight average (analysis only)", "test_average_auroc"),
+        ]
     note = (
-        "<p class='note'>Stars mark each fold's selected epoch; crosses mark training-collapse epochs; "
-        "hollow circles are epochs before <code>min_epochs</code>, which cannot be selected.</p>"
+        "<p class='note'>Stars mark each fold's selected epoch (the last epoch for weight-averaged runs); "
+        "crosses mark training-collapse epochs; hollow circles are epochs that cannot be kept: before "
+        "<code>min_epochs</code>, or before weight averaging starts.</p>"
     )
     return note + _epoch_figure(traces, colors, panels)
 
@@ -401,6 +415,8 @@ def _distribution_figure(traces: list[FoldTrace]) -> str:
     fig = go.Figure()
     owners: list[int] = []
     for i, t in enumerate(traces):
+        if "probability" not in t.val:
+            continue
         v = t.val.dropna(subset=["probability"])
         for label, color in CLASS_COLORS.items():
             q = v[v["label"] == label].groupby("epoch")["probability"].quantile([0.0, 0.25, 0.5, 0.75, 1.0])

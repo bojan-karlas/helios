@@ -46,3 +46,14 @@ def test_report_without_traces_and_cli(tmp_path):
     result = CliRunner().invoke(app, ["plot", "traces", str(run_dir), "--output", str(output)])
     assert result.exit_code == 0, result.output
     assert "run-c fold=0" in output.read_text()
+
+
+def test_report_describes_weight_averaged_runs(tmp_path):
+    slides = [_make_slide(tmp_path, f"S{i}", n_tiles=12, label=i % 2, seed=i) for i in range(6)]
+    run_dir = tmp_path / "logs" / "run-avg"
+    train_mil(
+        slides, max_epochs=3, val_frac=0, average_from_epoch=2, device="cpu",
+        trace_dir=run_dir / "traces" / "mil" / "fold=0", trace_slides=slides[:2],
+    )
+    page = render_trace_report([run_dir], tmp_path / "avg.html").read_text()
+    assert "average of epochs 2-3" in page and "running weight average" in page
