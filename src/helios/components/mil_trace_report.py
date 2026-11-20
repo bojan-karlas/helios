@@ -262,7 +262,9 @@ def _internals(traces: list[FoldTrace], colors: list[str]) -> str:
     for k in branches:
         attention += [
             (f"Branch {k} attention entropy (1 = uniform)", f"att{k}_entropy", False),
-            (f"Branch {k} max attention x tiles (at most 7.4)", f"att{k}_max_x_n", False),
+            (f"Branch {k} max attention x tiles (at most e^(2c) for Tanh scale c: 7.4 at c=1)", f"att{k}_max_x_n",
+             False),
+            (f"Branch {k} fraction of tile scores at the Tanh bound", f"att{k}_frac_saturated", False),
         ]
     attention.append(("Similarity between branch attentions", "branch_similarity", False))
     gate = [

@@ -87,6 +87,9 @@ class MilTrainingTracer:
     # -- hooks --------------------------------------------------------------
     def _register_hooks(self) -> None:
         net = self.net
+        scale = float(getattr(net, "attention_fusion_tanh_scale", 1.0))
+        # A score is saturated within 1% of the Tanh bound; with no Tanh (scale=inf) the probe is omitted.
+        saturation = 0.99 * scale
 
         def hook(fn):
             def wrapped(module, inputs, output):
@@ -114,7 +117,8 @@ class MilTrainingTracer:
                 entropy = -(att * att.clamp_min(1e-30).log()).sum()
                 self._probes[f"att{k}_entropy"] = entropy / math.log(n) if n > 1 else torch.ones((), device=att.device)
                 self._probes[f"att{k}_max_x_n"] = att.max() * n
-                self._probes[f"att{k}_frac_saturated"] = (scores.abs() > 0.99).float().mean()
+                if math.isfinite(scale):
+                    self._probes[f"att{k}_frac_saturated"] = (scores.abs() > saturation).float().mean()
                 self._branch_att[k] = att
             return fn
 

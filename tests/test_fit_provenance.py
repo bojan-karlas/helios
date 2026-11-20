@@ -27,6 +27,7 @@ NON_TRAINING_KEYS = {"progress", "fold", "val_slides", "trace_dir", "trace_slide
             "aug_swap_prob": 0.3, "aug_mode": "augment", "n_branches": 2, "num_heads": 2,
             "dropout_rate": 0.2, "lambda_div": 0.02, "lr": 0.002, "weight_decay": 0.003,
             "max_epochs": 3, "patience": 2, "val_frac": 0.2, "seed": 7, "device": "cpu",
+            "attention_fusion_tanh_scale": float("inf"),
         }),
         (concept, "concept", "train_concepts", "model_concepts", {"n_bootstrap": 3}),
         (morphology, "morphology", "train_morphology", "model_morphology", {

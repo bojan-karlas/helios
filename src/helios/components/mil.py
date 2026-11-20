@@ -61,6 +61,7 @@ scripts, were resolved as follows:
 from __future__ import annotations
 
 import inspect
+import math
 import os
 import random
 from collections.abc import Callable, Iterator
@@ -122,6 +123,29 @@ class MilSlideOutputs:
 # =================================================================
 # Architecture (ported from the reference augmented A-MIL training script)
 # =================================================================
+class _ScaledTanh(nn.Module):
+    """``scale * tanh(x / scale)``: bounds scores to ``(-scale, scale)``; ``scale=inf`` is the identity."""
+
+    def __init__(self, scale: float) -> None:
+        super().__init__()
+        self.scale = scale
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if math.isinf(self.scale):
+            return x
+        return self.scale * torch.tanh(x / self.scale)
+
+    def extra_repr(self) -> str:
+        return f"scale={self.scale}"
+
+
+def _attention_fusion_activation(scale: float) -> nn.Module:
+    """The final activation of each branch's ``attention_fusion``; ``scale=1`` is the reference ``nn.Tanh``."""
+    if not (scale > 0):  # also rejects NaN
+        raise ValueError(f"attention_fusion_tanh_scale must be positive (inf removes the Tanh), got {scale}.")
+    return nn.Tanh() if scale == 1 else _ScaledTanh(scale)
+
+
 class _MultiBranchGatedAMIL(nn.Module):
     def __init__(
         self,
@@ -130,8 +154,10 @@ class _MultiBranchGatedAMIL(nn.Module):
         n_branches: int = 4,
         num_heads: int = 4,
         dropout_rate: float = 0.1,
+        attention_fusion_tanh_scale: float = 1.0,
     ) -> None:
         super().__init__()
+        self.attention_fusion_tanh_scale = float(attention_fusion_tanh_scale)
         self.L = input_dim
         self.D, self.K = 128, n_branches
         self.num_heads = num_heads
@@ -181,7 +207,10 @@ class _MultiBranchGatedAMIL(nn.Module):
                         "attention_w_heads": nn.ModuleList(
                             [nn.Linear(self.head_dim, 1) for _ in range(num_heads)]
                         ),
-                        "attention_fusion": nn.Sequential(nn.Linear(num_heads, 1), nn.Tanh()),
+                        # Parameter-free activation, so weights load whatever its scale.
+                        "attention_fusion": nn.Sequential(
+                            nn.Linear(num_heads, 1), _attention_fusion_activation(self.attention_fusion_tanh_scale),
+                        ),
                         "feature_processor": nn.Sequential(
                             nn.Linear(self.L, self.L), nn.ReLU(), nn.Dropout(dropout_rate)
                         ),
@@ -353,6 +382,7 @@ class MilAttentionModel(Model):
         n_branches: int = 4,
         num_heads: int = 4,
         dropout_rate: float = 0.1,
+        attention_fusion_tanh_scale: float = 1.0,
         lambda_div: float = 0.01,
         lr: float = 1e-4,
         weight_decay: float = 1e-4,
@@ -367,6 +397,7 @@ class MilAttentionModel(Model):
         val_aug_mode: Literal["originals", "separate"] = "originals",
         device: str = "cuda",
     ) -> None:
+        _attention_fusion_activation(attention_fusion_tanh_scale)
         if not 1 <= min_epochs <= max_epochs:
             raise ValueError(f"min_epochs must be between 1 and max_epochs ({max_epochs}), got {min_epochs}.")
         if average_from_epoch is not None:
@@ -383,6 +414,7 @@ class MilAttentionModel(Model):
         self.n_branches = n_branches
         self.num_heads = num_heads
         self.dropout_rate = dropout_rate
+        self.attention_fusion_tanh_scale = float(attention_fusion_tanh_scale)
         self.lambda_div = lambda_div
         self.lr = lr
         self.weight_decay = weight_decay
@@ -430,6 +462,7 @@ class MilAttentionModel(Model):
             n_branches=self.n_branches,
             num_heads=self.num_heads,
             dropout_rate=self.dropout_rate,
+            attention_fusion_tanh_scale=self.attention_fusion_tanh_scale,
         )
         if self._state_dict is not None:
             net.load_state_dict(self._state_dict)
@@ -512,6 +545,7 @@ class MilAttentionModel(Model):
             f"val_aug_mode={self.val_aug_mode} "
             f"max_epochs={self.max_epochs} min_epochs={self.min_epochs} patience={self.patience} "
             f"average_from_epoch={self.average_from_epoch} "
+            f"attention_fusion_tanh_scale={self.attention_fusion_tanh_scale} "
             f"aug_mode={self.aug_mode} "
             f"aug_swap_prob={self.aug_swap_prob} torch={torch.__version__} cuda={torch.version.cuda} "
             f"gpu={torch.cuda.get_device_name(dev) if dev.type == 'cuda' else 'none'} "
@@ -713,6 +747,7 @@ def train_mil(
     n_branches: int = 4,
     num_heads: int = 4,
     dropout_rate: float = 0.1,
+    attention_fusion_tanh_scale: float = 1.0,
     lambda_div: float = 0.01,
     lr: float = 1e-4,
     weight_decay: float = 1e-4,
@@ -757,6 +792,10 @@ def train_mil(
     after each epoch from ``average_from_epoch`` on. Validation slides, if any, are
     monitored only.
 
+    ``attention_fusion_tanh_scale`` sets the scale ``c`` of the Tanh at the end of each
+    attention branch's fusion layer, ``c * tanh(s / c)``: tile scores are bounded to
+    ``(-c, c)`` before the softmax. ``1`` is the reference ``tanh``; ``inf`` removes it.
+
     Early stopping monitors AUPRC on an internal ``val_frac`` split carved out
     of ``slides`` (this fold's CV test slides are never visible here -- they are
     scored later by :func:`infer_mil`).
@@ -775,6 +814,7 @@ def train_mil(
         n_branches=n_branches,
         num_heads=num_heads,
         dropout_rate=dropout_rate,
+        attention_fusion_tanh_scale=attention_fusion_tanh_scale,
         lambda_div=lambda_div,
         lr=lr,
         weight_decay=weight_decay,

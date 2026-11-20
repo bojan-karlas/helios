@@ -6,6 +6,7 @@ fit:
   concept:
     n_bootstrap: 100
   mil:
+    attention_fusion_tanh_scale: 1.0
     aug_mode: replace
     aug_swap_prob: 0.5
     augmentations: null

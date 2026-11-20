@@ -49,6 +49,7 @@ DEFAULT_AUG_MODE: Literal["replace", "augment", "separate"] = "replace"
 DEFAULT_N_BRANCHES: int = 4
 DEFAULT_NUM_HEADS: int = 4
 DEFAULT_DROPOUT_RATE: float = 0.1
+DEFAULT_ATTENTION_FUSION_TANH_SCALE: float = 1.0
 DEFAULT_LAMBDA_DIV: float = 0.01
 DEFAULT_LR: float = 1e-4
 DEFAULT_WEIGHT_DECAY: float = 1e-4
@@ -81,6 +82,7 @@ def fit_mil(
     n_branches: int = DEFAULT_N_BRANCHES,
     num_heads: int = DEFAULT_NUM_HEADS,
     dropout_rate: float = DEFAULT_DROPOUT_RATE,
+    attention_fusion_tanh_scale: float = DEFAULT_ATTENTION_FUSION_TANH_SCALE,
     lambda_div: float = DEFAULT_LAMBDA_DIV,
     lr: float = DEFAULT_LR,
     weight_decay: float = DEFAULT_WEIGHT_DECAY,
@@ -177,6 +179,7 @@ def fit_mil(
         "n_branches": n_branches,
         "num_heads": num_heads,
         "dropout_rate": dropout_rate,
+        "attention_fusion_tanh_scale": attention_fusion_tanh_scale,
         "lambda_div": lambda_div,
         "lr": lr,
         "weight_decay": weight_decay,

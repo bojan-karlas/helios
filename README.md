@@ -461,6 +461,10 @@ tile-replacement and within-bag concatenation behavior.
 `--average-from-epoch N` instead saves the mean of the weights after each epoch from N
 to `--max-epochs`: no epoch is selected, all epochs run, and validation slides (if any)
 are only monitored. Use `--val-frac 0` to train on all of each fold's train slides.
+`--attention-fusion-tanh-scale C` replaces the Tanh at the end of each attention branch's
+fusion layer with `C * tanh(s / C)`, bounding tile scores to `(-C, C)` before the softmax:
+`1` (default) is the reference `tanh`, and `inf` removes the Tanh (standard gated attention).
+The value is saved with the model, so `predict mil` needs no flag.
 `--val-source internal` (default) holds out `--val-frac` of each fold's train slides;
 `--val-source test_fold` trains on all of them and validates on the fold's test slides.
 Out-of-fold scores are then optimistic, because the same slides choose the saved epoch.

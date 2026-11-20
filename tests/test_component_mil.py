@@ -611,3 +611,44 @@ def test_weight_averaging_runs_every_epoch_and_traces_the_average(slides, tmp_pa
 def test_weight_averaging_rejects_min_epochs(slides):
     with pytest.raises(ValueError, match="min_epochs"):
         train_mil(slides, max_epochs=4, min_epochs=2, average_from_epoch=2, device="cpu")
+
+
+@pytest.mark.parametrize("scale", [0.5, 5.0, float("inf")])
+def test_attention_fusion_tanh_scale_bounds_scores(scale):
+    net = mil_component._MultiBranchGatedAMIL(D, attention_fusion_tanh_scale=scale)
+    activation = net.branches[0]["attention_fusion"][1]
+    s = torch.tensor([-100.0, -1.0, 0.0, 0.3, 100.0])
+    expected = s if np.isinf(scale) else scale * torch.tanh(s / scale)
+    torch.testing.assert_close(activation(s), expected)
+    assert isinstance(mil_component._MultiBranchGatedAMIL(D).branches[0]["attention_fusion"][1], torch.nn.Tanh)
+    assert net.state_dict().keys() == mil_component._MultiBranchGatedAMIL(D).state_dict().keys()
+
+
+@pytest.mark.parametrize("scale", [0.0, -1.0, float("nan")])
+def test_attention_fusion_tanh_scale_must_be_positive(slides, scale):
+    with pytest.raises(ValueError, match="attention_fusion_tanh_scale"):
+        train_mil(slides, max_epochs=1, attention_fusion_tanh_scale=scale, device="cpu")
+
+
+def test_unbounded_attention_round_trips_through_the_bundle_and_old_bundles_keep_tanh(tmp_path, slides):
+    from helios.data.bundle import load_bundle, save_bundle
+
+    trace = tmp_path / "trace"
+    model = train_mil(
+        slides, max_epochs=2, val_frac=0.0, attention_fusion_tanh_scale=float("inf"), device="cpu", trace_dir=trace,
+    )
+    params = {"attention_fusion_tanh_scale": float("inf"), "dropout_rate": 0.1}
+    bundle = save_bundle(model, tmp_path / "new", metadata={"config": {"fit": {"mil": params}}})
+    loaded = load_bundle(bundle)
+    assert np.isinf(loaded.attention_fusion_tanh_scale)
+    paths = {"features_path": slides[0].features_path, "background_path": slides[0].background_path}
+    assert infer_mil(loaded, **paths, device="cpu").risk_score == pytest.approx(
+        infer_mil(model, **paths, device="cpu").risk_score
+    )
+    steps = pd.read_parquet(trace / "steps.parquet")
+    assert "att0_frac_saturated" not in steps and not steps["nonfinite"].any()
+
+    old_config = {"config": {"fit": {"mil": {"dropout_rate": 0.1}}}}
+    old = load_bundle(save_bundle(model, tmp_path / "old", metadata=old_config))
+    assert old.attention_fusion_tanh_scale == 1.0
+    assert isinstance(old._build_net().branches[0]["attention_fusion"][1], torch.nn.Tanh)

@@ -73,6 +73,11 @@ def mil(
     n_branches: int | None = typer.Option(None, "--n-branches", help="Number of gated-attention branches (K)."),
     num_heads: int | None = typer.Option(None, "--num-heads", help="Attention heads per branch."),
     dropout_rate: float | None = typer.Option(None, "--dropout-rate", help="Dropout rate throughout the network."),
+    attention_fusion_tanh_scale: float | None = typer.Option(
+        None, "--attention-fusion-tanh-scale",
+        help="Scale c of the Tanh in each attention branch's fusion layer: c*tanh(s/c); "
+        "1 (default) is plain tanh, inf removes the Tanh.",
+    ),
     lambda_div: float | None = typer.Option(
         None, "--lambda-div", help="Weight of the branch-attention diversity loss."
     ),
@@ -144,6 +149,7 @@ def mil(
         "n_branches": n_branches,
         "num_heads": num_heads,
         "dropout_rate": dropout_rate,
+        "attention_fusion_tanh_scale": attention_fusion_tanh_scale,
         "lambda_div": lambda_div,
         "lr": lr,
         "weight_decay": weight_decay,
